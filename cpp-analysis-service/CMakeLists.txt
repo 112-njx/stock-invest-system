@@ -12,14 +12,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # 第三方库（header-only）
-# nlohmann/json
-include_directories(
-        ${PROJECT_SOURCE_DIR}/third_party/json
-)
 
 # cpp-httplib
 include_directories(
-        ${PROJECT_SOURCE_DIR}/third_party/cpp-httplib
+        ${PROJECT_SOURCE_DIR}/third_party
 )
 
 # 项目源码
