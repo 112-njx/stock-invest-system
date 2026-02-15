@@ -3,6 +3,6 @@
 
 int main() {
     HttpServer server;
-    server.start("0.0.0.0", 8080);
+    server.start("127.0.0.1", 8080);
     return 0;
 }

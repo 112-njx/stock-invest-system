@@ -43,3 +43,8 @@ if (MSVC)
 else()
     target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+#如果是win系统，加上socket库
+if (WIN32)
+    target_link_libraries(cpp_analysis_service ws2_32)
+endif()
