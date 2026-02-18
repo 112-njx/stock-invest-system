@@ -8,6 +8,7 @@ import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -20,17 +21,31 @@ public class MarketDataService {
     public MarketDataService(List<MarketDataProvider> providers,
                              MarketDataProperties marketDataProperties) {
         this.providerMap = providers.stream()
-                .collect(Collectors.toMap(MarketDataProvider::providerName, Function.identity()));
+                .collect(Collectors.toMap(
+                        provider -> provider.providerName().toLowerCase(),
+                        Function.identity()));
         this.marketDataProperties = marketDataProperties;
     }
 
     public Mono<List<MarketQuote>> fetchRealtimeQuotes(List<String> symbols) {
-        String providerName = marketDataProperties.getProvider();
-        MarketDataProvider provider = providerMap.get(providerName);
-        if (provider == null) {
-            return Mono.error(new IllegalStateException("Unsupported market provider: " + providerName));
-        }
+        return resolveCurrentProvider().fetchRealtimeQuotes(symbols);
+    }
 
-        return provider.fetchRealtimeQuotes(symbols);
+    public List<String> listAvailableProviders() {
+        return new TreeSet<>(providerMap.keySet()).stream().toList();
+    }
+
+    public String currentProvider() {
+        return marketDataProperties.getProvider();
+    }
+
+    private MarketDataProvider resolveCurrentProvider() {
+        String providerName = marketDataProperties.getProvider();
+        MarketDataProvider provider = providerMap.get(providerName.toLowerCase());
+        if (provider == null) {
+            throw new IllegalStateException("Unsupported market provider: " + providerName
+                    + ", available providers: " + listAvailableProviders());
+        }
+        return provider;
     }
 }

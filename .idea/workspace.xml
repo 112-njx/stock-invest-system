@@ -3,9 +3,9 @@
   <component name="AutoImportSettings">
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
-  <component name="CMakePresetLoader"><![CDATA[{
-  "useNewFormat": true
-}]]></component>
+  <component name="CMakePresetLoader">{
+  &quot;useNewFormat&quot;: true
+}</component>
   <component name="CMakeProjectFlavorService">
     <option name="flavorId" value="CMakePlainProjectFlavor" />
   </component>
@@ -23,8 +23,8 @@
     </configurations>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="实现最小java数据-&gt;C++计算引擎-&gt;java的流程案例">
-      <change beforePath="$PROJECT_DIR$/python-analysis" beforeDir="false" />
+    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="实现java后端本地假数据，用于软件开发与测试">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -36,30 +36,35 @@
   </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="CMakeBuildProfile:Debug" />
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="main" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
-  "lastFilter": {
-    "state": "OPEN",
-    "assignee": "112-njx"
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;112-njx&quot;
   }
-}]]></component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "git@github.com:112-njx/stock-invest-system.git",
-    "accountId": "8ea450a6-41a6-4add-a28b-146b385c3ccf"
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;git@github.com:112-njx/stock-invest-system.git&quot;,
+    &quot;accountId&quot;: &quot;8ea450a6-41a6-4add-a28b-146b385c3ccf&quot;
   }
-}]]></component>
+}</component>
   <component name="ProjectApplicationVersion">
     <option name="ide" value="CLion" />
     <option name="majorVersion" value="2025" />
     <option name="minorVersion" value="2.1" />
     <option name="productBranch" value="Classic" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "customColor": "",
-  "associatedIndex": 8
-}]]></component>
+  <component name="ProjectColorInfo">{
+  &quot;customColor&quot;: &quot;&quot;,
+  &quot;associatedIndex&quot;: 8
+}</component>
   <component name="ProjectId" id="39YReRz33RVvGvkMfK0Gy237QXC" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
@@ -70,13 +75,14 @@
     "CMake 应用程序.cpp_analysis_service.executor": "Run",
     "ModuleVcsDetector.initialDetectionPerformed": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
     "RunOnceActivity.cidr.known.project.marker": "true",
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.readMode.enableVisualFormatting": "true",
     "RunOnceActivity.west.config.association.type.startup.service": "true",
     "cf.first.check.clang-format": "false",
     "cidr.known.project.marker": "true",
-    "git-widget-placeholder": "main",
+    "git-widget-placeholder": "pr-3",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -130,7 +136,15 @@
       <option name="project" value="LOCAL" />
       <updated>1771149874553</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="实现java后端本地假数据，用于软件开发与测试">
+      <option name="closed" value="true" />
+      <created>1771407952817</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1771407952817</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -144,6 +158,7 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="修复Cmakelist配置bug" />
     <MESSAGE value="实现最小java数据-&gt;C++计算引擎-&gt;java的流程案例" />
-    <option name="LAST_COMMIT_MESSAGE" value="实现最小java数据-&gt;C++计算引擎-&gt;java的流程案例" />
+    <MESSAGE value="实现java后端本地假数据，用于软件开发与测试" />
+    <option name="LAST_COMMIT_MESSAGE" value="实现java后端本地假数据，用于软件开发与测试" />
   </component>
 </project>

@@ -11,6 +11,7 @@ import reactor.core.publisher.Mono;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/market")
@@ -30,5 +31,12 @@ public class MarketDataController {
                 .toList();
 
         return marketDataService.fetchRealtimeQuotes(symbolList);
+    }
+
+    @GetMapping("/providers")
+    public Map<String, Object> providers() {
+        return Map.of(
+                "currentProvider", marketDataService.currentProvider(),
+                "availableProviders", marketDataService.listAvailableProviders());
     }
 }
