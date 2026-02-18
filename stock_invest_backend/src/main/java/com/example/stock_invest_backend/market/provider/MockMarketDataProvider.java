@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
+//这里是本地假数据，用于软件调试
 @Component
 public class MockMarketDataProvider implements MarketDataProvider {
 
