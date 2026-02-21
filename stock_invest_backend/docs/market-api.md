@@ -11,13 +11,10 @@
         - 示例：`sh600519,sz000001,600000`
 
 ### 请求示例
-
 ```bash
 curl "http://localhost:8081/api/market/quotes?symbols=sh600519,sz000001"
 ```
-
 ### 响应示例
-
 ```json
 [
   {
@@ -37,13 +34,10 @@ curl "http://localhost:8081/api/market/quotes?symbols=sh600519,sz000001"
 ```
 
 ### 说明
-
 - 当前返回由配置 `market.data.provider` 决定：
   - `eastmoney`：调用东方财富行情接口
   - `mock`：返回本地假数据（用于 C++ / WebSocket 链路联调）
-
 ---
-
 ## 2) 查看可用 Provider
 
 - **Method**: `GET`
@@ -77,5 +71,3 @@ curl "http://localhost:8081/api/market/providers"
 ```properties
 market.data.provider=mock
 ```
-
-切换为 mock 后，无需依赖外部行情网络即可联调后续链路。

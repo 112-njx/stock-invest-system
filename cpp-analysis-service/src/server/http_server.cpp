@@ -13,7 +13,9 @@ void HttpServer::start(const std::string& host, int port) {
         res.set_content("pong", "text/plain");
     });
 
-    //  MA 分析接口
+    // MA 分析接口，测试阶段
+    //作用是java传入收盘价数据和计算周期，计算MA5 MA10 等等
+    //可暂时忽略
     server.Post("/api/analysis/ma",
                 [](const httplib::Request& req, httplib::Response& res) {
 

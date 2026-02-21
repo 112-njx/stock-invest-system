@@ -8,6 +8,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.reactive.function.client.WebClient;
 
+//基础设施配置类
 @Configuration
 @EnableConfigurationProperties(BacktestEngineProperties.class)
 public class BacktestEngineConfig {
