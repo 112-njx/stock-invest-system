@@ -1,0 +1,4 @@
+# 添加 .gitignore 到暂存区
+git add .gitignore
+# 提交这个文件
+git commit -m "ignore IDEA config files"
