@@ -12,16 +12,12 @@ import reactor.core.publisher.Mono;
 import java.math.BigDecimal;
 import java.time.Duration;
 
-//业务逻辑层，调用 C++ 回测引擎
-
 @Service
 public class MaBacktestService {
-
 
     private final WebClient webClient;
     private final BacktestEngineProperties properties;
 
-    //配置文件
     public MaBacktestService(@Qualifier("backtestEngineWebClient") WebClient webClient,
                              BacktestEngineProperties properties) {
         this.webClient = webClient;

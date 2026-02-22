@@ -1,20 +1,19 @@
-package com.example.stock_invest_backend.market.dto;
+package com.example.stock_invest_backend.market.history.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
-public class MarketQuote {
+public class StockDailyKlineRecord {
 
     private String symbol;
-    private String source;
-    private BigDecimal lastPrice;
-    private BigDecimal changePercent;
+    private LocalDate tradeDate;
     private BigDecimal openPrice;
     private BigDecimal highPrice;
     private BigDecimal lowPrice;
-    private BigDecimal prevClosePrice;
+    private BigDecimal closePrice;
     private Long volume;
     private BigDecimal turnover;
-    private Long quoteTimestamp;
+    private String source;
 
     public String getSymbol() {
         return symbol;
@@ -24,28 +23,12 @@ public class MarketQuote {
         this.symbol = symbol;
     }
 
-    public String getSource() {
-        return source;
+    public LocalDate getTradeDate() {
+        return tradeDate;
     }
 
-    public void setSource(String source) {
-        this.source = source;
-    }
-
-    public BigDecimal getLastPrice() {
-        return lastPrice;
-    }
-
-    public void setLastPrice(BigDecimal lastPrice) {
-        this.lastPrice = lastPrice;
-    }
-
-    public BigDecimal getChangePercent() {
-        return changePercent;
-    }
-
-    public void setChangePercent(BigDecimal changePercent) {
-        this.changePercent = changePercent;
+    public void setTradeDate(LocalDate tradeDate) {
+        this.tradeDate = tradeDate;
     }
 
     public BigDecimal getOpenPrice() {
@@ -72,12 +55,12 @@ public class MarketQuote {
         this.lowPrice = lowPrice;
     }
 
-    public BigDecimal getPrevClosePrice() {
-        return prevClosePrice;
+    public BigDecimal getClosePrice() {
+        return closePrice;
     }
 
-    public void setPrevClosePrice(BigDecimal prevClosePrice) {
-        this.prevClosePrice = prevClosePrice;
+    public void setClosePrice(BigDecimal closePrice) {
+        this.closePrice = closePrice;
     }
 
     public Long getVolume() {
@@ -96,11 +79,11 @@ public class MarketQuote {
         this.turnover = turnover;
     }
 
-    public Long getQuoteTimestamp() {
-        return quoteTimestamp;
+    public String getSource() {
+        return source;
     }
 
-    public void setQuoteTimestamp(Long quoteTimestamp) {
-        this.quoteTimestamp = quoteTimestamp;
+    public void setSource(String source) {
+        this.source = source;
     }
 }
