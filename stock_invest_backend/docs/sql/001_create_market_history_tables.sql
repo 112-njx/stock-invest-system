@@ -1,6 +1,7 @@
 -- MA 回测阶段：最小历史数据结构（MySQL 8+）
 -- 用途：先落地 3 个月日 K 数据，供 C++ 回测引擎直接读取。
 
+#数据库名称:invest_stock_system
 #这是交易日线数据库
 CREATE TABLE IF NOT EXISTS stock_daily_kline (
                                                  id BIGINT PRIMARY KEY AUTO_INCREMENT,

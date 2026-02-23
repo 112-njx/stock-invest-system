@@ -23,10 +23,12 @@
     </configurations>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="在项目根目录添加.gitignore，忽略IDEA配置文件">
+    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="添加一些必要的注释">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/market-api.md" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/docs/market-api.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/config/HistoryIngestionProperties.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/config/HistoryIngestionProperties.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/sql/001_create_market_history_tables.sql" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/docs/sql/001_create_market_history_tables.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/config/MySqlWriteProperties.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/config/MySqlWriteProperties.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/service/FakeHistoryIngestionService.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/service/FakeHistoryIngestionService.java" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -141,7 +143,15 @@
       <option name="project" value="LOCAL" />
       <updated>1771732831886</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="添加一些必要的注释">
+      <option name="closed" value="true" />
+      <created>1771838498351</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1771838498351</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -156,6 +166,7 @@
     <MESSAGE value="修复Cmakelist配置bug" />
     <MESSAGE value="实现最小java数据-&gt;C++计算引擎-&gt;java的流程案例" />
     <MESSAGE value="添加.gitignore，忽略IDEA配置文件" />
-    <option name="LAST_COMMIT_MESSAGE" value="添加.gitignore，忽略IDEA配置文件" />
+    <MESSAGE value="添加一些必要的注释" />
+    <option name="LAST_COMMIT_MESSAGE" value="添加一些必要的注释" />
   </component>
 </project>

@@ -8,9 +8,9 @@ import org.springframework.stereotype.Component;
 public class MySqlWriteProperties {
 
     private boolean enabled = false;
-    private String url = "jdbc:mysql://localhost:3306/stock_invest?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true";
+    private String url = "jdbc:mysql://localhost:3306/invest_stock_system?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true";
     private String username = "root";
-    private String password = "root";
+    private String password = "123456";
 
     public boolean isEnabled() {
         return enabled;

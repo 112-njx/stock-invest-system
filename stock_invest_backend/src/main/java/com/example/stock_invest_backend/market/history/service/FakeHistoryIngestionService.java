@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
+//假数据生成模块
 @Service
 public class FakeHistoryIngestionService {
 

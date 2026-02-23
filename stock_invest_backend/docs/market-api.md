@@ -13,6 +13,35 @@
 ```bash
 curl "http://localhost:8081/api/market/quotes?symbols=sh600519,sz000001"
 ```
+返回数据：
+[
+{
+"changePercent": -0.08,
+"highPrice": 24.61,
+"lastPrice": 24.34,
+"lowPrice": 24.14,
+"openPrice": 24.41,
+"prevClosePrice": 24.36,
+"quoteTimestamp": 1771841204,
+"source": "mock",
+"symbol": "sh600519",
+"turnover": 41816071.32,
+"volume": 1717998
+},
+{
+"changePercent": -0.45,
+"highPrice": 42.09,
+"lastPrice": 41.65,
+"lowPrice": 41.45,
+"openPrice": 41.89,
+"prevClosePrice": 41.84,
+"quoteTimestamp": 1771841204,
+"source": "mock",
+"symbol": "sz000001",
+"turnover": 9117434.90,
+"volume": 218906
+}
+]
 
 ### 2) 查看 provider
 - **Method**: `GET`
@@ -22,6 +51,14 @@ curl "http://localhost:8081/api/market/quotes?symbols=sh600519,sz000001"
 curl "http://localhost:8081/api/market/providers"
 ```
 调用返回：
+{
+  "availableProviders": [
+  "eastmoney",
+  "mock"
+  ],
+  "currentProvider": "mock"
+}
+
 ### 3) 生成近N月日K假数据并写入MySQL
 - **Method**: `POST`
 - **Path**: `/api/market/history/ingest`
@@ -39,11 +76,21 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
   -H "Content-Type: application/json" \
   -d '{"symbols":["sh600519","sz000001"],"months":3}'
 ```
-调用返回：
+调用返回(如果自动写数据库参数为false)：
 {"affectedRows":0,
  "months":3,
  "symbols":["sh600519","sz000001"],
  "note":"uses INSERT ... ON DUPLICATE KEY UPDATE"
+}
+（如果自动写数据库参数为true）:
+{
+  "note": "uses INSERT ... ON DUPLICATE KEY UPDATE",
+  "symbols": [
+  "sh600519",
+  "sz000001"
+  ],
+  "months": 3,
+  "affectedRows": 132
 }
 > 写库语句为 `INSERT ... ON DUPLICATE KEY UPDATE`，可重复调用不产生重复主业务记录。
 
@@ -64,6 +111,16 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
   "endDate": "2026-02-01"
 }
 ```
+返回数据：
+{
+"message": "mock result; dateRange=2025-11-01~2026-02-01",
+"period": 5,
+"source": "cpp-backtest-mock",
+"successRate": 0.5833333333333334,
+"symbol": "sh600519",
+"totalSignals": 12,
+"winSignals": 7
+}
 
 ```bash
 curl -X POST "http://localhost:8081/api/backtest/ma" \
@@ -81,6 +138,7 @@ curl -X POST "http://localhost:8080/api/backtest/ma" \
   -H "Content-Type: application/json" \
   -d '{"symbol":"sh600519","period":5,"startDate":"2025-11-01","endDate":"2026-02-01"}'
 ```
+返回数据:与上面一致
 
 ### 3) 健康检查（C++）
 - **Method**: `GET`
@@ -89,3 +147,5 @@ curl -X POST "http://localhost:8080/api/backtest/ma" \
 ```bash
 curl "http://localhost:8080/ping"
 ```
+
+返回数据：pong
