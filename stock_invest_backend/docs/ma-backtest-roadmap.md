@@ -8,12 +8,12 @@
 
 ## 分阶段任务（先实现功能1）
 
-### Task 1（本次已完成）
+### Task 1（已完成）
 - 设计并落地 MySQL 表结构（`stock_daily_kline`、`strategy_backtest_result`）。
 - 新增 Java 回测 API：`POST /api/backtest/ma`。
 - 打通 Java -> C++ 回测调用链（先用 mock 结果）。
 
-### Task 2（下一步）
+### Task 2（已完成）
 - Java 增加“补齐近 3 个月日K”的采集任务（按 symbol 批量写入 MySQL）。
 - 增加去重写入逻辑：`INSERT ... ON DUPLICATE KEY UPDATE`。
 

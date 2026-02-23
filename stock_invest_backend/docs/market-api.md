@@ -111,7 +111,7 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
   "endDate": "2026-02-01"
 }
 ```
-返回数据：
+返回数据（C++服务开启）：
 {
 "message": "mock result; dateRange=2025-11-01~2026-02-01",
 "period": 5,
@@ -120,6 +120,17 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
 "symbol": "sh600519",
 "totalSignals": 12,
 "winSignals": 7
+}
+
+返回数据（C++服务关闭）：
+{
+"message": "Backtest engine unavailable: Connection refused: getsockopt: localhost/127.0.0.1:8080",
+"period": 5,
+"source": "java-fallback",
+"successRate": 0,
+"symbol": "sh600519",
+"totalSignals": 0,
+"winSignals": 0
 }
 
 ```bash
