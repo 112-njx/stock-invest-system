@@ -21,8 +21,8 @@ curl "http://localhost:8081/api/market/quotes?symbols=sh600519,sz000001"
 ```bash
 curl "http://localhost:8081/api/market/providers"
 ```
-
-### 3) 生成近N月日K假数据并写入MySQL（第二步新增）
+调用返回：
+### 3) 生成近N月日K假数据并写入MySQL
 - **Method**: `POST`
 - **Path**: `/api/market/history/ingest`
 - **Body**（可选）:
@@ -39,7 +39,12 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
   -H "Content-Type: application/json" \
   -d '{"symbols":["sh600519","sz000001"],"months":3}'
 ```
-
+调用返回：
+{"affectedRows":0,
+ "months":3,
+ "symbols":["sh600519","sz000001"],
+ "note":"uses INSERT ... ON DUPLICATE KEY UPDATE"
+}
 > 写库语句为 `INSERT ... ON DUPLICATE KEY UPDATE`，可重复调用不产生重复主业务记录。
 
 ---
@@ -84,15 +89,3 @@ curl -X POST "http://localhost:8080/api/backtest/ma" \
 ```bash
 curl "http://localhost:8080/ping"
 ```
-
----
-
-## C. 常见400错误说明（你遇到的问题）
-
-1) `localhost:8080/api/backtest/ma` 返回 `JSON parse error ... empty input`  
-原因：请求没有 `-d` body，C++ 尝试解析空字符串。
-
-2) `localhost:8081/api/backtest/ma` 返回 `Required request body is missing`  
-原因：Java `@RequestBody` 必填，你没传 body。
-
-**不是“自动携带 body”**，HTTP POST 默认不会自动补 body；必须由调用方显式传 JSON（Postman、curl、前端 fetch 都一样）。
