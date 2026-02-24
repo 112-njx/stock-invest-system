@@ -111,6 +111,7 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
   "endDate": "2026-02-01"
 }
 ```
+版本26/2/23:未接通数据库中数据，假返回。
 返回数据（C++服务开启）：
 {
 "message": "mock result; dateRange=2025-11-01~2026-02-01",
@@ -133,6 +134,87 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
 "winSignals": 0
 }
 
+版本26/2/24:接通数据库中数据。
+
+{
+"crossDownDates": [
+"2025-12-04",
+"2025-12-29",
+"2026-01-21",
+"2026-01-27"
+],
+"crossUpDates": [
+"2025-12-24",
+"2026-01-20",
+"2026-01-22"
+],
+"message": "ok; dateRange=2025-11-01~2026-02-01",
+"period": 5,
+"records": 50,
+"signals": [
+{
+"closePrice": 24.96,
+"date": "2025-12-04",
+"legacySignal5": "下破5日线",
+"ma": 25.250000000000007,
+"signal": "下破5日线",
+"signalCode": "CROSS_DOWN"
+},
+{
+"closePrice": 22.69,
+"date": "2025-12-24",
+"legacySignal5": "上穿5日线",
+"ma": 22.308000000000003,
+"signal": "上穿5日线",
+"signalCode": "CROSS_UP"
+},
+{
+"closePrice": 21.86,
+"date": "2025-12-29",
+"legacySignal5": "下破5日线",
+"ma": 22.464000000000006,
+"signal": "下破5日线",
+"signalCode": "CROSS_DOWN"
+},
+{
+"closePrice": 19.04,
+"date": "2026-01-20",
+"legacySignal5": "上穿5日线",
+"ma": 18.804000000000006,
+"signal": "上穿5日线",
+"signalCode": "CROSS_UP"
+},
+{
+"closePrice": 18.61,
+"date": "2026-01-21",
+"legacySignal5": "下破5日线",
+"ma": 18.804000000000006,
+"signal": "下破5日线",
+"signalCode": "CROSS_DOWN"
+},
+{
+"closePrice": 19.16,
+"date": "2026-01-22",
+"legacySignal5": "上穿5日线",
+"ma": 18.804000000000006,
+"signal": "上穿5日线",
+"signalCode": "CROSS_UP"
+},
+{
+"closePrice": 18.87,
+"date": "2026-01-27",
+"legacySignal5": "下破5日线",
+"ma": 18.990000000000002,
+"signal": "下破5日线",
+"signalCode": "CROSS_DOWN"
+}
+],
+"source": "cpp-backtest-mysql",
+"successRate": 0.0,
+"symbol": "sh600519",
+"totalSignals": 3,
+"winSignals": 0
+}
 ```bash
 curl -X POST "http://localhost:8081/api/backtest/ma" \
   -H "Content-Type: application/json" \
