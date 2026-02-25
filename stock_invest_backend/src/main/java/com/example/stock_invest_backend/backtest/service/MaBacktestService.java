@@ -37,11 +37,13 @@ public class MaBacktestService {
 
     private MaBacktestResponse buildFallbackResponse(MaBacktestRequest request, String reason) {
         MaBacktestResponse response = new MaBacktestResponse();
+        response.setStrategyCode("MA_CROSS_" + request.getPeriod());
         response.setSymbol(request.getSymbol());
         response.setPeriod(request.getPeriod());
         response.setTotalSignals(0);
         response.setWinSignals(0);
         response.setSuccessRate(BigDecimal.ZERO);
+        response.setRecords(0);
         response.setSource("java-fallback");
         response.setMessage("Backtest engine unavailable: " + reason);
         return response;

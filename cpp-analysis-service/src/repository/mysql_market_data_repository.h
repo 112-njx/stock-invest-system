@@ -22,6 +22,9 @@ public:
         const std::string& startDate,
         const std::string& endDate) const;
 
+    //增加mysql数据库的插入数据方法
+    void insertBacktestResult(const StrategyBacktestRecord& record) const;
+
 private:
     MySqlConnectionOptions options_;
 };

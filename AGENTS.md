@@ -46,3 +46,23 @@
 - 在本机安装并配置 MySQL C 客户端开发库，确保 CMake 能找到 mysql.h 和 mysqlclient/libmysql。
 - 用真实数据联调 Java -> C++ /api/backtest/ma，确认 Java DTO 是否需要新增 signals 字段展示明细。
 - 需要时将信号文本从“legacySignal5”逐步迁移为 signalCode + signal（按 period 动态）。
+
+【会话记录 2026-02-24】
+关键上下文：实现“C++回测后自动持久化 + Java按symbol/strategy查询”闭环，并统一8080/8081回测字段。
+进度：
+- C++：
+  - 新增回测落库模型 StrategyBacktestRecord。
+  - MySQL仓储新增 insertBacktestResult()，写入 strategy_backtest_result（含 payload_json）。
+  - /api/backtest/ma 在计算后自动落库，再返回结果；返回新增 strategyCode 字段。
+- Java：
+  - MaBacktestResponse 增加 strategyCode/records/crossUpDates/crossDownDates/signals 字段，8081返回与8080对齐。
+  - 新增回测查询仓储与服务：按 symbol + strategyCode 查询 strategy_backtest_result，并解析 payload_json 中信号明细。
+  - 新增查询接口 GET /api/backtest/results?symbol=...&strategyCode=...&limit=20（strategy 参数也兼容）。
+下一步：
+- 联调验证：
+  - 先调用 POST /api/backtest/ma 触发回测并落库；
+  - 再调用 GET /api/backtest/results 查询是否返回最新记录与 signals。
+- 若前端要K线可视化，可直接使用 signals[].date/signalCode/ma/closePrice 叠加标注。
+
+【文档约定】
+每次会话结束需要同步更新 `stock_invest_backend/docs/market-api.md`，每个 API 必须包含：api作用展示、Method、Path、Body、成功调用返回示例。

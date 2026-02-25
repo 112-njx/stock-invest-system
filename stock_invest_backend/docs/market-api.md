@@ -1,4 +1,4 @@
-# Backend API 文档（按当前 Java/C++ 代码自动整理）
+﻿# Backend API 文档（按当前 Java/C++ 代码整理）
 
 > Java Base URL: `http://localhost:8081`  
 > C++ Base URL: `http://localhost:8080`
@@ -6,63 +6,75 @@
 ## A. 行情模块（Java）
 
 ### 1) 获取实时行情
-- **Method**: `GET`
-- **Path**: `/api/market/quotes`
-- **Query**: `symbols`（必填，逗号分隔）
+- api作用展示：按股票代码批量获取实时行情（价格、涨跌幅、成交量等）
+- Method: `GET`
+- Path: `/api/market/quotes`
+- Body: 无（使用 Query 参数 `symbols`，逗号分隔）
 
 ```bash
 curl "http://localhost:8081/api/market/quotes?symbols=sh600519,sz000001"
 ```
-返回数据：
-[
-{
-"changePercent": -0.08,
-"highPrice": 24.61,
-"lastPrice": 24.34,
-"lowPrice": 24.14,
-"openPrice": 24.41,
-"prevClosePrice": 24.36,
-"quoteTimestamp": 1771841204,
-"source": "mock",
-"symbol": "sh600519",
-"turnover": 41816071.32,
-"volume": 1717998
-},
-{
-"changePercent": -0.45,
-"highPrice": 42.09,
-"lastPrice": 41.65,
-"lowPrice": 41.45,
-"openPrice": 41.89,
-"prevClosePrice": 41.84,
-"quoteTimestamp": 1771841204,
-"source": "mock",
-"symbol": "sz000001",
-"turnover": 9117434.90,
-"volume": 218906
-}
-]
 
-### 2) 查看 provider
-- **Method**: `GET`
-- **Path**: `/api/market/providers`
+成功调用时返回结果（示例）：
+
+```json
+[
+  {
+    "symbol": "sh600519",
+    "lastPrice": 24.34,
+    "changePercent": -0.08,
+    "openPrice": 24.41,
+    "highPrice": 24.61,
+    "lowPrice": 24.14,
+    "prevClosePrice": 24.36,
+    "volume": 1717998,
+    "turnover": 41816071.32,
+    "quoteTimestamp": 1771841204,
+    "source": "eastmoney"
+  },
+  {
+    "symbol": "sz000001",
+    "lastPrice": 41.65,
+    "changePercent": -0.45,
+    "openPrice": 41.89,
+    "highPrice": 42.09,
+    "lowPrice": 41.45,
+    "prevClosePrice": 41.84,
+    "volume": 218906,
+    "turnover": 9117434.90,
+    "quoteTimestamp": 1771841204,
+    "source": "eastmoney"
+  }
+]
+```
+
+### 2) 查看行情 Provider
+- api作用展示：查看当前启用的行情数据源和可用数据源列表
+- Method: `GET`
+- Path: `/api/market/providers`
+- Body: 无
 
 ```bash
 curl "http://localhost:8081/api/market/providers"
 ```
-调用返回：
-{
-  "availableProviders": [
-  "eastmoney",
-  "mock"
-  ],
-  "currentProvider": "mock"
-}
 
-### 3) 生成近N月日K假数据并写入MySQL
-- **Method**: `POST`
-- **Path**: `/api/market/history/ingest`
-- **Body**（可选）:
+成功调用时返回结果（示例）：
+
+```json
+{
+  "currentProvider": "eastmoney",
+  "availableProviders": [
+    "eastmoney",
+    "mock"
+  ]
+}
+```
+
+### 3) 采集并写入历史日K
+- api作用展示：批量生成/采集近 N 个月日K并写入 `stock_daily_kline`（幂等 upsert）
+- Method: `POST`
+- Path: `/api/market/history/ingest`
+- Body:
 
 ```json
 {
@@ -76,32 +88,27 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
   -H "Content-Type: application/json" \
   -d '{"symbols":["sh600519","sz000001"],"months":3}'
 ```
-调用返回(如果自动写数据库参数为false)：
-{"affectedRows":0,
- "months":3,
- "symbols":["sh600519","sz000001"],
- "note":"uses INSERT ... ON DUPLICATE KEY UPDATE"
-}
-（如果自动写数据库参数为true）:
+
+成功调用时返回结果（示例）：
+
+```json
 {
-  "note": "uses INSERT ... ON DUPLICATE KEY UPDATE",
-  "symbols": [
-  "sh600519",
-  "sz000001"
-  ],
+  "symbols": ["sh600519", "sz000001"],
   "months": 3,
-  "affectedRows": 132
+  "affectedRows": 132,
+  "note": "uses INSERT ... ON DUPLICATE KEY UPDATE"
 }
-> 写库语句为 `INSERT ... ON DUPLICATE KEY UPDATE`，可重复调用不产生重复主业务记录。
+```
 
 ---
 
 ## B. 回测模块
 
-### 1) Java 对外回测接口
-- **Method**: `POST`
-- **Path**: `/api/backtest/ma`
-- **Body**（必填）:
+### 1) Java MA 回测入口
+- api作用展示：调用 C++ 回测引擎，返回 MA 回测结果（含信号日期）
+- Method: `POST`
+- Path: `/api/backtest/ma`
+- Body:
 
 ```json
 {
@@ -111,134 +118,164 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
   "endDate": "2026-02-01"
 }
 ```
-版本26/2/23:未接通数据库中数据，假返回。
-返回数据（C++服务开启）：
-{
-"message": "mock result; dateRange=2025-11-01~2026-02-01",
-"period": 5,
-"source": "cpp-backtest-mock",
-"successRate": 0.5833333333333334,
-"symbol": "sh600519",
-"totalSignals": 12,
-"winSignals": 7
-}
 
-返回数据（C++服务关闭）：
-{
-"message": "Backtest engine unavailable: Connection refused: getsockopt: localhost/127.0.0.1:8080",
-"period": 5,
-"source": "java-fallback",
-"successRate": 0,
-"symbol": "sh600519",
-"totalSignals": 0,
-"winSignals": 0
-}
-
-版本26/2/24:接通数据库中数据。
-
-{
-"crossDownDates": [
-"2025-12-04",
-"2025-12-29",
-"2026-01-21",
-"2026-01-27"
-],
-"crossUpDates": [
-"2025-12-24",
-"2026-01-20",
-"2026-01-22"
-],
-"message": "ok; dateRange=2025-11-01~2026-02-01",
-"period": 5,
-"records": 50,
-"signals": [
-{
-"closePrice": 24.96,
-"date": "2025-12-04",
-"legacySignal5": "下破5日线",
-"ma": 25.250000000000007,
-"signal": "下破5日线",
-"signalCode": "CROSS_DOWN"
-},
-{
-"closePrice": 22.69,
-"date": "2025-12-24",
-"legacySignal5": "上穿5日线",
-"ma": 22.308000000000003,
-"signal": "上穿5日线",
-"signalCode": "CROSS_UP"
-},
-{
-"closePrice": 21.86,
-"date": "2025-12-29",
-"legacySignal5": "下破5日线",
-"ma": 22.464000000000006,
-"signal": "下破5日线",
-"signalCode": "CROSS_DOWN"
-},
-{
-"closePrice": 19.04,
-"date": "2026-01-20",
-"legacySignal5": "上穿5日线",
-"ma": 18.804000000000006,
-"signal": "上穿5日线",
-"signalCode": "CROSS_UP"
-},
-{
-"closePrice": 18.61,
-"date": "2026-01-21",
-"legacySignal5": "下破5日线",
-"ma": 18.804000000000006,
-"signal": "下破5日线",
-"signalCode": "CROSS_DOWN"
-},
-{
-"closePrice": 19.16,
-"date": "2026-01-22",
-"legacySignal5": "上穿5日线",
-"ma": 18.804000000000006,
-"signal": "上穿5日线",
-"signalCode": "CROSS_UP"
-},
-{
-"closePrice": 18.87,
-"date": "2026-01-27",
-"legacySignal5": "下破5日线",
-"ma": 18.990000000000002,
-"signal": "下破5日线",
-"signalCode": "CROSS_DOWN"
-}
-],
-"source": "cpp-backtest-mysql",
-"successRate": 0.0,
-"symbol": "sh600519",
-"totalSignals": 3,
-"winSignals": 0
-}
 ```bash
 curl -X POST "http://localhost:8081/api/backtest/ma" \
   -H "Content-Type: application/json" \
   -d '{"symbol":"sh600519","period":5,"startDate":"2025-11-01","endDate":"2026-02-01"}'
 ```
 
-### 2) C++ 引擎接口（Java会调用它）
-- **Method**: `POST`
-- **Path**: `/api/backtest/ma`
-- **Body**：与上面一致
+成功调用时返回结果（示例）：
+
+```json
+{
+  "symbol": "sh600519",
+  "strategyCode": "MA_CROSS_5",
+  "period": 5,
+  "totalSignals": 3,
+  "winSignals": 1,
+  "successRate": 0.3333333333,
+  "records": 50,
+  "source": "cpp-backtest-mysql",
+  "message": "ok; dateRange=2025-11-01~2026-02-01",
+  "crossUpDates": ["2025-12-24", "2026-01-20", "2026-01-22"],
+  "crossDownDates": ["2025-12-04", "2025-12-29", "2026-01-21", "2026-01-27"],
+  "signals": [
+    {
+      "date": "2025-12-24",
+      "signalCode": "CROSS_UP",
+      "signal": "上穿5日线",
+      "legacySignal5": "上穿5日线",
+      "closePrice": 22.69,
+      "ma": 22.308
+    }
+  ]
+}
+```
+
+### 2) Java 查询历史回测结果（前端展示）
+- api作用展示：按 `symbol + strategyCode` 查询已落库回测结果（含 `payload_json` 中的信号）
+- Method: `GET`
+- Path: `/api/backtest/results`
+- Body: 无（使用 Query 参数）
+
+Query 参数：
+- `symbol`：必填，例如 `sh600519`
+- `strategyCode`：推荐填，例如 `MA_CROSS_5`
+- `strategy`：兼容参数（当 `strategyCode` 为空时生效）
+- `limit`：可选，默认 `20`，最大 `200`
+
+```bash
+curl "http://localhost:8081/api/backtest/results?symbol=sh600519&strategyCode=MA_CROSS_5&limit=20"
+```
+
+成功调用时返回结果（示例）：
+
+```json
+[
+  {
+    "id": 10,
+    "strategyCode": "MA_CROSS_5",
+    "symbol": "sh600519",
+    "period": 5,
+    "startDate": "2025-11-01",
+    "endDate": "2026-02-01",
+    "totalSignals": 3,
+    "winSignals": 1,
+    "successRate": 0.3333,
+    "createdAt": "2026-02-24T21:10:11",
+    "crossUpDates": ["2025-12-24", "2026-01-20", "2026-01-22"],
+    "crossDownDates": ["2025-12-04", "2025-12-29", "2026-01-21", "2026-01-27"],
+    "signals": [
+      {
+        "date": "2025-12-24",
+        "signalCode": "CROSS_UP",
+        "signal": "上穿5日线",
+        "legacySignal5": "上穿5日线",
+        "closePrice": 22.69,
+        "ma": 22.308
+      }
+    ],
+    "payloadJson": "{...}"
+  }
+]
+```
+
+### 3) C++ MA 回测引擎接口
+- api作用展示：C++ 直接执行 MA 回测，并自动写入 `strategy_backtest_result`
+- Method: `POST`
+- Path: `/api/backtest/ma`
+- Body: 与 Java 回测入口相同
 
 ```bash
 curl -X POST "http://localhost:8080/api/backtest/ma" \
   -H "Content-Type: application/json" \
   -d '{"symbol":"sh600519","period":5,"startDate":"2025-11-01","endDate":"2026-02-01"}'
 ```
-返回数据:与上面一致
 
-### 3) 健康检查（C++）
-- **Method**: `GET`
-- **Path**: `/ping`
+成功调用时返回结果（示例）：
+
+```json
+{
+  "symbol": "sh600519",
+  "strategyCode": "MA_CROSS_5",
+  "period": 5,
+  "totalSignals": 3,
+  "winSignals": 1,
+  "successRate": 0.3333333333,
+  "records": 50,
+  "source": "cpp-backtest-mysql",
+  "message": "ok; dateRange=2025-11-01~2026-02-01",
+  "crossUpDates": ["2025-12-24", "2026-01-20", "2026-01-22"],
+  "crossDownDates": ["2025-12-04", "2025-12-29", "2026-01-21", "2026-01-27"],
+  "signals": [
+    {
+      "date": "2025-12-24",
+      "signalCode": "CROSS_UP",
+      "signal": "上穿5日线",
+      "legacySignal5": "上穿5日线",
+      "closePrice": 22.69,
+      "ma": 22.308
+    }
+  ]
+}
+```
+
+### 4) C++ MA 计算测试接口
+- api作用展示：测试 MA 计算链路（当前为占位返回）
+- Method: `POST`
+- Path: `/api/analysis/ma`
+- Body:
+
+```json
+{
+  "symbol": "sh600519",
+  "period": 5
+}
+```
+
+成功调用时返回结果（示例）：
+
+```json
+{
+  "symbol": "sh600519",
+  "period": 5,
+  "ma": 123.45
+}
+```
+
+### 5) C++ 健康检查
+- api作用展示：检查 C++ 服务是否在线
+- Method: `GET`
+- Path: `/ping`
+- Body: 无
 
 ```bash
 curl "http://localhost:8080/ping"
 ```
 
-返回数据：pong
+成功调用时返回结果：
+
+```text
+pong
+```

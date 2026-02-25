@@ -76,6 +76,7 @@ void HttpServer::start(const std::string& host, int port) {
             json crossUpDates = json::array();
             json crossDownDates = json::array();
             json signalDetails = json::array();
+            const std::string strategyCode = "MA_CROSS_" + std::to_string(period);
             const std::string crossUpLabel = period == 5 ? "上穿5日线" : ("上穿MA" + std::to_string(period));
             const std::string crossDownLabel = period == 5 ? "下破5日线" : ("下破MA" + std::to_string(period));
 
@@ -97,8 +98,29 @@ void HttpServer::start(const std::string& host, int port) {
                 });
             }
 
+            //回测结束后立即开始落库
+            const json payload = {
+                {"crossUpDates", crossUpDates},
+                {"crossDownDates", crossDownDates},
+                {"signals", signalDetails}
+            };
+
+            StrategyBacktestRecord record;
+            record.strategyCode = strategyCode;
+            record.symbol = symbol;
+            record.period = period;
+            record.startDate = startDate;
+            record.endDate = endDate;
+            record.totalSignals = backtestResult.totalSignals;
+            record.winSignals = backtestResult.winSignals;
+            record.successRate = backtestResult.successRate;
+            record.payloadJson = payload.dump();
+            repository.insertBacktestResult(record);
+
+            //回测落库结构
             const json result = {
                 {"symbol", symbol},
+                {"strategyCode", strategyCode},
                 {"period", period},
                 {"totalSignals", backtestResult.totalSignals},
                 {"winSignals", backtestResult.winSignals},

@@ -1,8 +1,6 @@
-//该文件，软件包是MySql接入回测引擎。
-//按 symbol + startDate + endDate 读取区间日K
-#include "repository/mysql_market_data_repository.h"
+﻿#include "repository/mysql_market_data_repository.h"
 
-#include <cstdlib>
+#include <cstring>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -34,6 +32,35 @@ bool isValidDate(const std::string& date) {
     return std::regex_match(date, datePattern);
 }
 
+bool isValidStrategyCode(const std::string& strategyCode) {
+    static const std::regex codePattern("^[A-Z0-9_]+$");
+    return std::regex_match(strategyCode, codePattern);
+}
+
+#if CPP_BACKTEST_HAS_MYSQL
+MYSQL* connectOrThrow(const MySqlConnectionOptions& options) {
+    MYSQL* connection = mysql_init(nullptr);
+    if (connection == nullptr) {
+        throw std::runtime_error("mysql_init failed");
+    }
+
+    if (mysql_real_connect(
+            connection,
+            options.host.c_str(),
+            options.username.c_str(),
+            options.password.c_str(),
+            options.database.c_str(),
+            options.port,
+            nullptr,
+            0) == nullptr) {
+        const std::string error = mysql_error(connection);
+        mysql_close(connection);
+        throw std::runtime_error("mysql_real_connect failed: " + error);
+    }
+    return connection;
+}
+#endif
+
 }  // namespace
 
 MySqlMarketDataRepository::MySqlMarketDataRepository(MySqlConnectionOptions options)
@@ -57,24 +84,7 @@ std::vector<DailyBar> MySqlMarketDataRepository::queryDailyBars(
     throw std::runtime_error(
         "mysql client dependency not enabled. Build with MySQL headers and library.");
 #else
-    MYSQL* connection = mysql_init(nullptr);
-    if (connection == nullptr) {
-        throw std::runtime_error("mysql_init failed");
-    }
-
-    if (mysql_real_connect(
-            connection,
-            options_.host.c_str(),
-            options_.username.c_str(),
-            options_.password.c_str(),
-            options_.database.c_str(),
-            options_.port,
-            nullptr,
-            0) == nullptr) {
-        const std::string error = mysql_error(connection);
-        mysql_close(connection);
-        throw std::runtime_error("mysql_real_connect failed: " + error);
-    }
+    MYSQL* connection = connectOrThrow(options_);
 
     std::ostringstream sql;
     sql << "SELECT trade_date, open_price, high_price, low_price, close_price "
@@ -120,5 +130,111 @@ std::vector<DailyBar> MySqlMarketDataRepository::queryDailyBars(
     mysql_free_result(rawResult);
     mysql_close(connection);
     return bars;
+#endif
+}
+
+//实现回测数据的插入
+void MySqlMarketDataRepository::insertBacktestResult(const StrategyBacktestRecord& record) const {
+    if (!isValidStrategyCode(record.strategyCode)) {
+        throw std::invalid_argument("strategyCode format invalid, expected pattern: MA_CROSS_5");
+    }
+    if (!isValidSymbol(record.symbol)) {
+        throw std::invalid_argument("symbol format invalid, expected example: sh600519");
+    }
+    if (!isValidDate(record.startDate) || !isValidDate(record.endDate)) {
+        throw std::invalid_argument("date format invalid, expected yyyy-MM-dd");
+    }
+
+#if !CPP_BACKTEST_HAS_MYSQL
+    throw std::runtime_error(
+        "mysql client dependency not enabled. Build with MySQL headers and library.");
+#else
+    MYSQL* connection = connectOrThrow(options_);
+
+    const char* sql =
+        "INSERT INTO strategy_backtest_result "
+        "(strategy_code, symbol, period, start_date, end_date, total_signals, win_signals, success_rate, payload_json) "
+        "VALUES (?, ?, ?, STR_TO_DATE(?, '%Y-%m-%d'), STR_TO_DATE(?, '%Y-%m-%d'), ?, ?, ?, CAST(? AS JSON))";
+
+    MYSQL_STMT* stmt = mysql_stmt_init(connection);
+    if (stmt == nullptr) {
+        const std::string error = mysql_error(connection);
+        mysql_close(connection);
+        throw std::runtime_error("mysql_stmt_init failed: " + error);
+    }
+
+    if (mysql_stmt_prepare(stmt, sql, static_cast<unsigned long>(std::strlen(sql))) != 0) {
+        const std::string error = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        mysql_close(connection);
+        throw std::runtime_error("mysql_stmt_prepare failed: " + error);
+    }
+
+    int period = record.period;
+    int totalSignals = record.totalSignals;
+    int winSignals = record.winSignals;
+    double successRate = record.successRate;
+
+    unsigned long strategyCodeLength = static_cast<unsigned long>(record.strategyCode.size());
+    unsigned long symbolLength = static_cast<unsigned long>(record.symbol.size());
+    unsigned long startDateLength = static_cast<unsigned long>(record.startDate.size());
+    unsigned long endDateLength = static_cast<unsigned long>(record.endDate.size());
+    unsigned long payloadLength = static_cast<unsigned long>(record.payloadJson.size());
+
+    MYSQL_BIND bind[9] = {};
+
+    bind[0].buffer_type = MYSQL_TYPE_STRING;
+    bind[0].buffer = const_cast<char*>(record.strategyCode.c_str());
+    bind[0].buffer_length = strategyCodeLength;
+    bind[0].length = &strategyCodeLength;
+
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = const_cast<char*>(record.symbol.c_str());
+    bind[1].buffer_length = symbolLength;
+    bind[1].length = &symbolLength;
+
+    bind[2].buffer_type = MYSQL_TYPE_LONG;
+    bind[2].buffer = &period;
+
+    bind[3].buffer_type = MYSQL_TYPE_STRING;
+    bind[3].buffer = const_cast<char*>(record.startDate.c_str());
+    bind[3].buffer_length = startDateLength;
+    bind[3].length = &startDateLength;
+
+    bind[4].buffer_type = MYSQL_TYPE_STRING;
+    bind[4].buffer = const_cast<char*>(record.endDate.c_str());
+    bind[4].buffer_length = endDateLength;
+    bind[4].length = &endDateLength;
+
+    bind[5].buffer_type = MYSQL_TYPE_LONG;
+    bind[5].buffer = &totalSignals;
+
+    bind[6].buffer_type = MYSQL_TYPE_LONG;
+    bind[6].buffer = &winSignals;
+
+    bind[7].buffer_type = MYSQL_TYPE_DOUBLE;
+    bind[7].buffer = &successRate;
+
+    bind[8].buffer_type = MYSQL_TYPE_STRING;
+    bind[8].buffer = const_cast<char*>(record.payloadJson.c_str());
+    bind[8].buffer_length = payloadLength;
+    bind[8].length = &payloadLength;
+
+    if (mysql_stmt_bind_param(stmt, bind) != 0) {
+        const std::string error = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        mysql_close(connection);
+        throw std::runtime_error("mysql_stmt_bind_param failed: " + error);
+    }
+
+    if (mysql_stmt_execute(stmt) != 0) {
+        const std::string error = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        mysql_close(connection);
+        throw std::runtime_error("mysql_stmt_execute failed: " + error);
+    }
+
+    mysql_stmt_close(stmt);
+    mysql_close(connection);
 #endif
 }
