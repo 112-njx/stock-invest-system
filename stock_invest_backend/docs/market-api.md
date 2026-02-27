@@ -100,6 +100,53 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
 }
 ```
 
+### 4) 查询 LOF 实时溢价率
+- api作用展示：按 LOF 代码返回实时溢价率，净值优先取 iopv，缺失时退化到上一交易日净值，并标记状态
+- Method: `GET`
+- Path: `/api/market/lof/premium`
+- Body: 无（使用 Query 参数 `symbols`，可选，逗号分隔；不传则使用默认 2 只 LOF）
+
+```bash
+curl "http://localhost:8081/api/market/lof/premium?symbols=sz161129,sz161130"
+```
+
+成功调用时返回结果（示例）：
+
+```json
+{
+  "requestId": "f0e52a14-701a-491c-b8de-01bf7f3979be",
+  "generatedAt": "2026-02-27T11:22:33.111Z",
+  "items": [
+    {
+      "symbol": "sz161129",
+      "name": "原油LOF",
+      "lastPrice": 0.857,
+      "nav": 0.842,
+      "navType": "IOPV_REALTIME",
+      "premiumRate": 0.01781591,
+      "status": "OK",
+      "quoteTime": 1772187753,
+      "navDate": "realtime",
+      "cacheHit": true,
+      "message": null
+    },
+    {
+      "symbol": "sz161130",
+      "name": "基金示例",
+      "lastPrice": 1.102,
+      "nav": 1.095,
+      "navType": "PREV_DAY_NAV",
+      "premiumRate": 0.00639269,
+      "status": "OK",
+      "quoteTime": 1772187753,
+      "navDate": "previous-trading-day",
+      "cacheHit": false,
+      "message": "realtime iopv unavailable, fallback to previous day nav"
+    }
+  ]
+}
+```
+
 ---
 
 ## B. 回测模块
