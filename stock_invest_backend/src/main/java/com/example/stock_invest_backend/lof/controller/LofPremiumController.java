@@ -20,6 +20,10 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/market/lof")
+/*
+这里是lof基金和DB有关的接口，包括重新加载 LOF symbol 清单（DB -> 本地缓存）
+和溢价率排名展示接口
+ */
 public class LofPremiumController {
 
     private final LofPremiumSourceService lofPremiumSourceService;

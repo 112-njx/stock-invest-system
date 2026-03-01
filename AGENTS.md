@@ -46,3 +46,19 @@
 - 文档更新：`market-api.md` 已新增排行接口说明与成功示例。
 备注：
 - `tradingOnly` 参数已接入并保留，交易时段过滤将在 L3 阶段实现。
+
+【会话记录 2026-03-01（LOF L3-1~L3-3 编码）】
+关键上下文：完成交易时段过滤与响应可解释字段。
+进度：
+- 新增 `LofTradingSessionService`：
+  - 简版交易时段判定（周一到周五，09:30-11:30、13:00-15:00，Asia/Shanghai）。
+- 更新 `LofPremiumRankService`：
+  - `tradingOnly=true` 时若非交易时段返回空列表；
+  - `onlyStatusOk=true` 时仅保留 `status=OK`；
+  - 响应新增可解释字段：`filtersApplied`、`tradingWindow`、`message`。
+- 更新 `LofPremiumRankResponse` 增加上述字段。
+- 更新 `market-api.md`：
+  - 排行接口补充交易时段过滤说明；
+  - 新增非交易时段返回示例。
+下一步：
+- 若需要接节假日精准交易日历，可在 L3 后续接入交易日历表替代“仅周末过滤”的简版策略。

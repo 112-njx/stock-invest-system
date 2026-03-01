@@ -10,38 +10,64 @@ import reactor.core.publisher.Mono;
 import java.util.Comparator;
 import java.util.List;
 
+/*
+这是lof基金排序规则的实现
+主排序：premiumRate(溢价率)
+副排序：quoteTime(报价时间)
+ */
 @Service
 public class LofPremiumRankService {
 
     private final LofPremiumSourceService lofPremiumSourceService;
+    private final LofTradingSessionService tradingSessionService;
 
-    public LofPremiumRankService(LofPremiumSourceService lofPremiumSourceService) {
+    public LofPremiumRankService(LofPremiumSourceService lofPremiumSourceService,
+                                 LofTradingSessionService tradingSessionService) {
         this.lofPremiumSourceService = lofPremiumSourceService;
+        this.tradingSessionService = tradingSessionService;
     }
 
     public Mono<LofPremiumRankResponse> rank(LofPremiumRankRequest request) {
         final int safeLimit = Math.max(1, Math.min(nullSafeLimit(request.getLimit()), 200));
         final String order = normalizeOrder(request.getOrder());
         final boolean onlyStatusOk = Boolean.TRUE.equals(request.getOnlyStatusOk());
+        final boolean tradingOnly = Boolean.TRUE.equals(request.getTradingOnly());
+        final boolean tradingOpen = tradingSessionService.isTradingOpenNow();
 
         return lofPremiumSourceService.fetchPremiums(List.of())
                 .map(response -> {
+                    LofPremiumRankResponse rankResponse = new LofPremiumRankResponse();
+                    rankResponse.setTradingWindow(tradingOpen ? "OPEN" : "CLOSED");
+                    List<String> filtersApplied = new java.util.ArrayList<>();
+
+                    if (tradingOnly) {
+                        filtersApplied.add("tradingOnly");
+                        if (!tradingOpen) {
+                            rankResponse.setItems(List.of());
+                            rankResponse.setTotal(0);
+                            rankResponse.setFiltersApplied(filtersApplied);
+                            rankResponse.setMessage("trading window is closed");
+                            return rankResponse;
+                        }
+                    }
+
                     List<LofPremiumItem> items = response.getItems();
                     if (onlyStatusOk) {
+                        filtersApplied.add("onlyStatusOk");
                         items = items.stream()
                                 .filter(item -> item.getStatus() == LofPremiumStatus.OK)
                                 .toList();
                     }
 
-                    // tradingOnly is reserved by L3 and intentionally not applied in L2 stage.
                     List<LofPremiumItem> ranked = items.stream()
                             .sorted(buildComparator(order))
                             .limit(safeLimit)
                             .toList();
 
-                    LofPremiumRankResponse rankResponse = new LofPremiumRankResponse();
                     rankResponse.setItems(ranked);
                     rankResponse.setTotal(ranked.size());
+                    rankResponse.setFiltersApplied(filtersApplied);
+                    rankResponse.setMessage("ok");
                     return rankResponse;
                 });
     }

@@ -179,7 +179,7 @@ Query 参数：
 - `order`：可选，`asc|desc`，默认 `desc`
 - `limit`：可选，默认 `20`，范围 `1~200`
 - `onlyStatusOk`：可选，默认 `false`
-- `tradingOnly`：可选，默认 `false`（L3 阶段实现交易时段过滤，当前仅预留）
+- `tradingOnly`：可选，默认 `false`（为 `true` 时，仅交易时段返回数据；非交易时段返回空列表）
 
 ```bash
 curl "http://localhost:8081/api/market/lof/premium/rank?order=desc&limit=20&onlyStatusOk=true&tradingOnly=false"
@@ -218,7 +218,23 @@ curl "http://localhost:8081/api/market/lof/premium/rank?order=desc&limit=20&only
     }
   ],
   "total": 2,
+  "filtersApplied": ["onlyStatusOk"],
+  "tradingWindow": "OPEN",
+  "message": "ok",
   "generatedAt": "2026-03-01T10:15:00.001Z"
+}
+```
+
+非交易时段且 `tradingOnly=true` 返回示例：
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "filtersApplied": ["tradingOnly"],
+  "tradingWindow": "CLOSED",
+  "message": "trading window is closed",
+  "generatedAt": "2026-03-01T12:00:00.001Z"
 }
 ```
 
