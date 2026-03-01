@@ -10,6 +10,10 @@ import java.util.List;
 public class LofPremiumProperties {
 
     private List<String> defaultSymbols = List.of("sz161129", "sz161130");
+    private String symbolSource = "db";
+    private int symbolRefreshSeconds = 120;
+    private int symbolDbQueryLimit = 2000;
+    private int fetchBatchSize = 100;
     private int cacheTtlSeconds = 5;
     private int retryMaxAttempts = 3;
     private int retryBaseDelayMs = 200;
@@ -24,6 +28,38 @@ public class LofPremiumProperties {
 
     public void setDefaultSymbols(List<String> defaultSymbols) {
         this.defaultSymbols = defaultSymbols;
+    }
+
+    public String getSymbolSource() {
+        return symbolSource;
+    }
+
+    public void setSymbolSource(String symbolSource) {
+        this.symbolSource = symbolSource;
+    }
+
+    public int getSymbolRefreshSeconds() {
+        return symbolRefreshSeconds;
+    }
+
+    public void setSymbolRefreshSeconds(int symbolRefreshSeconds) {
+        this.symbolRefreshSeconds = symbolRefreshSeconds;
+    }
+
+    public int getSymbolDbQueryLimit() {
+        return symbolDbQueryLimit;
+    }
+
+    public void setSymbolDbQueryLimit(int symbolDbQueryLimit) {
+        this.symbolDbQueryLimit = symbolDbQueryLimit;
+    }
+
+    public int getFetchBatchSize() {
+        return fetchBatchSize;
+    }
+
+    public void setFetchBatchSize(int fetchBatchSize) {
+        this.fetchBatchSize = fetchBatchSize;
     }
 
     public int getCacheTtlSeconds() {

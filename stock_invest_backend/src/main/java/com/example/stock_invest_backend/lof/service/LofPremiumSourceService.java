@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
@@ -21,12 +22,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+/*
+lof溢价率总服务
+ */
 @Service
 public class LofPremiumSourceService {
 
     private static final Logger log = LoggerFactory.getLogger(LofPremiumSourceService.class);
 
+    //这是上游行情数据提供类
     private final LofPremiumDataProvider dataProvider;
+    //这是决定本次查哪些symbol的类
+    private final LofSymbolSourceService lofSymbolSourceService;
     private final LofPremiumCacheGateway cacheGateway;
     private final LofPremiumProperties properties;
     private final Counter requestCounter;
@@ -37,10 +44,12 @@ public class LofPremiumSourceService {
     private final Timer requestLatencyTimer;
 
     public LofPremiumSourceService(LofPremiumDataProvider dataProvider,
+                                   LofSymbolSourceService lofSymbolSourceService,
                                    LofPremiumCacheGateway cacheGateway,
                                    LofPremiumProperties properties,
                                    MeterRegistry meterRegistry) {
         this.dataProvider = dataProvider;
+        this.lofSymbolSourceService = lofSymbolSourceService;
         this.cacheGateway = cacheGateway;
         this.properties = properties;
         this.requestCounter = meterRegistry.counter("lof.premium.requests.total");
@@ -51,13 +60,17 @@ public class LofPremiumSourceService {
         this.requestLatencyTimer = meterRegistry.timer("lof.premium.request.latency");
     }
 
+    //核心流程
     public Mono<LofPremiumResponse> fetchPremiums(List<String> symbols) {
+        //统计请求+计时
         long startNanos = System.nanoTime();
         requestCounter.increment();
 
-        List<String> targetSymbols = resolveSymbols(symbols);
+        //确定目标symbol
+        List<String> targetSymbols = lofSymbolSourceService.resolveSymbols(symbols);
         Map<String, LofPremiumItem> cachedItems = new LinkedHashMap<>();
         List<String> cacheMissSymbols = new ArrayList<>();
+        //缓存优先策略 旁路缓存模式
         for (String symbol : targetSymbols) {
             cacheGateway.get(symbol).ifPresentOrElse(item -> {
                 item.setCacheHit(true);
@@ -71,10 +84,12 @@ public class LofPremiumSourceService {
 
         Mono<List<LofPremiumItem>> freshMono = cacheMissSymbols.isEmpty()
                 ? Mono.just(List.of())
-                : dataProvider.fetchPremiumItems(cacheMissSymbols)
+                //批量请求上游
+                : fetchInBatches(cacheMissSymbols)
                 .doOnNext(items -> items.forEach(item -> {
                     item.setCacheHit(false);
                     if (StringUtils.hasText(item.getSymbol())) {
+                        //写回缓存
                         cacheGateway.put(item.getSymbol(), item);
                     }
                 }));
@@ -113,18 +128,22 @@ public class LofPremiumSourceService {
         });
     }
 
-    private List<String> resolveSymbols(List<String> symbols) {
-        List<String> rawSymbols = (symbols == null || symbols.isEmpty())
-                ? properties.getDefaultSymbols()
-                : symbols;
+    private Mono<List<LofPremiumItem>> fetchInBatches(List<String> symbols) {
+        int batchSize = Math.max(20, Math.min(properties.getFetchBatchSize(), 200));
+        List<List<String>> batches = splitBatches(symbols, batchSize);
+        return Flux.fromIterable(batches)
+                .concatMap(dataProvider::fetchPremiumItems)
+                .flatMapIterable(items -> items)
+                .collectList();
+    }
 
-        return rawSymbols.stream()
-                .map(String::trim)
-                .map(String::toLowerCase)
-                .filter(StringUtils::hasText)
-                .distinct()
-                .limit(100)
-                .toList();
+    private List<List<String>> splitBatches(List<String> symbols, int batchSize) {
+        List<List<String>> batches = new ArrayList<>();
+        for (int i = 0; i < symbols.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, symbols.size());
+            batches.add(symbols.subList(i, end));
+        }
+        return batches;
     }
 
     private LofPremiumItem buildMissingItem(String symbol) {

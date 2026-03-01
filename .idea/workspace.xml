@@ -23,12 +23,14 @@
     </configurations>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="Java 持久化 C++ 回测结果到数据库中。增加按 symbol/strategy 的查询接口，供前端展示。">
+    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="接入redis，测试lof实时溢价率接口">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/AGENTS.md" beforeDir="false" afterPath="$PROJECT_DIR$/AGENTS.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/ma-backtest-roadmap.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/invest_system_roadmap.md" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/docs/invest_system_roadmap.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/market-api.md" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/docs/market-api.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/pom.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/config/LofPremiumProperties.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/config/LofPremiumProperties.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/controller/LofPremiumController.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/controller/LofPremiumController.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofPremiumSourceService.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofPremiumSourceService.java" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -122,7 +124,7 @@
       <updated>1770871113638</updated>
       <workItem from="1770871117264" duration="17713000" />
       <workItem from="1771650150839" duration="7656000" />
-      <workItem from="1771931555681" duration="16380000" />
+      <workItem from="1771931555681" duration="21921000" />
     </task>
     <task id="LOCAL-00001" summary="修复Cmakelist配置bug">
       <option name="closed" value="true" />
@@ -204,7 +206,15 @@
       <option name="project" value="LOCAL" />
       <updated>1772018884436</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="接入redis，测试lof实时溢价率接口">
+      <option name="closed" value="true" />
+      <created>1772197894595</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1772197894596</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -224,6 +234,7 @@
     <MESSAGE value="补充注释" />
     <MESSAGE value="修改Cmakelists,补充依赖，使C++计算引擎接入mysql数据库并且测试接口返回数据。" />
     <MESSAGE value="Java 持久化 C++ 回测结果到数据库中。增加按 symbol/strategy 的查询接口，供前端展示。" />
-    <option name="LAST_COMMIT_MESSAGE" value="Java 持久化 C++ 回测结果到数据库中。增加按 symbol/strategy 的查询接口，供前端展示。" />
+    <MESSAGE value="接入redis，测试lof实时溢价率接口" />
+    <option name="LAST_COMMIT_MESSAGE" value="接入redis，测试lof实时溢价率接口" />
   </component>
 </project>

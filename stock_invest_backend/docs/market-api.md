@@ -101,7 +101,7 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
 ```
 
 ### 4) 查询 LOF 实时溢价率
-- api作用展示：按 LOF 代码返回实时溢价率，净值优先取 iopv，缺失时退化到上一交易日净值，并标记状态
+- api作用展示：按 LOF 代码返回实时溢价率，净值优先取 iopv，缺失时退化到上一交易日净值，并标记状态；当不传 `symbols` 时，符号清单优先来自 DB（失败自动降级配置）
 - Method: `GET`
 - Path: `/api/market/lof/premium`
 - Body: 无（使用 Query 参数 `symbols`，可选，逗号分隔；不传则使用默认 2 只 LOF）
@@ -144,6 +144,81 @@ curl "http://localhost:8081/api/market/lof/premium?symbols=sz161129,sz161130"
       "message": "realtime iopv unavailable, fallback to previous day nav"
     }
   ]
+}
+```
+
+### 5) 重新加载 LOF symbol 清单（DB -> 本地缓存）
+- api作用展示：手动触发从 `lof_symbol_registry` 重新加载 symbol 到本地缓存；若 DB 不可用则自动降级配置清单
+- Method: `POST`
+- Path: `/api/market/lof/symbols/reload`
+- Body: 无
+
+```bash
+curl -X POST "http://localhost:8081/api/market/lof/symbols/reload"
+```
+
+成功调用时返回结果（示例）：
+
+```json
+{
+  "source": "db",
+  "fallbackToConfig": false,
+  "symbolCount": 186,
+  "refreshedAt": "2026-02-28T05:20:10.120Z",
+  "symbols": ["sz161129", "sz161130", "sh501018"]
+}
+```
+
+### 6) LOF 溢价率排行（升序/降序）
+- api作用展示：按溢价率返回 LOF 排行，支持升序/降序；同溢价率时按最新 `quoteTime` 优先，`premiumRate=null` 固定排最后
+- Method: `GET`
+- Path: `/api/market/lof/premium/rank`
+- Body: 无（使用 Query 参数）
+
+Query 参数：
+- `order`：可选，`asc|desc`，默认 `desc`
+- `limit`：可选，默认 `20`，范围 `1~200`
+- `onlyStatusOk`：可选，默认 `false`
+- `tradingOnly`：可选，默认 `false`（L3 阶段实现交易时段过滤，当前仅预留）
+
+```bash
+curl "http://localhost:8081/api/market/lof/premium/rank?order=desc&limit=20&onlyStatusOk=true&tradingOnly=false"
+```
+
+成功调用时返回结果（示例）：
+
+```json
+{
+  "items": [
+    {
+      "symbol": "sz161129",
+      "name": "原油LOF",
+      "lastPrice": 0.857,
+      "nav": 0.842,
+      "navType": "IOPV_REALTIME",
+      "premiumRate": 0.01781591,
+      "status": "OK",
+      "quoteTime": 1772187753,
+      "navDate": "realtime",
+      "cacheHit": true,
+      "message": null
+    },
+    {
+      "symbol": "sz161130",
+      "name": "基金示例",
+      "lastPrice": 1.102,
+      "nav": 1.095,
+      "navType": "PREV_DAY_NAV",
+      "premiumRate": 0.00639269,
+      "status": "OK",
+      "quoteTime": 1772187752,
+      "navDate": "previous-trading-day",
+      "cacheHit": true,
+      "message": "realtime iopv unavailable, fallback to previous day nav"
+    }
+  ],
+  "total": 2,
+  "generatedAt": "2026-03-01T10:15:00.001Z"
 }
 ```
 

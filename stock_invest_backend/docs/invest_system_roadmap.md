@@ -112,8 +112,128 @@
 - 已实现批量 + 限流 + 指数退避重试。
 - `GET /api/market/lof/premium` 可稳定响应。
 
-### 下阶段（长期目标）
-1. 全量 LOF 覆盖：symbol 清单从配置中心/数据库维护。
-2. 增加排行接口：按溢价率升序/降序返回。
-3. 增加筛选能力：仅显示可交易时段、仅显示 `status=OK`。
-4. 为“按溢价率触发策略”预留标准化事件结构（后续再接 C++）。
+## 长期目标实施步骤（可直接编码）
+
+### L1：全量 LOF 覆盖（symbol 清单由配置中心/数据库维护）
+
+#### Step L1-1：引入 symbol 元数据存储
+- 新建表：`lof_symbol_registry`
+- 字段建议：
+  - `symbol`（唯一）
+  - `name`
+  - `market`（`SH`/`SZ`）
+  - `enabled`（是否参与实时计算）
+  - `priority`（优先级）
+  - `tags`（主题标签）
+  - `updated_at`
+- 新建仓储：`lof/repository/LofSymbolRegistryRepository`
+
+#### Step L1-2：配置中心兜底
+- 增加配置项：`lof.premium.symbol-source=db|config`（默认 `db`）
+- 当 `db` 不可用时，自动降级读取 `application.properties` 中 `lof.premium.default-symbols`
+
+#### Step L1-3：symbol 刷新与缓存
+- 增加本地 symbol 缓存（如 1~5 分钟刷新一次）
+- 提供管理接口（可选）：
+  - `POST /api/market/lof/symbols/reload`
+
+#### Step L1-4：分批拉取
+- 对全量 symbols 做分片（例如每批 50~200）
+- 批次间应用限流，防止上游压力过大
+
+---
+
+### L2：溢价率排行接口（升序/降序）
+
+#### Step L2-1：新增查询 DTO
+- `LofPremiumRankRequest`：
+  - `order`（`asc|desc`）
+  - `limit`
+  - `onlyStatusOk`
+  - `tradingOnly`
+- `LofPremiumRankResponse`：
+  - `items`
+  - `total`
+  - `generatedAt`
+
+#### Step L2-2：新增接口
+- `GET /api/market/lof/premium/rank`
+- Query 参数：
+  - `order=desc`（默认）
+  - `limit=20`（默认）
+  - `onlyStatusOk=true|false`
+  - `tradingOnly=true|false`
+
+#### Step L2-3：排序规则
+- 主排序：`premiumRate`
+- 次排序：`quoteTime`（新优先）
+- 空值策略：`premiumRate=null` 统一排最后
+
+---
+
+### L3：筛选能力（仅交易时段、仅 status=OK）
+
+#### Step L3-1：交易时段判定器
+- 新建 `LofTradingSessionService`
+- 判定维度：
+  - 工作日
+  - A 股交易时段（09:30-11:30, 13:00-15:00）
+- 节假日先做简版（仅周末过滤），后续接交易日历表
+
+#### Step L3-2：筛选器实现
+- 在 service 层统一过滤：
+  - `onlyStatusOk=true` -> 仅保留 `status=OK`
+  - `tradingOnly=true` -> 非交易时段返回空列表或保留并标记（建议返回空列表+message）
+
+#### Step L3-3：响应可解释性
+- 在响应增加：
+  - `filtersApplied`
+  - `tradingWindow`（`OPEN|CLOSED`）
+  - `message`
+
+---
+
+### L4：为“按溢价率触发策略”预留标准化事件结构（后续接 C++）
+
+#### Step L4-1：定义标准事件 DTO
+- `LofPremiumEvent` 字段建议：
+  - `eventId`
+  - `eventType`（`LOF_PREMIUM_SNAPSHOT`/`LOF_PREMIUM_ALERT`）
+  - `symbol`
+  - `premiumRate`
+  - `status`
+  - `navType`
+  - `quoteTime`
+  - `producedAt`
+  - `source`
+  - `version`
+
+#### Step L4-2：事件发布接口与通道抽象
+- 新建发布器接口：`LofPremiumEventPublisher`
+- 默认实现先写日志（`log publisher`）
+- 预留 Redis Stream/Kafka 实现（后续切换）
+
+#### Step L4-3：告警触发规则框架
+- 新增规则配置：
+  - `threshold.up`
+  - `threshold.down`
+  - `cooldownSeconds`
+- 当溢价率越界时发布 `LOF_PREMIUM_ALERT` 事件
+
+#### Step L4-4：与 C++ 解耦集成方式
+- Java 先发布标准化事件，不直接耦合 C++
+- 后续新增桥接服务：订阅事件 -> 转标准 JSON -> 推送 C++ 分析服务
+
+---
+
+### 长期里程碑建议（按冲刺）
+1. Sprint A（1~2 周）：完成 L1（DB 管理 symbols + 全量拉取稳定）
+2. Sprint B（1 周）：完成 L2（排行接口 + 参数校验 + 文档）
+3. Sprint C（1 周）：完成 L3（交易时段与筛选）
+4. Sprint D（1~2 周）：完成 L4（事件结构 + 发布框架 + 基础告警）
+
+### 验收清单（长期阶段）
+- 全量 symbols 可动态维护，不依赖代码改动
+- 排行接口支持升序/降序，性能稳定
+- 筛选逻辑可配置且可解释
+- 事件结构稳定版本化，可无缝接入 C++ 后续策略链路

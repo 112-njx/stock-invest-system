@@ -30,3 +30,19 @@
 
 【文档约定】
 每次会话结束需要同步更新 `stock_invest_backend/docs/market-api.md`，每个 API 必须包含：api作用展示、Method、Path、Body、成功调用返回示例。
+
+【会话记录 2026-03-01（LOF L2-1~L2-3 编码）】
+关键上下文：按 roadmap 完成 L2 排行能力（DTO、接口、排序规则）并更新 API 文档。
+进度：
+- 新增 DTO：
+  - `LofPremiumRankRequest`（order/limit/onlyStatusOk/tradingOnly）
+  - `LofPremiumRankResponse`（items/total/generatedAt）
+- 新增服务：`LofPremiumRankService`
+  - 调用现有溢价率服务获取数据；
+  - 支持 `onlyStatusOk` 过滤；
+  - 排序规则：主键 `premiumRate`，次键 `quoteTime`（新优先），`premiumRate=null` 固定最后；
+  - 支持 `order=asc|desc` 与 `limit(1~200)`。
+- 控制器新增接口：`GET /api/market/lof/premium/rank`。
+- 文档更新：`market-api.md` 已新增排行接口说明与成功示例。
+备注：
+- `tradingOnly` 参数已接入并保留，交易时段过滤将在 L3 阶段实现。
