@@ -14,6 +14,12 @@ public class LofPremiumProperties {
     private int symbolRefreshSeconds = 120;
     private int symbolDbQueryLimit = 2000;
     private int fetchBatchSize = 100;
+    private String eventVersion = "1.0";
+    private boolean eventPublishEnabled = true;
+    private boolean bridgeEnabled = false;
+    private double alertThresholdUp = 0.03;
+    private double alertThresholdDown = -0.03;
+    private int alertCooldownSeconds = 300;
     private int cacheTtlSeconds = 5;
     private int retryMaxAttempts = 3;
     private int retryBaseDelayMs = 200;
@@ -60,6 +66,54 @@ public class LofPremiumProperties {
 
     public void setFetchBatchSize(int fetchBatchSize) {
         this.fetchBatchSize = fetchBatchSize;
+    }
+
+    public String getEventVersion() {
+        return eventVersion;
+    }
+
+    public void setEventVersion(String eventVersion) {
+        this.eventVersion = eventVersion;
+    }
+
+    public boolean isEventPublishEnabled() {
+        return eventPublishEnabled;
+    }
+
+    public void setEventPublishEnabled(boolean eventPublishEnabled) {
+        this.eventPublishEnabled = eventPublishEnabled;
+    }
+
+    public boolean isBridgeEnabled() {
+        return bridgeEnabled;
+    }
+
+    public void setBridgeEnabled(boolean bridgeEnabled) {
+        this.bridgeEnabled = bridgeEnabled;
+    }
+
+    public double getAlertThresholdUp() {
+        return alertThresholdUp;
+    }
+
+    public void setAlertThresholdUp(double alertThresholdUp) {
+        this.alertThresholdUp = alertThresholdUp;
+    }
+
+    public double getAlertThresholdDown() {
+        return alertThresholdDown;
+    }
+
+    public void setAlertThresholdDown(double alertThresholdDown) {
+        this.alertThresholdDown = alertThresholdDown;
+    }
+
+    public int getAlertCooldownSeconds() {
+        return alertCooldownSeconds;
+    }
+
+    public void setAlertCooldownSeconds(int alertCooldownSeconds) {
+        this.alertCooldownSeconds = alertCooldownSeconds;
     }
 
     public int getCacheTtlSeconds() {

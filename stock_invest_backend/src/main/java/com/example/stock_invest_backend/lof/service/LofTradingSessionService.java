@@ -7,6 +7,10 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
+/*
+这是交易时段判定器，周一~周五
+09:30-11:30、13:00-15:00 视为 OPEN，否则 CLOSED
+ */
 @Service
 public class LofTradingSessionService {
 

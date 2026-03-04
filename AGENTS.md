@@ -31,22 +31,6 @@
 【文档约定】
 每次会话结束需要同步更新 `stock_invest_backend/docs/market-api.md`，每个 API 必须包含：api作用展示、Method、Path、Body、成功调用返回示例。
 
-【会话记录 2026-03-01（LOF L2-1~L2-3 编码）】
-关键上下文：按 roadmap 完成 L2 排行能力（DTO、接口、排序规则）并更新 API 文档。
-进度：
-- 新增 DTO：
-  - `LofPremiumRankRequest`（order/limit/onlyStatusOk/tradingOnly）
-  - `LofPremiumRankResponse`（items/total/generatedAt）
-- 新增服务：`LofPremiumRankService`
-  - 调用现有溢价率服务获取数据；
-  - 支持 `onlyStatusOk` 过滤；
-  - 排序规则：主键 `premiumRate`，次键 `quoteTime`（新优先），`premiumRate=null` 固定最后；
-  - 支持 `order=asc|desc` 与 `limit(1~200)`。
-- 控制器新增接口：`GET /api/market/lof/premium/rank`。
-- 文档更新：`market-api.md` 已新增排行接口说明与成功示例。
-备注：
-- `tradingOnly` 参数已接入并保留，交易时段过滤将在 L3 阶段实现。
-
 【会话记录 2026-03-01（LOF L3-1~L3-3 编码）】
 关键上下文：完成交易时段过滤与响应可解释字段。
 进度：
@@ -62,3 +46,24 @@
   - 新增非交易时段返回示例。
 下一步：
 - 若需要接节假日精准交易日历，可在 L3 后续接入交易日历表替代“仅周末过滤”的简版策略。
+
+【会话记录 2026-03-01（LOF L4-1~L4-4 编码）】
+关键上下文：完成 LOF 标准化事件结构与发布链路，为后续 C++ 联动预留桥接能力。
+进度：
+- L4-1：新增事件模型
+  - `LofPremiumEvent`、`LofPremiumEventType`。
+- L4-2：新增事件发布抽象与实现
+  - 发布接口：`LofPremiumEventPublisher`；
+  - 默认日志发布：`LogLofPremiumEventPublisher`；
+  - 预留桥接发布：`CppBridgeLofPremiumEventPublisher`（默认关闭，仅规范化输出）。
+- L4-3：新增告警规则与冷却控制
+  - 服务：`LofPremiumEventService`；
+  - 配置：`alert-threshold-up/down`、`alert-cooldown-seconds`；
+  - 逻辑：每次发布 snapshot，阈值越界发布 alert，并按 symbol 冷却。
+- L4-4：与 C++ 解耦集成预留
+  - 在主流程 `LofPremiumSourceService` 接入事件发布；
+  - 桥接通道抽象已预留，后续可替换为 Redis Stream/Kafka/HTTP bridge。
+- 文档：`market-api.md` 新增“LOF 事件发布预留”说明与事件示例。
+下一步：
+- 若进入联调阶段，可开启 `lof.premium.bridge-enabled=true` 验证桥接日志链路。
+- 后续可将桥接发布器替换为真实消息中间件或 HTTP 推送到中转服务。

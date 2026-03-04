@@ -1,4 +1,4 @@
-package com.example.stock_invest_backend.lof.service;
+﻿package com.example.stock_invest_backend.lof.service;
 
 import com.example.stock_invest_backend.lof.cache.LofPremiumCacheGateway;
 import com.example.stock_invest_backend.lof.config.LofPremiumProperties;
@@ -22,19 +22,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-/*
-lof溢价率总服务
- */
 @Service
 public class LofPremiumSourceService {
 
     private static final Logger log = LoggerFactory.getLogger(LofPremiumSourceService.class);
 
-    //这是上游行情数据提供类
     private final LofPremiumDataProvider dataProvider;
-    //这是决定本次查哪些symbol的类
     private final LofSymbolSourceService lofSymbolSourceService;
     private final LofPremiumCacheGateway cacheGateway;
+    private final LofPremiumEventService lofPremiumEventService;
     private final LofPremiumProperties properties;
     private final Counter requestCounter;
     private final Counter cacheHitCounter;
@@ -46,11 +42,13 @@ public class LofPremiumSourceService {
     public LofPremiumSourceService(LofPremiumDataProvider dataProvider,
                                    LofSymbolSourceService lofSymbolSourceService,
                                    LofPremiumCacheGateway cacheGateway,
+                                   LofPremiumEventService lofPremiumEventService,
                                    LofPremiumProperties properties,
                                    MeterRegistry meterRegistry) {
         this.dataProvider = dataProvider;
         this.lofSymbolSourceService = lofSymbolSourceService;
         this.cacheGateway = cacheGateway;
+        this.lofPremiumEventService = lofPremiumEventService;
         this.properties = properties;
         this.requestCounter = meterRegistry.counter("lof.premium.requests.total");
         this.cacheHitCounter = meterRegistry.counter("lof.premium.cache.hit.total");
@@ -60,17 +58,14 @@ public class LofPremiumSourceService {
         this.requestLatencyTimer = meterRegistry.timer("lof.premium.request.latency");
     }
 
-    //核心流程
     public Mono<LofPremiumResponse> fetchPremiums(List<String> symbols) {
-        //统计请求+计时
         long startNanos = System.nanoTime();
         requestCounter.increment();
 
-        //确定目标symbol
         List<String> targetSymbols = lofSymbolSourceService.resolveSymbols(symbols);
         Map<String, LofPremiumItem> cachedItems = new LinkedHashMap<>();
         List<String> cacheMissSymbols = new ArrayList<>();
-        //缓存优先策略 旁路缓存模式
+
         for (String symbol : targetSymbols) {
             cacheGateway.get(symbol).ifPresentOrElse(item -> {
                 item.setCacheHit(true);
@@ -84,12 +79,10 @@ public class LofPremiumSourceService {
 
         Mono<List<LofPremiumItem>> freshMono = cacheMissSymbols.isEmpty()
                 ? Mono.just(List.of())
-                //批量请求上游
                 : fetchInBatches(cacheMissSymbols)
                 .doOnNext(items -> items.forEach(item -> {
                     item.setCacheHit(false);
                     if (StringUtils.hasText(item.getSymbol())) {
-                        //写回缓存
                         cacheGateway.put(item.getSymbol(), item);
                     }
                 }));
@@ -118,6 +111,7 @@ public class LofPremiumSourceService {
 
             LofPremiumResponse response = new LofPremiumResponse();
             response.setItems(ordered);
+            lofPremiumEventService.publishSnapshotAndAlerts(ordered);
             return response;
         }).doFinally(signalType -> {
             long elapsedNanos = System.nanoTime() - startNanos;

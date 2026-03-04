@@ -238,6 +238,37 @@ curl "http://localhost:8081/api/market/lof/premium/rank?order=desc&limit=20&only
 }
 ```
 
+### 7) LOF 事件发布预留（无对外 HTTP 接口）
+- api作用展示：为“按溢价率触发策略”预留标准化事件结构，当前阶段在 Java 内部发布，默认写日志并可选启用桥接通道
+- Method: `N/A`
+- Path: `N/A`
+- Body: `N/A`
+
+事件结构（示例）：
+
+```json
+{
+  "eventId": "2a2f4e8f-4bb5-4c74-8f1f-8cd44915d7c2",
+  "eventType": "LOF_PREMIUM_ALERT",
+  "symbol": "sz161129",
+  "premiumRate": 0.03510213,
+  "status": "OK",
+  "navType": "IOPV_REALTIME",
+  "quoteTime": 1772190901,
+  "producedAt": "2026-03-01T12:10:11.010Z",
+  "source": "lof-premium-service",
+  "version": "1.0",
+  "message": "threshold crossed"
+}
+```
+
+配置项（示例）：
+- `lof.premium.event-publish-enabled=true`
+- `lof.premium.bridge-enabled=false`
+- `lof.premium.alert-threshold-up=0.03`
+- `lof.premium.alert-threshold-down=-0.03`
+- `lof.premium.alert-cooldown-seconds=300`
+
 ---
 
 ## B. 回测模块
