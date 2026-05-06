@@ -448,3 +448,160 @@ curl "http://localhost:8080/ping"
 ```text
 pong
 ```
+
+---
+
+## C. AI 投资分析模块（Java）
+
+### 1) AI 投资分析
+- api作用展示：接收用户自然语言分析请求；若识别到股票代码，则先由 LLM 生成标准 Tool Call，再由 Java 后端统一调用“自定义天数行情接口”和“MA5 上穿/下穿回测接口”获取真实 JSON，整理后再次调用 LLM 输出分析结论；若未识别到股票代码，则终止工具调用链路，仅返回宏观行情分析文本
+- Method: `POST`
+- Path: `/api/ai/invest/analyze`
+- Body:
+
+```json
+{
+  "prompt": "请分析一下 sh600519 最近走势，结合近30天K线和MA5上穿下穿信号给出看法"
+}
+```
+
+```bash
+curl -X POST "http://localhost:8081/api/ai/invest/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"请分析一下 sh600519 最近走势，结合近30天K线和MA5上穿下穿信号给出看法"}'
+```
+
+成功调用时返回结果（包含股票代码，AI 正常完成分析，示例）：
+
+```json
+{
+  "requestId": "ai-invest-20260506-0001",
+  "mode": "TOOL_CHAIN",
+  "prompt": "请分析一下 sh600519 最近走势，结合近30天K线和MA5上穿下穿信号给出看法",
+  "symbol": "sh600519",
+  "usedDays": 30,
+  "toolCalls": [
+    {
+      "toolName": "get_market_history",
+      "arguments": {
+        "symbol": "sh600519",
+        "days": 30
+      }
+    },
+    {
+      "toolName": "get_ma5_cross_signals",
+      "arguments": {
+        "symbol": "sh600519",
+        "period": 5
+      }
+    }
+  ],
+  "dataSources": [
+    {
+      "api": "/api/market/history/ingest",
+      "purpose": "拉取近30天历史日K所需数据"
+    },
+    {
+      "api": "/api/backtest/ma",
+      "purpose": "获取MA5上穿/下穿信号"
+    }
+  ],
+  "analysisText": "近30个交易日内，该标的整体仍处于震荡偏强区间，最近一次 MA5 上穿信号后价格延续性较强，但短线追高风险也在增加。本分析仅供参考，不构成任何投资建议。",
+  "disclaimer": "本分析仅供参考，不构成任何投资建议。",
+  "replyTime": "2026-05-06T20:10:11+08:00",
+  "degraded": false,
+  "fallbackReason": null,
+  "rawData": {
+    "marketHistorySummary": {
+      "days": 30,
+      "latestClose": 1688.0,
+      "changePercent": 0.034
+    },
+    "maSignalSummary": {
+      "strategyCode": "MA_CROSS_5",
+      "crossUpCount": 2,
+      "crossDownCount": 1
+    }
+  }
+}
+```
+
+成功调用时返回结果（未包含股票代码，仅宏观分析，示例）：
+
+```json
+{
+  "requestId": "ai-invest-20260506-0002",
+  "mode": "MACRO_ONLY",
+  "prompt": "最近A股市场整体怎么看",
+  "symbol": null,
+  "usedDays": 0,
+  "toolCalls": [],
+  "dataSources": [],
+  "analysisText": "当前宏观层面更需要关注成交量修复、政策预期和板块轮动节奏，结论应以市场实际风险偏好变化为准。本分析仅供参考，不构成任何投资建议。",
+  "disclaimer": "本分析仅供参考，不构成任何投资建议。",
+  "replyTime": "2026-05-06T20:12:01+08:00",
+  "degraded": false,
+  "fallbackReason": null,
+  "rawData": null
+}
+```
+
+成功调用时返回结果（AI 超时或 Token 超限，降级返回原生数据，示例）：
+
+```json
+{
+  "requestId": "ai-invest-20260506-0003",
+  "mode": "TOOL_CHAIN",
+  "prompt": "分析一下 sz000001",
+  "symbol": "sz000001",
+  "usedDays": 30,
+  "toolCalls": [
+    {
+      "toolName": "get_market_history",
+      "arguments": {
+        "symbol": "sz000001",
+        "days": 30
+      }
+    },
+    {
+      "toolName": "get_ma5_cross_signals",
+      "arguments": {
+        "symbol": "sz000001",
+        "period": 5
+      }
+    }
+  ],
+  "dataSources": [
+    {
+      "api": "/api/market/history/ingest",
+      "purpose": "拉取近30天历史日K所需数据"
+    },
+    {
+      "api": "/api/backtest/ma",
+      "purpose": "获取MA5上穿/下穿信号"
+    }
+  ],
+  "analysisText": "AI 分析阶段超时，已返回原生行情与 MA5 信号数据供前端展示。本分析仅供参考，不构成任何投资建议。",
+  "disclaimer": "本分析仅供参考，不构成任何投资建议。",
+  "replyTime": "2026-05-06T20:13:45+08:00",
+  "degraded": true,
+  "fallbackReason": "LLM_TIMEOUT",
+  "rawData": {
+    "marketHistory": {
+      "symbol": "sz000001",
+      "days": 30
+    },
+    "maSignals": {
+      "symbol": "sz000001",
+      "strategyCode": "MA_CROSS_5"
+    }
+  }
+}
+```
+
+接口说明补充：
+- 默认分析最近 `30` 天 K 线；若后续 Tool Call 显式给出其他天数，以 Tool Call 参数为准
+- LLM 调用需统一经 `AiGatewayClient` 适配器封装，业务层不得直接耦合具体厂商 SDK
+- 单次 AI 总耗时建议限制在 `8~12` 秒内，并配置 Token 上限；超限时直接降级返回原生接口数据
+- 所有返回都必须固定附带免责声明 `本分析仅供参考，不构成任何投资建议。` 和 `replyTime`
+- 需记录全链路日志：原始 prompt、股票代码识别结果、Tool Call、下游接口耗时、AI 耗时、降级原因、最终返回模式

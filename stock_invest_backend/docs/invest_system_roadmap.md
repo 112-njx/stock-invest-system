@@ -237,3 +237,75 @@
 - 排行接口支持升序/降序，性能稳定
 - 筛选逻辑可配置且可解释
 - 事件结构稳定版本化，可无缝接入 C++ 后续策略链路
+
+---
+
+## AI 投资分析能力实施拆分
+
+目标：
+- 新增唯一对外接口：`POST /api/ai/invest/analyze`
+- 输入为用户自然语言 `prompt`
+- 若识别到股票代码，则走 “LLM -> 标准 Tool Call -> Java 聚合真实接口 JSON -> LLM 生成分析” 链路
+- 若未识别到股票代码，则终止工具调用链路，仅生成宏观行情分析文本
+- 不新增数据库，直接复用现有库与 `stock_invest_backend/docs/sql` 下既有 SQL 体系
+- 当前阶段不引入 Redis
+
+### Task AI-1：接口契约与 Tool Call 编排层
+- 新增接口：`POST /api/ai/invest/analyze`
+- 请求体仅接收自然语言字段：`prompt`
+- 在 Controller/Service 层先做股票代码识别：
+  - 识别到 `sh600519`、`sz000001` 这类代码时，进入工具调用链路
+  - 未识别到代码时，直接进入“宏观分析模式”，不再调用行情接口与 MA 接口
+- 定义统一的 Tool Call 标准结构，至少覆盖：
+  - `get_market_history(symbol, days=30)`
+  - `get_ma5_cross_signals(symbol, period=5)`
+- 约束首轮 prompt 默认使用最近 `30` 天 K 线数据
+- 定义统一返回模型，至少包含：
+  - `requestId`
+  - `mode`：`TOOL_CHAIN` / `MACRO_ONLY`
+  - `analysisText`
+  - `disclaimer`
+  - `replyTime`
+  - `degraded`
+  - `fallbackReason`
+  - `rawData`
+- 验收点：
+  - 无股票代码时不触发工具调用
+  - 有股票代码时能产出标准 Tool Call JSON，但不依赖具体厂商 LLM SDK
+
+### Task AI-2：AiGatewayClient 适配器与真实数据聚合层
+- 新增 `AiGatewayClient` 适配器，统一封装：
+  - LLM 请求构造
+  - Tool Call 解析
+  - 最终分析文本生成
+  - Token/耗时/错误码归一化
+- 通过配置切换模型与厂商，不改业务代码
+- Java 后端根据 Tool Call 映射调用现有接口，并统一整理真实 JSON：
+  - 行情相关：复用 `market-api.md` 第 `73-101` 行定义的自定义天数行情链路能力，默认组织最近 `30` 天 K 线 prompt 数据
+  - 策略相关：复用 `market-api.md` 第 `276-322` 行定义的 MA5 上穿/下穿接口能力
+- 聚合层负责把原始接口响应收敛成 AI 二次提示所需的结构化摘要，避免将无关字段直接灌给模型
+- 复用已有数据库与 SQL 文档，不新建数据库
+- 验收点：
+  - 业务层只依赖 `AiGatewayClient`，不出现厂商 SDK 直连
+  - 两个下游接口响应可被统一整理为标准 JSON 上下文
+
+### Task AI-3：性能降级、风控文案与全链路日志
+- 为单次 AI 请求增加统一超时控制，整体耗时上限控制在 `8~12` 秒
+- 为模型调用增加 Token 上限；若超限、超时或解析失败，则直接降级返回原生接口数据
+- 所有 AI 返回固定附带：
+  - 免责声明：`本分析仅供参考，不构成任何投资建议。`
+  - `replyTime`
+- 建立全链路日志，至少覆盖：
+  - `requestId`
+  - 原始 `prompt`
+  - 股票代码识别结果
+  - Tool Call 内容
+  - 下游接口调用结果与耗时
+  - LLM 请求耗时与 Token 消耗
+  - 降级标记与降级原因
+  - 最终响应模式
+- 日志与异常信息需可支持后续问题追踪，但避免在日志中泄露敏感配置
+- 验收点：
+  - AI 异常时接口仍可用，能稳定返回原生数据或宏观分析文本
+  - 每条返回都带固定免责声明与回复时间
+  - 可通过日志还原一次完整调用链路

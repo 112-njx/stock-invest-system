@@ -23,15 +23,10 @@
     </configurations>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="lof溢价率排名显示休市时添加特殊处理">
+    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="lof溢价率与股票交易策略联调耦合的初步实现">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/AGENTS.md" beforeDir="false" afterPath="$PROJECT_DIR$/AGENTS.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/invest_system_roadmap.md" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/docs/invest_system_roadmap.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/market-api.md" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/docs/market-api.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/sql/002_create_lof_symbol_registry.sql" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/docs/sql/002_create_lof_symbol_registry.sql" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/config/LofPremiumProperties.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/config/LofPremiumProperties.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofPremiumSourceService.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofPremiumSourceService.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofTradingSessionService.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofTradingSessionService.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -51,12 +46,12 @@
     &quot;assignee&quot;: &quot;112-njx&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings">{
-  &quot;selectedUrlAndAccountId&quot;: {
-    &quot;url&quot;: &quot;git@github.com:112-njx/stock-invest-system.git&quot;,
-    &quot;accountId&quot;: &quot;8ea450a6-41a6-4add-a28b-146b385c3ccf&quot;
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "git@github.com:112-njx/stock-invest-system.git",
+    "accountId": "8ea450a6-41a6-4add-a28b-146b385c3ccf"
   }
-}</component>
+}]]></component>
   <component name="ProjectApplicationVersion">
     <option name="ide" value="CLion" />
     <option name="majorVersion" value="2025" />
@@ -90,6 +85,7 @@
     &quot;cidr.known.project.marker&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;main&quot;,
     &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
@@ -110,6 +106,15 @@
       </method>
     </configuration>
   </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-jdk-9823dce3aa75-28b599e66164-intellij.indexing.shared.core-IU-242.26775.15" />
+        <option value="bundled-js-predefined-d6986cc7102b-5c90d61e3bab-JavaScript-IU-242.26775.15" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="应用程序级" UseSingleDictionary="true" transferred="true" />
   <component name="TaskManager">
     <task active="true" id="Default" summary="默认任务">
       <changelist id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="" />
@@ -120,7 +125,12 @@
       <workItem from="1770871117264" duration="17713000" />
       <workItem from="1771650150839" duration="7656000" />
       <workItem from="1771931555681" duration="23388000" />
-      <workItem from="1772594341310" duration="3441000" />
+      <workItem from="1772594341310" duration="4191000" />
+      <workItem from="1772771364671" duration="4540000" />
+      <workItem from="1773023659429" duration="1942000" />
+      <workItem from="1778027324299" duration="25000" />
+      <workItem from="1778027356011" duration="21000" />
+      <workItem from="1778052861091" duration="2842000" />
     </task>
     <task id="LOCAL-00001" summary="修复Cmakelist配置bug">
       <option name="closed" value="true" />
@@ -234,7 +244,15 @@
       <option name="project" value="LOCAL" />
       <updated>1772372923948</updated>
     </task>
-    <option name="localTasksCounter" value="15" />
+    <task id="LOCAL-00015" summary="lof溢价率与股票交易策略联调耦合的初步实现">
+      <option name="closed" value="true" />
+      <created>1772604055219</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1772604055219</updated>
+    </task>
+    <option name="localTasksCounter" value="16" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -258,6 +276,7 @@
     <MESSAGE value="添加lof溢价率排名的接口" />
     <MESSAGE value="lof溢价率排名接口后端" />
     <MESSAGE value="lof溢价率排名显示休市时添加特殊处理" />
-    <option name="LAST_COMMIT_MESSAGE" value="lof溢价率排名显示休市时添加特殊处理" />
+    <MESSAGE value="lof溢价率与股票交易策略联调耦合的初步实现" />
+    <option name="LAST_COMMIT_MESSAGE" value="lof溢价率与股票交易策略联调耦合的初步实现" />
   </component>
 </project>
