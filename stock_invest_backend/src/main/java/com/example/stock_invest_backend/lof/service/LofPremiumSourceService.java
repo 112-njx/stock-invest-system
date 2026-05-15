@@ -1,4 +1,4 @@
-﻿package com.example.stock_invest_backend.lof.service;
+package com.example.stock_invest_backend.lof.service;
 
 import com.example.stock_invest_backend.lof.cache.LofPremiumCacheGateway;
 import com.example.stock_invest_backend.lof.config.LofPremiumProperties;

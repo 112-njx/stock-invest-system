@@ -3,7 +3,10 @@
     "allow": [
       "Bash(./mvnw compile *)",
       "Bash(grep -E \"\\(ai[/\\\\\\\\]|MySqlStockDaily|StockDailyKlineRepository\\)\")",
-      "Bash(grep -E \"ai\\\\\\\\\\\\\\\\\")"
+      "Bash(grep -E \"ai\\\\\\\\\\\\\\\\\")",
+      "Bash(grep -E \"\\(ai[/\\\\\\\\]|gateway|BUILD\\)\")",
+      "Bash(git stash *)",
+      "Bash(./mvnw dependency:tree -Dincludes=org.projectlombok:lombok)"
     ]
   }
 }
