@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./mvnw compile *)",
+      "Bash(grep -E \"\\(ai[/\\\\\\\\]|MySqlStockDaily|StockDailyKlineRepository\\)\")",
+      "Bash(grep -E \"ai\\\\\\\\\\\\\\\\\")"
+    ]
+  }
+}

@@ -7,4 +7,6 @@ import java.util.List;
 public interface StockDailyKlineRepository {
 
     int upsertBatch(List<StockDailyKlineRecord> records);
+
+    List<StockDailyKlineRecord> findBySymbolAndDays(String symbol, int days);
 }

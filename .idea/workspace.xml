@@ -23,10 +23,11 @@
     </configurations>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="lof溢价率与股票交易策略联调耦合的初步实现">
+    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/invest_system_roadmap.md" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/docs/invest_system_roadmap.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/market-api.md" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/docs/market-api.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/repository/MySqlStockDailyKlineRepository.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/repository/MySqlStockDailyKlineRepository.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/repository/StockDailyKlineRepository.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/repository/StockDailyKlineRepository.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -46,12 +47,12 @@
     &quot;assignee&quot;: &quot;112-njx&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "git@github.com:112-njx/stock-invest-system.git",
-    "accountId": "8ea450a6-41a6-4add-a28b-146b385c3ccf"
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;git@github.com:112-njx/stock-invest-system.git&quot;,
+    &quot;accountId&quot;: &quot;8ea450a6-41a6-4add-a28b-146b385c3ccf&quot;
   }
-}]]></component>
+}</component>
   <component name="ProjectApplicationVersion">
     <option name="ide" value="CLion" />
     <option name="majorVersion" value="2025" />
@@ -130,7 +131,8 @@
       <workItem from="1773023659429" duration="1942000" />
       <workItem from="1778027324299" duration="25000" />
       <workItem from="1778027356011" duration="21000" />
-      <workItem from="1778052861091" duration="2842000" />
+      <workItem from="1778052861091" duration="3612000" />
+      <workItem from="1778830541349" duration="3000" />
     </task>
     <task id="LOCAL-00001" summary="修复Cmakelist配置bug">
       <option name="closed" value="true" />
@@ -252,7 +254,15 @@
       <option name="project" value="LOCAL" />
       <updated>1772604055219</updated>
     </task>
-    <option name="localTasksCounter" value="16" />
+    <task id="LOCAL-00016" summary="调用上层AI接口，实现小型Agent的股票策略返回接口的初步实现思路">
+      <option name="closed" value="true" />
+      <created>1778068717967</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1778068717967</updated>
+    </task>
+    <option name="localTasksCounter" value="17" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -277,6 +287,7 @@
     <MESSAGE value="lof溢价率排名接口后端" />
     <MESSAGE value="lof溢价率排名显示休市时添加特殊处理" />
     <MESSAGE value="lof溢价率与股票交易策略联调耦合的初步实现" />
-    <option name="LAST_COMMIT_MESSAGE" value="lof溢价率与股票交易策略联调耦合的初步实现" />
+    <MESSAGE value="调用上层AI接口，实现小型Agent的股票策略返回接口的初步实现思路" />
+    <option name="LAST_COMMIT_MESSAGE" value="调用上层AI接口，实现小型Agent的股票策略返回接口的初步实现思路" />
   </component>
 </project>
