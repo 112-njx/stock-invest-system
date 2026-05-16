@@ -23,7 +23,15 @@
     </configurations>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="完成AiGatewayClient 适配器与真实数据聚合层，保证多种大模型适配" />
+    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="完成Ai接口的开发日志">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/Task-ai-codedocs.md" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/docs/Task-ai-codedocs.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/config/DeepSeekProperties.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/config/DeepSeekProperties.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/controller/AiInvestController.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/controller/AiInvestController.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/gateway/DeepSeekAiGatewayClient.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/gateway/DeepSeekAiGatewayClient.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/service/AiInvestService.java" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/service/AiInvestService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" beforeDir="false" afterPath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -273,7 +281,15 @@
       <option name="project" value="LOCAL" />
       <updated>1778832688265</updated>
     </task>
-    <option name="localTasksCounter" value="19" />
+    <task id="LOCAL-00019" summary="完成Ai接口的开发日志">
+      <option name="closed" value="true" />
+      <created>1778832881980</created>
+      <option name="number" value="00019" />
+      <option name="presentableId" value="LOCAL-00019" />
+      <option name="project" value="LOCAL" />
+      <updated>1778832881980</updated>
+    </task>
+    <option name="localTasksCounter" value="20" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -301,6 +317,7 @@
     <MESSAGE value="调用上层AI接口，实现小型Agent的股票策略返回接口的初步实现思路" />
     <MESSAGE value="完成接口契约与 Tool Call 编排层" />
     <MESSAGE value="完成AiGatewayClient 适配器与真实数据聚合层，保证多种大模型适配" />
-    <option name="LAST_COMMIT_MESSAGE" value="完成AiGatewayClient 适配器与真实数据聚合层，保证多种大模型适配" />
+    <MESSAGE value="完成Ai接口的开发日志" />
+    <option name="LAST_COMMIT_MESSAGE" value="完成Ai接口的开发日志" />
   </component>
 </project>

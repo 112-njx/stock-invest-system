@@ -221,3 +221,140 @@ curl -X POST "http://localhost:8081/api/ai/invest/analyze" \
   -H "Content-Type: application/json" \
   -d '{"prompt":"最近A股市场整体怎么看"}'
 ```
+
+---
+
+## Task AI-3：性能降级、风控文案与全链路日志
+
+### 完成内容
+
+**1. 全局超时控制（8~12 秒）**
+
+在 `AiInvestService` 层引入 `ExecutorService` + `Future.get(timeout)` 机制：
+
+- 超时阈值通过 `ai.analysis.timeout-seconds` 配置（默认 10 秒）
+- 超时后通过 `future.cancel(true)` 中断执行线程
+- 超时返回 `degraded=true`、`fallbackReason=GLOBAL_TIMEOUT` 的降级响应
+- Controller 层额外设置 +5 秒安全网超时，防止 Executor 自身挂死
+
+**关键代码（AiInvestService.analyze()）：**
+
+```java
+Future<AiInvestAnalyzeResponse> future = analysisExecutor.submit(() -> {
+    if (stockCode == null) return analyzeMacroOnly(requestId, prompt);
+    return analyzeWithToolChain(requestId, prompt, stockCode);
+});
+try {
+    return future.get(timeoutSeconds, TimeUnit.SECONDS);
+} catch (TimeoutException e) {
+    future.cancel(true);
+    return buildTimeoutFallback(requestId, prompt, stockCode);
+}
+```
+
+**2. Token 上限控制**
+
+在 `DeepSeekAiGatewayClient` 的 `buildChatRequest()` 中，每次 LLM 请求均携带 `max_tokens` 参数：
+
+```java
+body.put("max_tokens", properties.getMaxTokens());  // 默认 4096
+```
+
+配置：`ai.deepseek.max-tokens=4096`
+
+超限时 DeepSeek API 会返回错误，Gateway 层通过 `normalizeError()` 统一映射为 `LLM_ERROR`，Service 层降级返回。
+
+**3. 免责声明与风控文案**
+
+- 所有返回固定附带 `disclaimer`：`本分析仅供参考，不构成任何投资建议。`
+- 所有返回固定附带 `replyTime`（Asia/Shanghai 时区）
+- 降级场景的 `analysisText` 在服务端硬编码中文降级文案，不直接暴露 LLM 原始错误（避免展示技术细节给用户）
+
+**4. 全链路日志**
+
+每条请求以 `[requestId]` 为前缀，覆盖以下节点：
+
+| 日志节点 | 关键字 | 记录内容 |
+|----------|--------|---------|
+| 请求入口 | `REQUEST_START` | 原始 prompt（截断至 200 字符）、股票代码识别结果、provider |
+| 宏观 LLM 调用 | `MACRO_LLM_START` / `MACRO_LLM_END` | provider、耗时、Token 消耗、成功/失败 |
+| Tool Call LLM 调用 | `TOOL_CALL_LLM_START` / `TOOL_CALL_LLM_END` | provider、耗时、Token 消耗、工具数量 |
+| 单个 Tool Call 内容 | `TOOL_CALL_ITEM` | toolName、arguments |
+| 下游接口执行 | `TOOL_EXEC_START` / `TOOL_EXEC_END` | toolName、arguments、耗时 |
+| 下游接口失败 | `TOOL_EXEC_FAIL` | toolName、耗时、异常信息 |
+| 最终分析 LLM | `ANALYSIS_LLM_START` / `ANALYSIS_LLM_END` | provider、耗时、Token 消耗、成功/失败 |
+| LLM 调用失败 | `TOOL_CALL_LLM_FALLBACK` / `MACRO_LLM_FAIL` / `ANALYSIS_LLM_FAIL` | 归一化错误码 |
+| 全局超时 | `GLOBAL_TIMEOUT` | 总耗时、超时阈值 |
+| 致命错误 | `FATAL_ERROR` | 异常信息、总耗时 |
+| 响应完成 | `RESPONSE` | mode、degraded、总耗时 |
+
+**示例日志链路：**
+
+```
+[ai-invest-20260516-0001] REQUEST_START | prompt="请分析一下 sh600519..." | stockCode=sh600519 | provider=deepseek
+[ai-invest-20260516-0001] TOOL_CALL_LLM_START | provider=deepseek
+[ai-invest-20260516-0001] TOOL_CALL_LLM_END | success=true | latencyMs=1234 | promptTokens=520 | completionTokens=85 | toolCount=2
+[ai-invest-20260516-0001] TOOL_CALL_ITEM | toolName=get_market_history | args={symbol=sh600519, days=30}
+[ai-invest-20260516-0001] TOOL_CALL_ITEM | toolName=get_ma5_cross_signals | args={symbol=sh600519, period=5}
+[ai-invest-20260516-0001] TOOL_EXEC_START | tool=get_market_history | args={symbol=sh600519, days=30}
+[ai-invest-20260516-0001] TOOL_EXEC_END | tool=get_market_history | latencyMs=156
+[ai-invest-20260516-0001] TOOL_EXEC_START | tool=get_ma5_cross_signals | args={symbol=sh600519, period=5}
+[ai-invest-20260516-0001] TOOL_EXEC_END | tool=get_ma5_cross_signals | latencyMs=2340
+[ai-invest-20260516-0001] ANALYSIS_LLM_START | provider=deepseek
+[ai-invest-20260516-0001] ANALYSIS_LLM_END | success=true | latencyMs=3456 | promptTokens=1520 | completionTokens=280
+[ai-invest-20260516-0001] RESPONSE | mode=TOOL_CHAIN | degraded=false | totalLatencyMs=7234
+```
+
+**5. 日志安全——敏感信息保护**
+
+- LLM API Key 不出现在任何日志中（仅存储于配置文件，日志只打印 provider 名称）
+- 用户 prompt 日志截断至 200 字符（避免超长输入撑爆日志）
+- K 线原始数据不写入日志（只记录 records 数量）
+- 归一化错误码只在日志中展示错误码，原始异常信息在 Service 层被包装
+
+**6. 降级矩阵**
+
+| 异常场景 | 响应 mode | degraded | fallbackReason | analysisText |
+|----------|-----------|----------|---------------|-------------|
+| 全局超时 | TOOL_CHAIN / MACRO_ONLY | true | `GLOBAL_TIMEOUT` | 固定降级文案 |
+| LLM 调用失败 | 原 mode | true | 归一化错误码 | 固定降级文案 |
+| Tool Call 解析失败 | TOOL_CHAIN | false | — | 正常分析（使用默认 tools） |
+| 单个 Tool 执行失败 | TOOL_CHAIN | false | — | 正常分析（该 tool 标记 error） |
+| 未知错误 | TOOL_CHAIN / MACRO_ONLY | true | `FATAL_ERROR: {msg}` | 固定降级文案 |
+
+### 配置变更
+
+**新增配置：**
+
+```properties
+# 全局超时（秒），建议 8~12
+ai.analysis.timeout-seconds=10
+
+# LLM 单次调用 max_tokens 上限
+ai.deepseek.max-tokens=4096
+```
+
+**环境变量形式（容器化部署）：**
+
+```bash
+AI_ANALYSIS_TIMEOUT_SECONDS=10
+AI_DEEPSEEK_MAX_TOKENS=4096
+```
+
+### 修改文件清单
+
+| 文件 | 改动 |
+|------|------|
+| `ai/service/AiInvestService.java` | 新增 `ExecutorService` 超时控制、全链路结构化日志、`buildTimeoutFallback`、`buildErrorFallback`、`truncatePrompt` |
+| `ai/controller/AiInvestController.java` | 新增 Mono 安全网超时（+5s），`onErrorResume` 兜底 |
+| `ai/gateway/DeepSeekAiGatewayClient.java` | `max_tokens` 传入请求体、成功 case 新增 INFO 日志（含耗时/Token） |
+| `ai/config/DeepSeekProperties.java` | 新增 `maxTokens` 字段 |
+| `application.properties` | 新增 `ai.analysis.timeout-seconds`、`ai.deepseek.max-tokens` |
+
+### 验收点对照
+
+| 验收标准 | 实现情况 |
+|----------|---------|
+| AI 异常时接口仍可用，能稳定返回原生数据或宏观分析文本 | 所有异常路径均有降级响应，HTTP 200 始终返回 |
+| 每条返回都带固定免责声明与回复时间 | `DISCLAIMER` + `replyTime` 在 `buildBaseResponse()` 中固化 |
+| 可通过日志还原一次完整调用链路 | 每个关键节点以 `[requestId]` 前缀记录结构化日志，覆盖 10 个日志节点 |

@@ -53,12 +53,15 @@ public class DeepSeekAiGatewayClient implements AiGatewayClient {
             extractUsage(response, result);
             result.setToolCalls(extractToolCalls(response));
             result.setSuccess(true);
+            log.info("DeepSeek tool call OK: latencyMs={}, promptTokens={}, completionTokens={}, toolCount={}",
+                    result.getLatencyMs(), result.getPromptTokens(), result.getCompletionTokens(),
+                    result.getToolCalls().size());
         } catch (Exception ex) {
             result.setLatencyMs(System.currentTimeMillis() - start);
             result.setSuccess(false);
             result.setErrorMessage(normalizeError(ex));
             result.setToolCalls(List.of());
-            log.warn("DeepSeek tool call request failed: {}", ex.getMessage());
+            log.warn("DeepSeek tool call failed: code={}, msg={}", result.getErrorMessage(), ex.getMessage());
         }
 
         return result;
@@ -77,12 +80,14 @@ public class DeepSeekAiGatewayClient implements AiGatewayClient {
             extractUsage(response, result);
             result.setContent(extractContent(response));
             result.setSuccess(true);
+            log.info("DeepSeek analysis OK: latencyMs={}, promptTokens={}, completionTokens={}",
+                    result.getLatencyMs(), result.getPromptTokens(), result.getCompletionTokens());
         } catch (Exception ex) {
             result.setLatencyMs(System.currentTimeMillis() - start);
             result.setSuccess(false);
             result.setErrorMessage(normalizeError(ex));
             result.setContent("");
-            log.warn("DeepSeek analysis request failed: {}", ex.getMessage());
+            log.warn("DeepSeek analysis failed: code={}, msg={}", result.getErrorMessage(), ex.getMessage());
         }
 
         return result;
@@ -105,6 +110,7 @@ public class DeepSeekAiGatewayClient implements AiGatewayClient {
         body.put("model", properties.getModel());
         body.put("messages", messages);
         body.put("temperature", temperature);
+        body.put("max_tokens", properties.getMaxTokens());
         if (tools != null && !tools.isEmpty()) {
             body.put("tools", tools);
         }

@@ -9,6 +9,7 @@ public class DeepSeekProperties {
     private String apiKey = "";
     private String model = "deepseek-chat";
     private int timeoutMillis = 30000;
+    private int maxTokens = 4096;
 
     public String getBaseUrl() {
         return baseUrl;
@@ -40,5 +41,13 @@ public class DeepSeekProperties {
 
     public void setTimeoutMillis(int timeoutMillis) {
         this.timeoutMillis = timeoutMillis;
+    }
+
+    public int getMaxTokens() {
+        return maxTokens;
+    }
+
+    public void setMaxTokens(int maxTokens) {
+        this.maxTokens = maxTokens;
     }
 }

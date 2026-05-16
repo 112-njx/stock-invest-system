@@ -15,8 +15,11 @@ import com.example.stock_invest_backend.market.history.dto.StockDailyKlineRecord
 import com.example.stock_invest_backend.market.history.repository.StockDailyKlineRepository;
 import com.example.stock_invest_backend.market.history.service.FakeHistoryIngestionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -31,6 +34,11 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -47,6 +55,7 @@ public class AiInvestService {
     private static final String MODE_MACRO_ONLY = "MACRO_ONLY";
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final ZoneId ZONE_SHANGHAI = ZoneId.of("Asia/Shanghai");
+    private static final int MAX_LOG_PROMPT_LENGTH = 200;
 
     private final AiGatewayClient aiGatewayClient;
     private final FakeHistoryIngestionService historyIngestionService;
@@ -54,29 +63,130 @@ public class AiInvestService {
     private final MaBacktestService maBacktestService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AtomicInteger requestCounter = new AtomicInteger(0);
+    private final int timeoutSeconds;
+    private ExecutorService analysisExecutor;
 
     public AiInvestService(AiGatewayClient aiGatewayClient,
                            FakeHistoryIngestionService historyIngestionService,
                            StockDailyKlineRepository klineRepository,
-                           MaBacktestService maBacktestService) {
+                           MaBacktestService maBacktestService,
+                           @Value("${ai.analysis.timeout-seconds:10}") int timeoutSeconds) {
         this.aiGatewayClient = aiGatewayClient;
         this.historyIngestionService = historyIngestionService;
         this.klineRepository = klineRepository;
         this.maBacktestService = maBacktestService;
+        this.timeoutSeconds = timeoutSeconds;
     }
+
+    @PostConstruct
+    public void init() {
+        this.analysisExecutor = Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "ai-analysis");
+            t.setDaemon(true);
+            return t;
+        });
+        log.info("AI analysis executor initialized: poolSize=4, timeoutSeconds={}", timeoutSeconds);
+    }
+
+    @PreDestroy
+    public void destroy() {
+        if (analysisExecutor != null) {
+            analysisExecutor.shutdownNow();
+        }
+    }
+
+    // ---------- public entry ----------
 
     public AiInvestAnalyzeResponse analyze(AiInvestAnalyzeRequest request) {
         String prompt = request.getPrompt();
         String requestId = generateRequestId();
         String stockCode = extractStockCode(prompt);
 
-        log.info("[{}] AI analyze request, prompt={}, stockCode={}, provider={}",
-                requestId, prompt, stockCode, aiGatewayClient.getProviderName());
+        log.info("[{}] REQUEST_START | prompt=\"{}\" | stockCode={} | provider={}",
+                requestId, truncatePrompt(prompt), stockCode, aiGatewayClient.getProviderName());
 
-        if (stockCode == null) {
-            return analyzeMacroOnly(requestId, prompt);
+        long startTime = System.currentTimeMillis();
+
+        Future<AiInvestAnalyzeResponse> future = analysisExecutor.submit(() -> {
+            if (stockCode == null) {
+                return analyzeMacroOnly(requestId, prompt);
+            }
+            return analyzeWithToolChain(requestId, prompt, stockCode);
+        });
+
+        try {
+            AiInvestAnalyzeResponse response = future.get(timeoutSeconds, TimeUnit.SECONDS);
+            long totalMs = System.currentTimeMillis() - startTime;
+            log.info("[{}] RESPONSE | mode={} | degraded={} | totalLatencyMs={}",
+                    requestId, response.getMode(), response.isDegraded(), totalMs);
+            return response;
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            long totalMs = System.currentTimeMillis() - startTime;
+            log.warn("[{}] GLOBAL_TIMEOUT | totalLatencyMs={} | thresholdSeconds={}",
+                    requestId, totalMs, timeoutSeconds);
+            return buildTimeoutFallback(requestId, prompt, stockCode);
+        } catch (Exception e) {
+            long totalMs = System.currentTimeMillis() - startTime;
+            log.error("[{}] FATAL_ERROR | error={} | totalLatencyMs={}",
+                    requestId, e.getMessage(), totalMs);
+            return buildErrorFallback(requestId, prompt, stockCode, e.getMessage());
         }
-        return analyzeWithToolChain(requestId, prompt, stockCode);
+    }
+
+    public int getTimeoutSeconds() {
+        return timeoutSeconds;
+    }
+
+    // ---------- timeout / error fallback ----------
+
+    public AiInvestAnalyzeResponse buildTimeoutFallback(AiInvestAnalyzeRequest request) {
+        String prompt = request.getPrompt();
+        String requestId = generateRequestId();
+        String stockCode = extractStockCode(prompt);
+        return buildTimeoutFallback(requestId, prompt, stockCode);
+    }
+
+    AiInvestAnalyzeResponse buildTimeoutFallback(String requestId, String prompt, String stockCode) {
+        boolean hasSymbol = stockCode != null;
+        String mode = hasSymbol ? MODE_TOOL_CHAIN : MODE_MACRO_ONLY;
+        AiInvestAnalyzeResponse response = buildBaseResponse(requestId, prompt, mode, stockCode,
+                hasSymbol ? DEFAULT_DAYS : 0);
+
+        if (hasSymbol) {
+            response.setToolCalls(buildDefaultToolCalls(stockCode, DEFAULT_DAYS));
+            response.setDataSources(buildDefaultDataSources());
+        } else {
+            response.setToolCalls(List.of());
+            response.setDataSources(List.of());
+        }
+
+        response.setAnalysisText("AI 分析阶段超时，已返回原生行情与 MA5 信号数据供前端展示。" + DISCLAIMER);
+        response.setDegraded(true);
+        response.setFallbackReason("GLOBAL_TIMEOUT");
+        response.setRawData(null);
+        return response;
+    }
+
+    AiInvestAnalyzeResponse buildErrorFallback(String requestId, String prompt, String stockCode, String error) {
+        boolean hasSymbol = stockCode != null;
+        String mode = hasSymbol ? MODE_TOOL_CHAIN : MODE_MACRO_ONLY;
+        AiInvestAnalyzeResponse response = buildBaseResponse(requestId, prompt, mode, stockCode,
+                hasSymbol ? DEFAULT_DAYS : 0);
+
+        if (hasSymbol) {
+            response.setToolCalls(buildDefaultToolCalls(stockCode, DEFAULT_DAYS));
+            response.setDataSources(buildDefaultDataSources());
+        } else {
+            response.setToolCalls(List.of());
+            response.setDataSources(List.of());
+        }
+
+        response.setAnalysisText("AI 分析服务暂时不可用，请稍后重试。" + DISCLAIMER);
+        response.setDegraded(true);
+        response.setFallbackReason("FATAL_ERROR: " + (error != null ? error : "unknown"));
+        response.setRawData(null);
+        return response;
     }
 
     // ---------- stock code extraction ----------
@@ -101,14 +211,16 @@ public class AiInvestService {
                 分析应涵盖市场整体趋势、政策面、资金面等角度，避免针对具体个股给出买卖建议。
                 回复末尾必须附上：「""" + DISCLAIMER + "」";
 
+        log.info("[{}] MACRO_LLM_START | provider={}", requestId, aiGatewayClient.getProviderName());
         GatewayAnalysisResult result = aiGatewayClient.generateAnalysis(systemPrompt, prompt);
-        log.info("[{}] Macro analysis: latencyMs={}, promptTokens={}, completionTokens={}",
-                requestId, result.getLatencyMs(), result.getPromptTokens(), result.getCompletionTokens());
+        log.info("[{}] MACRO_LLM_END | success={} | latencyMs={} | promptTokens={} | completionTokens={}",
+                requestId, result.isSuccess(), result.getLatencyMs(),
+                result.getPromptTokens(), result.getCompletionTokens());
 
         if (result.isSuccess()) {
             response.setAnalysisText(result.getContent());
         } else {
-            log.warn("[{}] Macro analysis LLM call failed: {}", requestId, result.getErrorMessage());
+            log.warn("[{}] MACRO_LLM_FAIL | code={}", requestId, result.getErrorMessage());
             response.setAnalysisText("当前宏观层面更需要关注成交量修复、政策预期和板块轮动节奏，结论应以市场实际风险偏好变化为准。" + DISCLAIMER);
             response.setDegraded(true);
             response.setFallbackReason(result.getErrorMessage());
@@ -124,17 +236,21 @@ public class AiInvestService {
         AiInvestAnalyzeResponse response = buildBaseResponse(requestId, prompt, MODE_TOOL_CHAIN, stockCode, usedDays);
 
         // Step 1: request tool calls from LLM via gateway
-        List<ToolCall> toolCalls;
+        log.info("[{}] TOOL_CALL_LLM_START | provider={}", requestId, aiGatewayClient.getProviderName());
         GatewayToolCallResult toolCallResult = requestToolCallsViaGateway(prompt);
-        log.info("[{}] Tool call generation: latencyMs={}, promptTokens={}, completionTokens={}, success={}",
-                requestId, toolCallResult.getLatencyMs(), toolCallResult.getPromptTokens(),
-                toolCallResult.getCompletionTokens(), toolCallResult.isSuccess());
+        log.info("[{}] TOOL_CALL_LLM_END | success={} | latencyMs={} | promptTokens={} | completionTokens={} | toolCount={}",
+                requestId, toolCallResult.isSuccess(), toolCallResult.getLatencyMs(),
+                toolCallResult.getPromptTokens(), toolCallResult.getCompletionTokens(),
+                toolCallResult.getToolCalls().size());
 
+        List<ToolCall> toolCalls;
         if (toolCallResult.isSuccess() && !toolCallResult.getToolCalls().isEmpty()) {
             toolCalls = toolCallResult.getToolCalls();
+            for (ToolCall tc : toolCalls) {
+                log.info("[{}] TOOL_CALL_ITEM | toolName={} | args={}", requestId, tc.getToolName(), tc.getArguments());
+            }
         } else {
-            log.warn("[{}] Tool call generation failed or returned empty, using defaults: {}",
-                    requestId, toolCallResult.getErrorMessage());
+            log.warn("[{}] TOOL_CALL_LLM_FALLBACK | code={}", requestId, toolCallResult.getErrorMessage());
             toolCalls = buildDefaultToolCalls(stockCode, usedDays);
         }
         response.setToolCalls(toolCalls);
@@ -146,9 +262,13 @@ public class AiInvestService {
         // Step 3: execute tool calls and aggregate results
         Map<String, Object> aggregatedData = new LinkedHashMap<>();
         for (ToolCall tc : toolCalls) {
+            log.info("[{}] TOOL_EXEC_START | tool={} | args={}", requestId, tc.getToolName(), tc.getArguments());
+            long toolStart = System.currentTimeMillis();
             try {
                 Map<String, Object> result = executeToolCall(tc);
+                long toolMs = System.currentTimeMillis() - toolStart;
                 aggregatedData.put(tc.getToolName(), result);
+                log.info("[{}] TOOL_EXEC_END | tool={} | latencyMs={}", requestId, tc.getToolName(), toolMs);
                 if ("get_market_history".equals(tc.getToolName()) && tc.getArguments() != null) {
                     Object daysObj = tc.getArguments().get("days");
                     if (daysObj instanceof Number n) {
@@ -157,7 +277,9 @@ public class AiInvestService {
                     }
                 }
             } catch (Exception ex) {
-                log.warn("[{}] Tool call execution failed for {}: {}", requestId, tc.getToolName(), ex.getMessage());
+                long toolMs = System.currentTimeMillis() - toolStart;
+                log.warn("[{}] TOOL_EXEC_FAIL | tool={} | latencyMs={} | error={}",
+                        requestId, tc.getToolName(), toolMs, ex.getMessage());
                 aggregatedData.put(tc.getToolName(), Map.of("error", ex.getMessage()));
             }
         }
@@ -175,15 +297,16 @@ public class AiInvestService {
                 "用户问题：%s\n\n股票代码：%s\n\n以下是获取到的真实数据（JSON格式）：\n%s\n\n请基于以上数据进行技术分析。",
                 prompt, stockCode, dataJson);
 
+        log.info("[{}] ANALYSIS_LLM_START | provider={}", requestId, aiGatewayClient.getProviderName());
         GatewayAnalysisResult analysisResult = aiGatewayClient.generateAnalysis(analysisSystemPrompt, analysisUserPrompt);
-        log.info("[{}] Final analysis: latencyMs={}, promptTokens={}, completionTokens={}, success={}",
-                requestId, analysisResult.getLatencyMs(), analysisResult.getPromptTokens(),
-                analysisResult.getCompletionTokens(), analysisResult.isSuccess());
+        log.info("[{}] ANALYSIS_LLM_END | success={} | latencyMs={} | promptTokens={} | completionTokens={}",
+                requestId, analysisResult.isSuccess(), analysisResult.getLatencyMs(),
+                analysisResult.getPromptTokens(), analysisResult.getCompletionTokens());
 
         if (analysisResult.isSuccess()) {
             response.setAnalysisText(analysisResult.getContent());
         } else {
-            log.warn("[{}] Final analysis LLM call failed: {}", requestId, analysisResult.getErrorMessage());
+            log.warn("[{}] ANALYSIS_LLM_FAIL | code={}", requestId, analysisResult.getErrorMessage());
             response.setAnalysisText("AI 分析阶段超时，已返回原生行情与 MA5 信号数据供前端展示。" + DISCLAIMER);
             response.setDegraded(true);
             response.setFallbackReason(analysisResult.getErrorMessage());
@@ -329,6 +452,13 @@ public class AiInvestService {
         );
     }
 
+    private List<DataSource> buildDefaultDataSources() {
+        return List.of(
+                new DataSource("/api/market/history/ingest", "拉取历史日K所需数据（降级模式）"),
+                new DataSource("/api/backtest/ma", "获取MA5上穿/下穿信号（降级模式）")
+        );
+    }
+
     private List<DataSource> buildDataSources(List<ToolCall> toolCalls) {
         List<DataSource> sources = new ArrayList<>();
         for (ToolCall tc : toolCalls) {
@@ -390,6 +520,16 @@ public class AiInvestService {
         } catch (Exception ex) {
             return String.valueOf(obj);
         }
+    }
+
+    private String truncatePrompt(String prompt) {
+        if (prompt == null) {
+            return null;
+        }
+        if (prompt.length() <= MAX_LOG_PROMPT_LENGTH) {
+            return prompt;
+        }
+        return prompt.substring(0, MAX_LOG_PROMPT_LENGTH) + "...";
     }
 
     private String generateRequestId() {
