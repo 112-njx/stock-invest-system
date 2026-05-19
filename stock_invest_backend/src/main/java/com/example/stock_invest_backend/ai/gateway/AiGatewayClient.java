@@ -17,7 +17,7 @@ public interface AiGatewayClient {
 
     /**
      * 请求 LLM 生成文本分析。
-     */
+     **/
     GatewayAnalysisResult generateAnalysis(String systemPrompt, String userPrompt);
 
     /**
