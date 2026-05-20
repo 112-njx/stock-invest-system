@@ -292,10 +292,10 @@ public class AiInvestService {
                 你是一个专业的股票投资技术分析师。请基于提供的真实行情数据和MA5信号数据，对股票进行技术分析。
                 分析应包括：趋势判断、MA5信号解读、支撑/压力位、短期风险提示。
                 回复末尾必须附上：「""" + DISCLAIMER + "」";
-        String dataJson = safeSerializeJson(aggregatedData);
+        String dataSummary = buildAnalysisPromptData(aggregatedData);
         String analysisUserPrompt = String.format(
-                "用户问题：%s\n\n股票代码：%s\n\n以下是获取到的真实数据（JSON格式）：\n%s\n\n请基于以上数据进行技术分析。",
-                prompt, stockCode, dataJson);
+                "用户问题：%s\n\n股票代码：%s\n\n%s\n\n请基于以上数据进行技术分析。",
+                prompt, stockCode, dataSummary);
 
         log.info("[{}] ANALYSIS_LLM_START | provider={}", requestId, aiGatewayClient.getProviderName());
         GatewayAnalysisResult analysisResult = aiGatewayClient.generateAnalysis(analysisSystemPrompt, analysisUserPrompt);
@@ -498,6 +498,49 @@ public class AiInvestService {
         }
 
         return rawData;
+    }
+
+    private String buildAnalysisPromptData(Map<String, Object> aggregatedData) {
+        StringBuilder sb = new StringBuilder();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> historyData = (Map<String, Object>) aggregatedData.get("get_market_history");
+        if (historyData != null) {
+            sb.append("【行情概览】\n");
+            sb.append(String.format("- 股票代码: %s\n", historyData.getOrDefault("symbol", "N/A")));
+            sb.append(String.format("- 最新收盘价: %s\n", historyData.getOrDefault("latestClose", "N/A")));
+            sb.append(String.format("- 近30日涨跌幅: %s\n", historyData.getOrDefault("changePercent", "N/A")));
+
+            Object klineObj = historyData.get("klineData");
+            if (klineObj instanceof List<?> klineList && !klineList.isEmpty()) {
+                int show = Math.min(klineList.size(), 10);
+                List<?> recentKlines = klineList.subList(Math.max(0, klineList.size() - show), klineList.size());
+                sb.append(String.format("- 最近%d日收盘价序列: ", show));
+                List<String> prices = new ArrayList<>();
+                for (Object k : recentKlines) {
+                    if (k instanceof Map m) {
+                        Object closeVal = m.get("close");
+                        prices.add(closeVal != null ? String.valueOf(closeVal) : "-");
+                    }
+                }
+                sb.append(String.join(", ", prices));
+                sb.append("\n");
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> maData = (Map<String, Object>) aggregatedData.get("get_ma5_cross_signals");
+        if (maData != null) {
+            sb.append("\n【MA5信号摘要】\n");
+            sb.append(String.format("- 策略: %s\n", maData.getOrDefault("strategyCode", "MA_CROSS_5")));
+            sb.append(String.format("- 总信号数: %s\n", maData.getOrDefault("totalSignals", 0)));
+            sb.append(String.format("- 盈利信号: %s\n", maData.getOrDefault("winSignals", 0)));
+            sb.append(String.format("- 胜率: %s\n", maData.getOrDefault("successRate", 0)));
+            sb.append(String.format("- 上穿日期: %s\n", maData.getOrDefault("crossUpDates", "[]")));
+            sb.append(String.format("- 下穿日期: %s\n", maData.getOrDefault("crossDownDates", "[]")));
+        }
+
+        return sb.toString();
     }
 
     private AiInvestAnalyzeResponse buildBaseResponse(String requestId, String prompt, String mode,
