@@ -117,4 +117,45 @@ public class MySqlStockDailyKlineRepository implements StockDailyKlineRepository
             throw new IllegalStateException("Query stock_daily_kline failed: " + ex.getMessage(), ex);
         }
     }
+
+    @Override
+    public List<StockDailyKlineRecord> findBySymbolAndDateRange(String symbol, LocalDate startDate, LocalDate endDate) {
+        if (!properties.isEnabled() || symbol == null || symbol.isBlank()) {
+            return List.of();
+        }
+
+        String sql = """
+                SELECT symbol, trade_date, open_price, high_price, low_price, close_price, volume, turnover, source
+                FROM stock_daily_kline
+                WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
+                ORDER BY trade_date ASC
+                """;
+
+        List<StockDailyKlineRecord> records = new ArrayList<>();
+        try (Connection connection = DriverManager.getConnection(
+                properties.getUrl(), properties.getUsername(), properties.getPassword());
+             PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, symbol);
+            ps.setDate(2, Date.valueOf(startDate));
+            ps.setDate(3, Date.valueOf(endDate));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    StockDailyKlineRecord record = new StockDailyKlineRecord();
+                    record.setSymbol(rs.getString("symbol"));
+                    record.setTradeDate(rs.getDate("trade_date").toLocalDate());
+                    record.setOpenPrice(rs.getBigDecimal("open_price"));
+                    record.setHighPrice(rs.getBigDecimal("high_price"));
+                    record.setLowPrice(rs.getBigDecimal("low_price"));
+                    record.setClosePrice(rs.getBigDecimal("close_price"));
+                    record.setVolume(rs.getLong("volume"));
+                    record.setTurnover(rs.getBigDecimal("turnover"));
+                    record.setSource(rs.getString("source"));
+                    records.add(record);
+                }
+            }
+            return records;
+        } catch (SQLException ex) {
+            throw new IllegalStateException("Query stock_daily_kline by date range failed: " + ex.getMessage(), ex);
+        }
+    }
 }

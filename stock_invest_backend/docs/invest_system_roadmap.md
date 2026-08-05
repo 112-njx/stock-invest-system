@@ -1,8 +1,6 @@
 # MA 策略回测（功能1）分步实施建议
 
-## 你的思路是否最佳？
-总体思路是正确的，但建议做两点优化：
-
+## 
 1. **回测与实时建议共用同一套“策略定义”**（参数、信号规则统一），避免 Java/C++ 两套逻辑漂移。
 2. **历史数据写 MySQL 时增加幂等约束**（`symbol + trade_date` 唯一），避免重复采集导致回测偏差。
 
@@ -309,3 +307,72 @@
   - AI 异常时接口仍可用，能稳定返回原生数据或宏观分析文本
   - 每条返回都带固定免责声明与回复时间
   - 可通过日志还原一次完整调用链路
+
+---
+
+## 支付模块实施拆分（支付宝沙箱）
+
+目标：
+- 仅支持两档固定金额：10 元 / 20 元人民币
+- 完整支付链路：下单 → 跳转支付宝 → 异步回调 → 订单状态更新
+- 历史订单状态查询接口（支持分页）
+- 使用支付宝沙箱环境（`alipay.trade.page.pay` 电脑网站支付）
+- 与项目其他模块完全解耦，代码统一放在 `pay/` 包下
+- 复用现有 MySQL 数据源，新建 `t_pay_order` 表
+
+### Task PAY-1：建表与订单实体层
+- 新建 SQL：`docs/sql/003_create_pay_order.sql`
+- 表名 `t_pay_order`，核心字段：pay_order_id、amount、subject、state、channel_order_no、notify_url、success_time、expired_time、created_at
+- 订单状态定义：INIT(0)、ING(1)、SUCCESS(2)、FAIL(3)、CLOSED(6)
+- 新建 `pay/entity/PayOrder.java`
+- 新建 `pay/repository/PayOrderRepository.java`（MybatisPlus，insert + updateState + queryById + queryList）
+- 状态更新采用 CAS 模式（`WHERE state=旧状态`）保证幂等
+- 验收点：Repository 层编译通过，可独立对 DB 读写
+
+### Task PAY-2：支付宝 SDK 集成与配置
+- `pom.xml` 新增依赖 `com.alipay.sdk:alipay-sdk-java`
+- 新建 `pay/config/AlipayProperties.java`（appId、privateKey、alipayPublicKey、gateway、notifyUrl）
+- 新建 `pay/service/AlipayClientService.java`
+  - 初始化 `AlipayClient` Bean（沙箱 gateway）
+  - 封装 `createPagePay(payOrderId, amount, subject)` → 返回支付表单 HTML
+  - 封装 `verifyNotifySign(params)` → 验证回调签名
+- `application.properties` 新增沙箱配置项占位
+- 验收点：AlipayClient 可正确构建，createPagePay 可生成表单字符串
+
+### Task PAY-3：下单接口与支付跳转
+- 新建 `pay/controller/PayOrderController.java`
+- 新增接口：`POST /api/pay/create`
+  - 请求体：`{ "amount": 1000 }`（仅允许 1000 或 2000）
+  - 生成 payOrderId，入库 state=INIT
+  - 调用 AlipayClientService.createPagePay
+  - 返回 payOrderId + payForm（HTML 表单，前端直接渲染跳转）
+- 新建 `pay/dto/CreatePayOrderRequest.java`、`CreatePayOrderResponse.java`
+- 新建 `pay/service/PayOrderService.java`（createOrder + 金额校验）
+- 验收点：调用接口返回可用的支付宝跳转表单，沙箱环境可唤起收银台
+
+### Task PAY-4：异步回调与订单状态更新
+- 新增接口：`POST /api/pay/notify`（支付宝异步回调入口）
+  - 验签（AlipayClientService.verifyNotifySign）
+  - 提取 out_trade_no（= payOrderId）+ trade_status
+  - trade_status=TRADE_SUCCESS → CAS 更新 state: INIT/ING → SUCCESS
+  - 记录 channel_order_no（trade_no）、success_time
+  - 返回纯文本 `"success"` 给支付宝
+- 回调幂等：state 已为 SUCCESS 时直接返回 success 不重复处理
+- 验收点：沙箱付款后回调正确到达，DB 中订单 state 变为 2
+
+### Task PAY-5：订单查询与历史列表
+- 新增接口：`GET /api/pay/query?payOrderId=xxx`
+  - 返回单条订单详情（payOrderId、amount、state、创建时间、支付时间）
+- 新增接口：`GET /api/pay/orders?page=1&size=20`
+  - 返回分页历史订单列表，按创建时间降序
+  - 响应包含 items、total、page、size
+- 新建 `pay/dto/PayOrderStatusResponse.java`、`PayOrderListResponse.java`
+- 验收点：可查询到已支付/未支付/已关闭的订单记录
+
+### Task PAY-6：过期关单与健壮性
+- 新建 `pay/task/PayOrderExpiredTask.java`
+  - 定时扫描 state=INIT 且 expired_time < now 的订单，批量更新为 CLOSED(6)
+  - cron：每 5 分钟执行一次
+- 全链路日志：下单、回调、状态变更关键节点 INFO 日志
+- 异常防护：回调验签失败返回 `"failure"`、金额不匹配返回 `"failure"`
+- 验收点：过期订单可自动关闭，异常回调不影响正常订单

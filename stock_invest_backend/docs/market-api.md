@@ -100,6 +100,257 @@ curl -X POST "http://localhost:8081/api/market/history/ingest" \
 }
 ```
 
+### 3b) 查询历史日K（新增）
+
+- api作用展示：查询已落库的历史日K数据，供前端 K 线图表渲染
+- Method: `GET`
+- Path: `/api/market/history/kline`
+- Body: 无（使用 Query 参数）
+
+Query 参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `symbol` | String | 是 | 股票代码，格式 `sh600519`、`sz000001`、`bj`+6位数字 |
+| `startDate` | String | 否 | 开始日期 `yyyy-MM-dd` |
+| `endDate` | String | 否 | 结束日期 `yyyy-MM-dd` |
+| `days` | int | 否 | 最近 N 天（与日期区间二选一，默认 90，最大 365） |
+| `adjustType` | String | 否 | 复权类型：`qfq` 前复权 / `hfq` 后复权 / `none` 不复权（默认 `qfq`） |
+
+> 优先级：若同时传 `days` 和 `startDate/endDate`，以 `startDate/endDate` 为准。
+> 日期范围跨度上限 10 年。
+
+```bash
+# 按天数查询（最近90天）
+curl "http://localhost:8081/api/market/history/kline?symbol=sh600519&days=90"
+
+# 按日期区间查询
+curl "http://localhost:8081/api/market/history/kline?symbol=sz000001&startDate=2025-01-01&endDate=2025-12-31"
+```
+
+成功调用时返回结果（示例）：
+
+```json
+[
+  {
+    "tradeDate": "2026-07-01",
+    "open": 1680.00,
+    "high": 1705.50,
+    "low": 1670.00,
+    "close": 1698.20,
+    "volume": 2456789,
+    "turnover": 4152345678.90
+  },
+  {
+    "tradeDate": "2026-07-02",
+    "open": 1698.20,
+    "high": 1710.00,
+    "low": 1690.50,
+    "close": 1705.80,
+    "volume": 3124567,
+    "turnover": 5321456789.10
+  }
+]
+```
+
+参数校验失败时返回结果（示例）：
+
+```json
+{
+  "error": "invalid symbol format",
+  "message": "symbol must match pattern: sh|sz|bj + 6 digits, e.g. sh600519"
+}
+```
+
+### 3c) 检查历史日K数据完整性（阶段二新增）
+
+- api作用展示：按 `symbol + 区间` 校验 `stock_daily_kline` 覆盖情况，返回缺失区间列表，用于前端展示"数据是否可直接回测"以及触发补数
+- Method: `GET`
+- Path: `/api/market/history/completeness`
+- Body: 无
+
+Query 参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `symbol` | String | 是 | `sh|sz|bj` + 6 位数字 |
+| `startDate` | String | 是 | `yyyy-MM-dd` |
+| `endDate` | String | 是 | `yyyy-MM-dd`，不得早于 `startDate`，跨度上限 10 年 |
+| `adjustType` | String | 否 | `qfq` / `hfq` / `none`，默认 `qfq` |
+
+判定规则：把区间内工作日剔除节假日得到"预期交易日"集合，与 DB 中该 symbol 已有日期取差集，`覆盖率 >= 95%` 视为 `complete=true`。
+
+```bash
+curl "http://localhost:8081/api/market/history/completeness?symbol=sh600519&startDate=2024-01-01&endDate=2026-07-01&adjustType=qfq"
+```
+
+成功调用时返回结果（示例）：
+
+```json
+{
+  "symbol": "sh600519",
+  "adjustType": "qfq",
+  "startDate": "2024-01-01",
+  "endDate": "2026-07-01",
+  "expected": 610,
+  "actual": 260,
+  "complete": false,
+  "missingRanges": [
+    { "start": "2024-01-02", "end": "2024-12-31" },
+    { "start": "2025-06-04", "end": "2025-07-15" }
+  ],
+  "message": "expected=610 actual=260 missing=350 ranges=2"
+}
+```
+
+### 3d) 触发历史日K补数（阶段二新增）
+
+- api作用展示：按 `completeness` 结果驱动 Python/AkShare Worker 补齐缺失区间数据，补完后自动复检；前端可用于"点击补数 -> K线图可用"的一键流程
+- Method: `POST`
+- Path: `/api/market/history/backfill`
+- Body:
+
+```json
+{
+  "symbol": "sh600519",
+  "startDate": "2024-01-01",
+  "endDate": "2026-07-01",
+  "adjustType": "qfq"
+}
+```
+
+行为要求：
+- 先跑 `completeness` 校验；若已 `complete`，直接返回 `status=OK` 且 `ingestResults=[]`
+- 否则遍历 `missingRanges`，为每段调用一次 `python scripts/ingest_single.py`（子进程 `ProcessBuilder`），单次超时由 `python.research.service.timeout-seconds` 控制（默认 300s）
+- 补数完成后再次调用 `completeness`，用于对比 `completenessBefore` / `completenessAfter`
+- 最终 `status` 取值：`OK`（补齐且全部成功） / `PARTIAL`（部分成功） / `FAIL`（无一成功）
+
+```bash
+curl -X POST "http://localhost:8081/api/market/history/backfill" \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"sh600519","startDate":"2024-01-01","endDate":"2026-07-01","adjustType":"qfq"}'
+```
+
+成功调用时返回结果（示例）：
+
+```json
+{
+  "requestId": "backfill-20260724-4a8f2c",
+  "symbol": "sh600519",
+  "status": "OK",
+  "ingestResults": [
+    {
+      "requestId": "backfill-20260724-4a8f2c",
+      "symbol": "sh600519",
+      "status": "OK",
+      "rows": 244,
+      "affected": 488,
+      "batches": 1,
+      "startDate": "2024-01-02",
+      "endDate": "2024-12-31",
+      "adjustType": "qfq",
+      "elapsedMs": 3421
+    },
+    {
+      "requestId": "backfill-20260724-4a8f2c",
+      "symbol": "sh600519",
+      "status": "OK",
+      "rows": 28,
+      "affected": 56,
+      "batches": 1,
+      "startDate": "2025-06-04",
+      "endDate": "2025-07-15",
+      "adjustType": "qfq",
+      "elapsedMs": 1105
+    }
+  ],
+  "completenessBefore": {
+    "symbol": "sh600519",
+    "adjustType": "qfq",
+    "startDate": "2024-01-01",
+    "endDate": "2026-07-01",
+    "expected": 610,
+    "actual": 260,
+    "complete": false,
+    "missingRanges": [
+      { "start": "2024-01-02", "end": "2024-12-31" },
+      { "start": "2025-06-04", "end": "2025-07-15" }
+    ],
+    "message": "expected=610 actual=260 missing=350 ranges=2"
+  },
+  "completenessAfter": {
+    "symbol": "sh600519",
+    "adjustType": "qfq",
+    "startDate": "2024-01-01",
+    "endDate": "2026-07-01",
+    "expected": 610,
+    "actual": 610,
+    "complete": true,
+    "missingRanges": [],
+    "message": "expected=610 actual=610 missing=0 ranges=0"
+  },
+  "elapsedMs": 4620
+}
+```
+
+部分失败降级返回（示例）：
+
+```json
+{
+  "requestId": "backfill-20260724-9c7bd1",
+  "symbol": "sz000001",
+  "status": "PARTIAL",
+  "ingestResults": [
+    { "symbol": "sz000001", "status": "OK", "rows": 122, "elapsedMs": 1520 },
+    {
+      "symbol": "sz000001",
+      "status": "FAIL",
+      "errorCode": "AKSHARE_UPSTREAM",
+      "message": "stock_zh_a_hist failed: HTTPSConnectionPool ..."
+    }
+  ],
+  "completenessAfter": {
+    "complete": false,
+    "expected": 610,
+    "actual": 380
+  },
+  "elapsedMs": 6234
+}
+```
+
+### 3e) Python 数据采集健康检查（阶段二新增）
+
+- api作用展示：转发调用 `python-research-service/scripts/health_check.py`，用于运维巡检 MySQL 连通性、AkShare 可用性、日志目录可写
+- Method: `GET`
+- Path: `/api/market/history/ingest-health`
+- Body: 无
+
+```bash
+curl "http://localhost:8081/api/market/history/ingest-health"
+```
+
+成功调用时返回结果（示例）：
+
+```json
+{
+  "db": { "status": "OK" },
+  "akshare": { "status": "OK", "rows": 8234 },
+  "logDir": { "status": "OK", "path": "./logs" },
+  "overall": "OK"
+}
+```
+
+其中任一项失败示例：
+
+```json
+{
+  "db": { "status": "FAIL", "message": "OperationalError: (2003, ...)" },
+  "akshare": { "status": "OK", "rows": 8234 },
+  "logDir": { "status": "OK", "path": "./logs" },
+  "overall": "FAIL"
+}
+```
+
 ### 4) 查询 LOF 实时溢价率
 - api作用展示：按 LOF 代码返回实时溢价率，净值优先取 iopv，缺失时退化到上一交易日净值，并标记状态；当不传 `symbols` 时，符号清单优先来自 DB（失败自动降级配置）
 - Method: `GET`
@@ -605,3 +856,105 @@ curl -X POST "http://localhost:8081/api/ai/invest/analyze" \
 - 单次 AI 总耗时建议限制在 `8~12` 秒内，并配置 Token 上限；超限时直接降级返回原生接口数据
 - 所有返回都必须固定附带免责声明 `本分析仅供参考，不构成任何投资建议。` 和 `replyTime`
 - 需记录全链路日志：原始 prompt、股票代码识别结果、Tool Call、下游接口耗时、AI 耗时、降级原因、最终返回模式
+
+---
+
+## D. 支付模块（Java，支付宝沙箱）
+
+### 1) 创建支付订单
+- api作用展示：创建 10 元或 20 元固定金额订单，返回支付宝跳转表单
+- Method: `POST`
+- Path: `/api/pay/create`
+- Body:
+
+```json
+{
+  "amount": 1000
+}
+```
+
+`amount` 仅允许 `1000`（10元）或 `2000`（20元），单位分。
+
+```bash
+curl -X POST "http://localhost:8081/api/pay/create" \
+  -H "Content-Type: application/json" \
+  -d '{"amount":1000}'
+```
+
+成功调用时返回结果（示例）：
+
+```json
+{
+  "payOrderId": "P17371234567891234",
+  "amount": 1000,
+  "subject": "股票策略会员-10元档",
+  "payForm": "<form name='punchout_form' method='post' action='https://openapi-sandbox...'><input type='submit'...></form>"
+}
+```
+
+前端拿到 `payForm` 后直接渲染到页面，浏览器自动跳转支付宝收银台。
+
+### 2) 支付异步回调（支付宝服务器调用）
+- api作用展示：支付宝异步通知支付结果，验签后更新订单状态
+- Method: `POST`
+- Path: `/api/pay/notify`
+- Body: 支付宝标准 form-urlencoded 回调参数
+
+该接口由支付宝服务器调用，非前端调用。验签通过且 `trade_status=TRADE_SUCCESS` 时，订单 state 更新为 2（成功）。返回纯文本 `success`。
+
+### 3) 查询单条订单
+- api作用展示：按订单号查询订单详情及状态
+- Method: `GET`
+- Path: `/api/pay/query`
+- Query 参数：`payOrderId`（必填）
+
+```bash
+curl "http://localhost:8081/api/pay/query?payOrderId=P17371234567891234"
+```
+
+成功调用时返回结果（示例）：
+
+```json
+{
+  "payOrderId": "P17371234567891234",
+  "amount": 1000,
+  "subject": "股票策略会员-10元档",
+  "state": 2,
+  "stateDesc": "支付成功",
+  "channelOrderNo": "2026072122001400001",
+  "successTime": "2026-07-21T10:30:00",
+  "createdAt": "2026-07-21T10:25:00"
+}
+```
+
+### 4) 历史订单列表（分页）
+- api作用展示：分页查询历史订单，按创建时间降序
+- Method: `GET`
+- Path: `/api/pay/orders`
+- Query 参数：`page`（默认1）、`size`（默认20，最大100）
+
+```bash
+curl "http://localhost:8081/api/pay/orders?page=1&size=20"
+```
+
+成功调用时返回结果（示例）：
+
+```json
+{
+  "items": [
+    {
+      "payOrderId": "P17371234567891234",
+      "amount": 1000,
+      "subject": "股票策略会员-10元档",
+      "state": 2,
+      "stateDesc": "支付成功",
+      "channelOrderNo": "2026072122001400001",
+      "successTime": "2026-07-21T10:30:00",
+      "createdAt": "2026-07-21T10:25:00"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "size": 20
+}
+```

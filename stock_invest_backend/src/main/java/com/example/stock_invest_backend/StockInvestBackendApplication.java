@@ -2,12 +2,18 @@ package com.example.stock_invest_backend;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @EnableScheduling
-@SpringBootApplication(
-        exclude = { DataSourceAutoConfiguration.class }
+@SpringBootApplication
+@ComponentScan(
+        basePackages = "com.example.stock_invest_backend",
+        excludeFilters = @ComponentScan.Filter(
+                type = FilterType.REGEX,
+                pattern = "com\\.example\\.stock_invest_backend\\.pay\\..*"
+        )
 )
 public class StockInvestBackendApplication {
 

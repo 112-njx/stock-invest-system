@@ -237,21 +237,6 @@ curl -X POST "http://localhost:8081/api/ai/invest/analyze" \
 - 超时返回 `degraded=true`、`fallbackReason=GLOBAL_TIMEOUT` 的降级响应
 - Controller 层额外设置 +5 秒安全网超时，防止 Executor 自身挂死
 
-**关键代码（AiInvestService.analyze()）：**
-
-```java
-Future<AiInvestAnalyzeResponse> future = analysisExecutor.submit(() -> {
-    if (stockCode == null) return analyzeMacroOnly(requestId, prompt);
-    return analyzeWithToolChain(requestId, prompt, stockCode);
-});
-try {
-    return future.get(timeoutSeconds, TimeUnit.SECONDS);
-} catch (TimeoutException e) {
-    future.cancel(true);
-    return buildTimeoutFallback(requestId, prompt, stockCode);
-}
-```
-
 **2. Token 上限控制**
 
 在 `DeepSeekAiGatewayClient` 的 `buildChatRequest()` 中，每次 LLM 请求均携带 `max_tokens` 参数：

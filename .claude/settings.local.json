@@ -2,7 +2,22 @@
   "permissions": {
     "allow": [
       "Bash(mvn compile *)",
-      "Bash(./mvnw compile *)"
+      "Bash(./mvnw compile *)",
+      "Bash(xargs grep -l \"PayOrder\")",
+      "Bash(./mvnw dependency:resolve -pl . -Dmaven.test.skip=true)",
+      "Bash(./mvnw dependency:tree -Dmaven.test.skip=true)",
+      "Bash(./mvnw clean *)",
+      "Bash(npm install *)",
+      "Bash(npx vue-tsc *)",
+      "Bash(npx vite *)",
+      "Bash(mvn -q -DskipTests compile)",
+      "Bash(python -m py_compile config/settings.py src/common/models.py src/common/errors.py src/common/logger.py src/common/retry.py src/common/symbol_utils.py src/akshare_ingest/fetcher.py src/akshare_ingest/transformer.py src/akshare_ingest/writer.py scripts/ingest_single.py scripts/ingest_batch.py scripts/health_check.py)",
+      "Bash(python -c \"from src.common.symbol_utils import parse_symbol; from src.common.models import SymbolType; assert parse_symbol\\('sh600519'\\)[0]==SymbolType.A_STOCK; assert parse_symbol\\('sh000001'\\)[0]==SymbolType.INDEX; assert parse_symbol\\('sz161129'\\)[0]==SymbolType.LOF_FUND; assert parse_symbol\\('sz000001'\\)[0]==SymbolType.A_STOCK; assert parse_symbol\\('sz399001'\\)[0]==SymbolType.INDEX; print\\('symbol_utils OK'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(rm D:/stock-invest-system/python-research-service/_selftest.log)",
+      "Bash(D:/Pycharm/python/python.exe -c ' *)",
+      "Bash(D:/迅雷下载/stock_python/python.exe -c ' *)",
+      "Bash(\"D:/迅雷下载/stock_python/python.exe\" -m pip install -r requirements.txt)"
     ]
   }
 }

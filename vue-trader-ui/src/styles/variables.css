@@ -1,0 +1,30 @@
+:root {
+  --c-up: #EF5350;
+  --c-down: #00B050;
+  --c-ma-fast: #EF5350;
+  --c-ma-slow: #8B8B00;
+  --c-macd-dif: #EF5350;
+  --c-macd-dea: #9C27B0;
+  --c-support: #9E9E9E;
+  --c-bg-dark: #1a1a2e;
+  --c-bg-panel: #16213e;
+  --c-text-primary: #e0e0e0;
+  --c-text-secondary: #9e9e9e;
+  --overlay-title-color: #EF5350;
+  --subtitle-bg: #F8BBD0;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  background: var(--c-bg-dark);
+  color: var(--c-text-primary);
+}
