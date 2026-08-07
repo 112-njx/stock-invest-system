@@ -1,4 +1,4 @@
-# 量化回测软件
+# 量化回测软件 — Claude 上下文
 
 ## 技术栈
 - Backend: Python (FastAPI) + Celery + Redis + PostgreSQL

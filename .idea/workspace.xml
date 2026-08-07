@@ -21,243 +21,13 @@
     </configurations>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="补充项目前端代码，重新思考项目架构">
-      <change afterPath="$PROJECT_DIR$/docs/Agent_backend/Agent_code.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docs/Agent_backend/api-docs.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docs/Agent_backend/fixed.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docs/Agent_backend/roadmap.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docs/Agent_frontend/Agent_code.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docs/Agent_frontend/fixed.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docs/Agent_frontend/roadmap.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docs/docs.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docs/readme.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/docs/working_docs.md" afterDir="false" />
+    <list default="true" id="58b7d340-0d3e-49d4-a731-82ab452a51bc" name="更改" comment="重构项目架构初始">
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/AGENTS.md" beforeDir="false" afterPath="$PROJECT_DIR$/AGENTS.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/CMakeLists.txt" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/CMakeLists.txt" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/README.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/config/config.yaml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/scripts/start.sh" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/common/error_code.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/common/logger.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/handler/analysis_handler.cpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/handler/analysis_handler.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/indicator/indicator.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/indicator/ma_indicator.cpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/indicator/ma_indicator.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/main.cpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/model/market_data.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/model/request.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/model/response.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/repository/mysql_market_data_repository.cpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/repository/mysql_market_data_repository.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/server/http_server.cpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/server/http_server.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/service/analysis_service.cpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/service/analysis_service.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/service/ma_backtest_service.cpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/src/service/ma_backtest_service.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/tests/test_http.cpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/third_party/cpp-httplib/httplib.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cpp-analysis-service/third_party/json/json.hpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/.env.example" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/README.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/config/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/config/settings.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/pyproject.toml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/requirements.txt" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/scripts/health_check.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/scripts/ingest_batch.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/scripts/ingest_single.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/akshare_ingest/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/akshare_ingest/fetcher.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/akshare_ingest/transformer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/akshare_ingest/writer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/common/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/common/errors.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/common/logger.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/common/models.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/common/retry.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/common/symbol_utils.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/hikyuu_backtest/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/hikyuu_backtest/runner.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/result_writer/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/src/result_writer/db_writer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/tests/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/tests/test_fetcher.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/python-research-service/tests/test_transformer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/.claude/settings.local.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/.gitattributes" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/.mvn/wrapper/maven-wrapper.properties" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/LiangLiErXing.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/Task-ai-codedocs.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/invest_system_roadmap.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/k线异常问题.png" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/market-api.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/sql/001_create_market_history_tables.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/sql/002_create_lof_symbol_registry.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/sql/003_create_pay_order.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/sql/004_extend_stock_daily_kline.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/sql/004_extend_stock_daily_kline_rollback.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/docs/页面示例.png" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/mvnw" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/mvnw.cmd" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/pom.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/StockInvestBackendApplication.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/config/AiConfig.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/config/DeepSeekProperties.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/controller/AiInvestController.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/dto/AiInvestAnalyzeRequest.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/dto/AiInvestAnalyzeResponse.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/dto/DataSource.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/dto/ToolCall.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/gateway/AiGatewayClient.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/gateway/DeepSeekAiGatewayClient.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/gateway/model/GatewayAnalysisResult.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/gateway/model/GatewayToolCallResult.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/gateway/model/GatewayToolDefinition.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/ai/service/AiInvestService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/config/BacktestEngineConfig.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/config/BacktestEngineProperties.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/controller/MaBacktestController.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/dto/BacktestResultView.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/dto/BacktestSignalDto.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/dto/MaBacktestRequest.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/dto/MaBacktestResponse.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/repository/BacktestResultRepository.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/repository/MySqlBacktestResultRepository.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/service/BacktestResultQueryService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/backtest/service/MaBacktestService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/config/CorsConfig.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/controller/AnalysisController.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/controller/MaController.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/dto/MaRequest.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/dto/MaResponse.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/cache/LofPremiumCacheGateway.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/cache/RedisLofPremiumCacheGateway.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/config/LofPremiumProperties.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/controller/LofPremiumController.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/dto/LofNavType.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/dto/LofPremiumItem.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/dto/LofPremiumRankRequest.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/dto/LofPremiumRankResponse.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/dto/LofPremiumResponse.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/dto/LofPremiumStatus.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/event/CppBridgeLofPremiumEventPublisher.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/event/LofPremiumEvent.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/event/LofPremiumEventPublisher.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/event/LofPremiumEventType.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/event/LogLofPremiumEventPublisher.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/provider/EastMoneyLofPremiumProvider.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/provider/LofPremiumDataProvider.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/repository/LofSymbolRegistryRecord.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/repository/LofSymbolRegistryRepository.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/repository/MySqlLofSymbolRegistryRepository.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofPremiumEventService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofPremiumRankService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofPremiumSourceService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofSymbolSourceService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofSymbolSourceSnapshot.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/lof/service/LofTradingSessionService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/config/EastMoneyProperties.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/config/MarketDataConfig.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/config/MarketDataProperties.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/controller/MarketDataController.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/dto/MarketQuote.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/config/HistoryIngestionProperties.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/config/MySqlWriteProperties.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/config/PythonResearchProperties.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/controller/HistoryIngestionController.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/controller/HistoryQueryController.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/dto/BackfillRequest.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/dto/BackfillResponse.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/dto/CompletenessResult.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/dto/IngestResult.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/dto/KLineDataPoint.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/dto/StockDailyKlineRecord.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/provider/EastMoneyHistoryDataProvider.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/repository/MySqlStockDailyKlineRepository.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/repository/StockDailyKlineRepository.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/service/ChineseHolidays.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/service/FakeHistoryIngestionService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/service/HistoryBackfillService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/service/HistoryDataCompletenessService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/service/HistoryQueryService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/service/PythonHealthCheckService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/history/service/PythonIngestInvoker.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/provider/EastMoneyMarketDataProvider.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/provider/MarketDataProvider.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/provider/MockMarketDataProvider.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/market/service/MarketDataService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/AlipayClientService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/AlipayProperties.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/CreatePayOrderRequest.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/CreatePayOrderResponse.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/MybatisPlusConfig.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/PayOrder.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/PayOrderController.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/PayOrderExpiredTask.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/PayOrderMapper.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/PayOrderService.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/java/com/example/stock_invest_backend/pay/PayOrderStatusResponse.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/main/resources/application.properties" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/stock_invest_backend/src/test/java/com/example/stock_invest_backend/StockInvestBackendApplicationTests.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/.env.development" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/.idea/misc.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/.idea/modules.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/.idea/vcs.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/.idea/vue-trader-ui.iml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/dist/assets/StockDetailPage-nBRpTsy1.css" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/index.html" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/package-lock.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/package.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/App.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/api/ai.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/api/backtest.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/api/client.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/api/market.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/ai/AiReportCard.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/backtest/BacktestControlBar.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/backtest/MetricsCard.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/chart/ChartToolbar.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/chart/KLineChartPanel.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/common/ErrorState.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/common/LoadingOverlay.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/common/StockSearchInput.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/layout/AppShell.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/overlay/BottomSubtitle.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/overlay/TopTitle.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/quote/FiveLevelQuotes.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/quote/MiniTimeChart.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/quote/QuoteDataTable.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/quote/SidePanel.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/components/quote/StockInfoHeader.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/composables/useKLineChart.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/composables/useStockSearch.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/env.d.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/main.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/router/index.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/stores/ai.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/stores/backtest.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/stores/market.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/stores/ui.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/styles/chart-theme.css" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/styles/variables.css" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/types/ai.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/types/backtest.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/types/market.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/views/AiBacktestPage.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/src/views/StockDetailPage.vue" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/tsconfig.app.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/tsconfig.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/tsconfig.node.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/uno.config.ts" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vue-trader-ui/vite.config.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/AGENTS.md" beforeDir="false" afterPath="$PROJECT_DIR$/CLAUDE.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/docs.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/docs.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/readme.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/readme.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/working_docs.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/working_docs.md" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -322,6 +92,7 @@
     "git-widget-placeholder": "main",
     "ignore.virus.scanning.warn.message": "true",
     "kotlin-language-version-configured": "true",
+    "last_opened_file_path": "D:/stock-invest-system",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -345,8 +116,7 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-jdk-9823dce3aa75-28b599e66164-intellij.indexing.shared.core-IU-242.26775.15" />
-        <option value="bundled-js-predefined-d6986cc7102b-5c90d61e3bab-JavaScript-IU-242.26775.15" />
+        <option value="bundled-python-sdk-f2b7a9f6281b-6e1f45a539f7-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.29346.142" />
       </set>
     </attachedChunks>
   </component>
@@ -569,7 +339,15 @@
       <option name="project" value="LOCAL" />
       <updated>1785902042335</updated>
     </task>
-    <option name="localTasksCounter" value="25" />
+    <task id="LOCAL-00025" summary="重构项目架构初始">
+      <option name="closed" value="true" />
+      <created>1786023019136</created>
+      <option name="number" value="00025" />
+      <option name="presentableId" value="LOCAL-00025" />
+      <option name="project" value="LOCAL" />
+      <updated>1786023019136</updated>
+    </task>
+    <option name="localTasksCounter" value="26" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -601,6 +379,7 @@
     <MESSAGE value="完成性能降级、风控文案与全链路日志的开发" />
     <MESSAGE value="完善对接东方财富最新api接口，调试获取真实数据" />
     <MESSAGE value="补充项目前端代码，重新思考项目架构" />
-    <option name="LAST_COMMIT_MESSAGE" value="补充项目前端代码，重新思考项目架构" />
+    <MESSAGE value="重构项目架构初始" />
+    <option name="LAST_COMMIT_MESSAGE" value="重构项目架构初始" />
   </component>
 </project>

@@ -1,4 +1,4 @@
-该文档中，你将细化 软件需求 项目架构 数据流等 软件文档关键信息
+该文档中，你将细化 软件需求 项目架构 数据流 数据库设计等 软件文档关键信息
 在描述中你需要遵循简洁明了的原则，用最简洁的话说清楚相应的要求。 
 
 软件商业化目标：（1）使用户更加方便的根据自己的策略选择股票的买入和卖出
@@ -10,13 +10,15 @@
 借鉴开源项目：
 RAG基础系统：infiniflow/ragflow: RAGFlow is a leading open-source Retrieval-Augmented Generation (RAG) engine that fuses cutting-edge RAG with Agent capabilities to create a superior context layer for LLMs
 github:https://github.com/infiniflow/ragflow
+本地目录：C:\Users\112\Desktop\ragflow-main\ragflow-main
 AI Agent：OpenByteInc/QuantDinger: AI quantitative trading platform for crypto, stocks, and forex with backtesting, live trading, market data, and multi-agent research.vibe-trading ,trading-agents,ai-trader,ai-trading
 github:https://github.com/OpenByteInc/QuantDinger
+本地目录：C:\Users\112\Desktop\QuantDinger-main\QuantDinger-main
 Akshark等等。
-特别注意：在项目
+特别注意：在项目vibe过程中，要特别借鉴这两个项目，尽量避免造轮子的出现。
+例如，对于第二个项目的AI Agent，我的项目的J,K,和L区和该开源项目架构相同甚至可以完全借鉴。
 
-软件
-期望的软件最小生产级原型机：
+软件期望的软件最小生产级原型机：
 a.	行情页功能及具体实现页面：(双层页面)
 具体实现前端页面：
 第一层：（当用户双击鼠标左键点开个股/ETF/行业指数具体K线，可通过按Esc以及左上角退出按钮退出）
@@ -135,15 +137,15 @@ L区页面最下方完整区域，从上至下分为三层：
 
 （4）M区（交易策略和记忆文件）：
 交易策略栏。每一行前端的显示格式像上面对话记录一样，用于保存用户的交易策略，点击具体的交易策略后，原K区和L区变成N区，如图所示：
-┌───────────────────────┬─────────────────────────────────────────────────────  ┐
-│ J区(聊天记录侧边栏)    │ N区(交易策略显示区)                                       │
-│                         │                                                             │
-│                         │                                                             │
-│                         │                                                             │
-├───────────────────────                                                              ┤
-│  M区（交易策略和记忆文件） │                                                              │
-│                         │                                                             │
-│                         │                                                             │
+┌───────────────────────┬─────────────────────────────────────────────────────   ┐
+│ J区(聊天记录侧边栏)       │ N区(交易策略显示区)                                     │
+│                         │                                                      │
+│                         │                                                      │
+│                         │                                                      │
+├───────────────────────                                                         ┤
+│  M区（交易策略和记忆文件） │                                                       │
+│                         │                                                      │
+│                         │                                                      │
 
 
 在n区中,所有文字均居中显示。该区域共分为四部分，交易策略描述模块，回测结果模块以及具体的代码实现模块，回测模块。
@@ -157,3 +159,295 @@ L区页面最下方完整区域，从上至下分为三层：
 
 项目规划：
 1.整体技术架构：Python + PostgreSQL + Vue + Redis + Celery + Nginx。
+
+
+从D:\stock-invest-system\docs\docs.md中读取软件需求文档，
+  （1）首先思考项目的生产级开发方案，从可维护，可扩展，可演进，稳定性，可观测，可部署六个部分进行考虑总结，分这六个部
+  分写在docs/working_docs.md文档中,作为生产级架构说明文档。
+  （2）完善项目完整的数据流方案，写在docs.md文件下方，作为第二部分。
+  （3）完善项目的数据库设计，写在docs.md文件下方，作为第三部分。
+  特别注意：在描述中你需要遵循简洁明了的原则，用最简洁的话说清楚相应的要求即可，多说无益。
+
+## 第二部分：完整数据流方案
+
+### 2.1 全局数据流总览
+
+```
+行情源(东方财富API) ──同步──▶ PostgreSQL ──缓存──▶ Redis
+                                    │
+                        行情快照/最新价(轮询/WebSocket)
+                                    ▼
+                        前端(行情双层页 + AI策略页)
+                                    │ 用户请求
+                                    ▼
+                        FastAPI ──▶ Celery(回测/同步/AI异步)
+                                    │
+                        DeepSeek API ◀──(上下文:行情+指标+记忆)
+                                    │
+                        本地记忆文件 ◀──(抽取/写入)──▶ RAG 检索
+```
+
+### 2.2 行情数据接入流（同步任务）
+```
+Celery Beat 定时触发
+  → worker 经 DataProvider 调东方财富API
+  → 清洗/校验(空值、停牌、异常价格)
+  → K线分区表 upsert(幂等，按 symbol+ts 去重)
+  → 最新快照写 snapshot_realtime
+  → 写 Redis 缓存(TTL)
+  → 更新 sync_tasks 状态
+```
+- 初始化：首次拉取标的全量历史K线。
+- 增量：每日收盘后定时拉日K；交易时段轮询实时价。
+- 前端：双击打开双层页时拉取 K线+指标+快照；D/E 区实时价走轮询/WebSocket 增量。
+
+### 2.3 技术指标计算流（后端，前端不计算）
+```
+K线数据 → 指标服务(服务端计算 MACD/KDJ/成交量/成交额)
+  → 结果写缓存 + 关联K线图
+  → 前端只做渲染
+```
+- 支撑/压力位：用户在 B 区设置 → `support_resistance` 入库 → K线图叠加横线。
+
+### 2.4 AI 分析流（L 区对话）
+```
+用户输入(标的选择 + prompt/功能卡片模板)
+  → FastAPI 校验+限流
+  → 组装上下文: 标的行情快照 + 技术指标 + 记忆检索结果(RAG)
+  → 调 DeepSeek(流式输出, 超时/重试/熔断)
+  → 前端流式渲染
+  → 对话写入 chat_messages
+  → 必要时抽取记忆写入本地文件
+```
+
+### 2.5 创建交易策略流
+```
+点击「创建交易策略」→ 插入策略模板模块(入场/止损/止盈/仓位)
+  → 用户描述 + AI 补齐规则 → 生成策略代码 + 参数
+  → 保存 trading_strategies
+  → 返回内容下出现「保存策略」「回测显示」按钮
+  → 保存策略 → M 区联动显示
+  → 回测显示 → 跳转全景K线图(D区改策略指标: 胜率/盈亏比/夏普/累计买卖/年化/最大回撤)
+```
+
+### 2.6 回测流（异步，不阻塞主线程）
+```
+用户选标的发起回测
+  → 创建 backtest_tasks(status=queued)
+  → Celery worker 执行: 拉行情 → 回测引擎 → 计算指标
+  → backtest_results 入库(事务, 与策略原子保存)
+  → 结果转 Agent 记忆文件(本地)
+  → 前端轮询任务状态 → N 区展示回测结果
+```
+
+### 2.7 记忆流（本地存储）
+```
+对话/策略结果 → 抽取关键事实(交易体系/规则/偏好)
+  → 写本地记忆文件(JSON/文本) → 建立索引
+  → 后续请求检索相关记忆 → 注入 AI 上下文
+```
+- 记忆文件归属用户目录，M 区「记忆文件」按钮打开本地文件夹。
+
+### 2.8 重点关注股票流
+```
+搜索(6位代码联想, 查 symbols) → 添加 → user_watchlist 入库
+  → E/D 区列表展示(代码/名称/最新价/涨跌幅, 红涨绿跌)
+  → 实时价定时刷新
+```
+
+### 2.9 数据一致性要点
+- 行情同步/回测任务幂等，重复触发不产生脏数据。
+- 策略 + 回测结果 + 记忆文件写入用事务/补偿保证原子性。
+- Redis 缓存与 PostgreSQL 以快照时间戳对齐，缓存失效回源库。
+
+## 第三部分：数据库设计
+
+> 存储：PostgreSQL；行情时序表按月分区；Alembic 迁移管理。
+
+### 3.1 用户域
+**users** — 用户账号
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | 用户ID |
+| username | VARCHAR(64) UNIQUE | 用户名 |
+| password_hash | VARCHAR(255) | 密码哈希 |
+| email | VARCHAR(128) | 邮箱 |
+| nickname | VARCHAR(64) | 昵称 |
+| avatar_url | VARCHAR(255) | 头像(登录头像) |
+| created_at / updated_at | TIMESTAMP | 时间 |
+
+**user_watchlist** — 重点关注股票
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| user_id | BIGINT FK→users | 用户 |
+| symbol_id | BIGINT FK→symbols | 标的 |
+| created_at | TIMESTAMP | 添加时间 |
+
+**user_memory_files** — 记忆文件索引
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| user_id | BIGINT FK→users | 用户 |
+| file_path | VARCHAR(512) | 本地记忆文件路径 |
+| content_type | VARCHAR(32) | 类型(strategy/rule/preference) |
+| updated_at | TIMESTAMP | 更新时间 |
+
+### 3.2 行情域
+**symbols** — 标的统一模型（股票/ETF/指数）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| code | VARCHAR(16) | 代码(600519) |
+| name | VARCHAR(64) | 名称 |
+| type | VARCHAR(16) | stock/etf/index |
+| market | VARCHAR(16) | 市场(SSE/SZSE/US/HK...) |
+| industry | VARCHAR(64) | 行业(指数/行业) |
+| etf_linked | VARCHAR(16) | 关联ETF代码 |
+| is_fixed_index | BOOLEAN | 是否固定大盘/行业指数 |
+| sort_order | INT | 固定列表排序 |
+| updated_at | TIMESTAMP | 更新时间 |
+
+**kline_15m / kline_1d / kline_1w / kline_1mon** — K线数据（按月分区）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| symbol_id | BIGINT FK→symbols | 标的 |
+| ts | TIMESTAMP | K线时间 |
+| open/high/low/close | NUMERIC(12,3) | OHLC |
+| volume | BIGINT | 成交量 |
+| amount | NUMERIC(20,2) | 成交额 |
+| UNIQUE(symbol_id, ts) | | 幂等去重 |
+
+**snapshot_realtime** — 实时行情快照（每标的一行，轮询更新）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| symbol_id | BIGINT PK FK | |
+| price | NUMERIC(12,3) | 最新价 |
+| change / change_pct | NUMERIC | 涨跌额 / 涨跌幅 |
+| open/high/low | NUMERIC(12,3) | 今开/最高/最低 |
+| pre_close | NUMERIC(12,3) | 昨收 |
+| volume / amount | BIGINT / NUMERIC | 成交量 / 成交额 |
+| turnover | NUMERIC(8,4) | 换手率 |
+| amplitude | NUMERIC(8,4) | 振幅 |
+| updated_at | TIMESTAMP | 更新时间(14:35:22) |
+
+**stock_fundamentals** — 个股特殊数据（总市值/PE）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| symbol_id | BIGINT PK FK | |
+| market_cap | NUMERIC(20,2) | 总市值 |
+| pe | NUMERIC(12,3) | 市盈率 |
+
+**etf_premiums** — ETF 特殊数据（溢价）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| symbol_id | BIGINT PK FK | |
+| nav | NUMERIC(12,3) | 净值 |
+| premium | NUMERIC(8,4) | 溢价率 |
+
+**index_valuations** — 指数特殊数据（指数总PE）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| symbol_id | BIGINT PK FK | |
+| pe | NUMERIC(12,3) | 指数PE |
+
+**support_resistance** — 支撑/压力位（B 区设置）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| user_id | BIGINT FK→users | |
+| symbol_id | BIGINT FK→symbols | |
+| type | VARCHAR(16) | support/pressure |
+| price | NUMERIC(12,3) | 价位 |
+| note | VARCHAR(255) | 备注 |
+| created_at | TIMESTAMP | |
+
+### 3.3 策略 / AI 域
+**conversations** — 会话
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| user_id | BIGINT FK→users | |
+| title | VARCHAR(128) | 会话标题 |
+| created_at / updated_at | TIMESTAMP | |
+
+**chat_messages** — 聊天消息
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| conversation_id | BIGINT FK→conversations | |
+| role | VARCHAR(16) | user/assistant/system |
+| symbol_id | BIGINT FK→symbols NULL | 绑定标的 |
+| content | TEXT | 消息内容 |
+| tokens | INT | token 数 |
+| created_at | TIMESTAMP | |
+
+**trading_strategies** — 交易策略
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| user_id | BIGINT FK→users | |
+| title | VARCHAR(128) | 策略名 |
+| description | TEXT | 用户描述文字 |
+| code | TEXT | 策略代码 |
+| params | JSONB | 参数(入场/止损/仓位) |
+| status | VARCHAR(16) | active/draft |
+| created_at / updated_at | TIMESTAMP | |
+
+**backtest_tasks** — 回测任务
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| strategy_id | BIGINT FK→trading_strategies | |
+| symbol_id | BIGINT FK→symbols | 回测标的 |
+| status | VARCHAR(16) | queued/running/success/failed |
+| progress | INT | 进度 0-100 |
+| error | TEXT | 失败原因 |
+| created_at / updated_at | TIMESTAMP | |
+
+**backtest_results** — 回测结果
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| task_id | BIGINT FK→backtest_tasks | |
+| strategy_id | BIGINT FK→trading_strategies | |
+| symbol_id | BIGINT FK→symbols | |
+| win_rate | NUMERIC(8,4) | 策略胜率 |
+| profit_loss_ratio | NUMERIC(8,4) | 盈亏比 |
+| sharpe | NUMERIC(8,4) | 夏普比率 |
+| total_buys / total_sells | INT | 累计买入/卖出 |
+| annual_return | NUMERIC(8,4) | 年化收益率 |
+| max_drawdown | NUMERIC(8,4) | 最大回撤 |
+| metrics_json | JSONB | 扩展指标 |
+| start_ts / end_ts | TIMESTAMP | 回测区间 |
+| created_at | TIMESTAMP | |
+
+### 3.4 运维域
+**sync_tasks** — 行情同步任务
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| task_type | VARCHAR(32) | kline_init/kline_incremental/realtime |
+| symbol_id | BIGINT FK→symbols | |
+| status | VARCHAR(16) | running/success/failed |
+| last_run_at / next_run_at | TIMESTAMP | 运行时间 |
+
+**task_logs** — 任务日志（全链路）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| task_type | VARCHAR(32) | |
+| task_id | VARCHAR(64) | Celery 任务ID |
+| request_id | VARCHAR(64) | 全链路 request-id |
+| status | VARCHAR(16) | |
+| message | TEXT | 日志内容 |
+| created_at | TIMESTAMP | |
+
+### 3.5 设计要点
+- K线/快照表按月分区，按 symbol_id + ts 建索引。
+- 固定大盘/行业指数用 `is_fixed_index + sort_order` 驱动 G/H 区固定顺序渲染。
+- 策略 + 回测结果 + 记忆文件写入事务保证原子性。
+- 用户专属数据(user_watchlist/strategies/记忆)均带 user_id，支持多用户隔离。
+
+
