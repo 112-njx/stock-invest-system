@@ -4,6 +4,17 @@
 
 ---
 
+## 人工配置 / 日志说明
+
+- .env 配置：本机 PostgreSQL 连接 DATABASE_URL（postgres/123456）与 Redis REDIS_URL（见 stock_backend/.env）。
+- 首次启动需手动建库：`CREATE DATABASE stock_invest;`。
+- Redis 需本机启动（默认 127.0.0.1:6379），未启动时 `/ready` 返回 503（`/health` 不受影响）。
+- 启动命令：`uvicorn app.main:app`，Swagger 在 `/docs`。
+- 日志：结构化 JSON 输出到 stdout，全链路 `request-id`（响应头 `X-Request-ID` 透传）。
+- 行情源为东方财富接口（akshare），偶发反爬断连（如 17.push2 主机被节流）；已内置 curl_cffi 浏览器指纹 + 指数退避重试 + 缺数降级，观察日志 `[eastmoney] ... failed/give up` 判断，冷却后可自动恢复。
+
+---
+
 ## 后端开发实施方案（项目启动 → 第一版发布）
 
 > 目标：按 docs.md 需求 + working_docs.md 六要素，自下而上（数据层→用户/指标层→AI 层→回测层→部署）交付生产级最小原型机。
