@@ -1,9 +1,9 @@
 # 量化回测软件
 
 ## 技术栈
-- Backend: Python (FastAPI) + Celery + Redis + PostgreSQL
+- Backend: Python (FastAPI) + Celery + Redis + PostgreSQL + langchain
 - Frontend: Vue 3 + 轻量级 K 线图表库
-- AI: DeepSeek API + RAGFlow 思路 + 本地记忆
+- AI: DeepSeek API + langchain + 本地记忆
 - DevOps: Docker + Nginx + Prometheus/Grafana
 
 ## 架构约束

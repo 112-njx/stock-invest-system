@@ -8,16 +8,19 @@
 软件的注意事项：要求达到生产级架构，即可维护，可扩展，可演进，稳定性，可观测，可部署。
 
 借鉴开源项目：
-RAG基础系统：infiniflow/ragflow: RAGFlow is a leading open-source Retrieval-Augmented Generation (RAG) engine that fuses cutting-edge RAG with Agent capabilities to create a superior context layer for LLMs
-github:https://github.com/infiniflow/ragflow
-本地目录：C:\Users\112\Desktop\ragflow-main\ragflow-main
+AI Agent langchain框架以及诊断符号，行情数据，技术指标显示等：基于多智能体LLM的中文金融交易框架 - TradingAgents中文增强版
+github:https://github.com/hsliuping/TradingAgents-CN
+本地目录：C:\Users\112\Desktop\TradingAgents-CN-main\TradingAgents-CN-main
 AI Agent：OpenByteInc/QuantDinger: AI quantitative trading platform for crypto, stocks, and forex with backtesting, live trading, market data, and multi-agent research.vibe-trading ,trading-agents,ai-trader,ai-trading
 github:https://github.com/OpenByteInc/QuantDinger
 本地目录：C:\Users\112\Desktop\QuantDinger-main\QuantDinger-main
 Akshark等等。
 特别注意：在项目vibe过程中，要特别借鉴这两个项目，尽量避免造轮子的出现。
 例如，对于第二个项目的AI Agent，我的项目的J,K,和L区和该开源项目架构相同甚至可以完全借鉴。
+对于第一个项目，我项目需求的诊断符号，行情数据，技术指标显示等等，甚至两个项目的机会雷达redis设计等。
+需要注意也有不合适的地方，例如第一个项目使用数据库是MongoDB,选型不同无法借鉴。
 
+v0.0.1
 软件期望的软件最小生产级原型机：
 a.	行情页功能及具体实现页面：(双层页面)
 具体实现前端页面：
@@ -182,9 +185,9 @@ L区页面最下方完整区域，从上至下分为三层：
                                     ▼
                         FastAPI ──▶ Celery(回测/同步/AI异步)
                                     │
-                        DeepSeek API ◀──(上下文:行情+指标+记忆)
+                        DeepSeek API ◀──(LangChain 上下文:行情+指标+记忆)
                                     │
-                        本地记忆文件 ◀──(抽取/写入)──▶ RAG 检索
+                        本地记忆/向量库 ◀──(LangChain 记忆抽取/检索)
 ```
 
 ### 2.2 行情数据接入流（同步任务）
@@ -213,11 +216,11 @@ K线数据 → 指标服务(服务端计算 MACD/KDJ/成交量/成交额)
 ```
 用户输入(标的选择 + prompt/功能卡片模板)
   → FastAPI 校验+限流
-  → 组装上下文: 标的行情快照 + 技术指标 + 记忆检索结果(RAG)
-  → 调 DeepSeek(流式输出, 超时/重试/熔断)
+  → LangChain Agent: 工具取数(行情快照/技术指标/记忆检索) + 组装上下文
+  → LangGraph 编排(分析→辩论→风控→决策) → LLM 流式输出(超时/重试/熔断)
   → 前端流式渲染
-  → 对话写入 chat_messages
-  → 必要时抽取记忆写入本地文件
+  → 对话写入 chat_messages + agent_runs/agent_steps
+  → 必要时抽取记忆写入本地向量库
 ```
 
 ### 2.5 创建交易策略流
@@ -242,9 +245,9 @@ K线数据 → 指标服务(服务端计算 MACD/KDJ/成交量/成交额)
 
 ### 2.7 记忆流（本地存储）
 ```
-对话/策略结果 → 抽取关键事实(交易体系/规则/偏好)
-  → 写本地记忆文件(JSON/文本) → 建立索引
-  → 后续请求检索相关记忆 → 注入 AI 上下文
+对话/策略结果 → LangChain 抽取关键事实(交易体系/规则/偏好)
+  → 写本地记忆文件 + 本地向量库(切片+embedding, ChromaDB 本地持久化)
+  → 后续请求相似度检索 → 注入 AI 上下文
 ```
 - 记忆文件归属用户目录，M 区「记忆文件」按钮打开本地文件夹。
 
@@ -255,10 +258,21 @@ K线数据 → 指标服务(服务端计算 MACD/KDJ/成交量/成交额)
   → 实时价定时刷新
 ```
 
-### 2.9 数据一致性要点
+### 2.9 定制 Agent 运行流（LangChain/LangGraph）
+```
+用户创建定制 Agent(user_agents: system_prompt/tools/LLM/记忆配置)
+  → 会话发送时选择该 Agent
+  → FastAPI 按配置加载 LangChain/LangGraph 图(工具绑定)
+  → 执行 agent_runs(状态机 + 步骤落 agent_steps)
+  → 结果写 chat_messages + 回测(策略场景) + 记忆抽取
+  → 前端流式渲染
+```
+
+### 2.10 数据一致性要点
 - 行情同步/回测任务幂等，重复触发不产生脏数据。
-- 策略 + 回测结果 + 记忆文件写入用事务/补偿保证原子性。
+- 策略 + 回测结果 + 记忆文件写入用事务/补偿保证原子性；Agent 运行记录与对话消息同事务。
 - Redis 缓存与 PostgreSQL 以快照时间戳对齐，缓存失效回源库。
+- 本地向量库与 `memory_chunks` 索引对齐，来源文件可回溯。
 
 ## 第三部分：数据库设计
 
@@ -444,10 +458,80 @@ K线数据 → 指标服务(服务端计算 MACD/KDJ/成交量/成交额)
 | message | TEXT | 日志内容 |
 | created_at | TIMESTAMP | |
 
-### 3.5 设计要点
+### 3.5 智能体（Agent）域
+> 支撑「为用户定制交易 Agent」（LangChain/LangGraph 多智能体）；对应 sql/03_agent_extensions.sql。
+
+**user_agents** — 用户定制 Agent 配置
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| user_id | BIGINT FK→users | 用户 |
+| name | VARCHAR(64) | Agent 名称 |
+| agent_type | VARCHAR(32) | diagnostic/plan/radar/strategy/custom |
+| system_prompt | TEXT | 定制 system prompt（交易体系/规则） |
+| tools | JSONB | 启用的工具列表（行情/指标/回测/新闻/财报） |
+| llm_config | JSONB | LLM 配置（provider/model/temperature） |
+| memory_config | JSONB | 记忆配置（开关/向量库 collection） |
+| status | VARCHAR(16) | active/draft |
+| created_at / updated_at | TIMESTAMP | |
+
+**agent_runs** — Agent 运行记录（一次 LangGraph 执行）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| user_id | BIGINT FK→users | |
+| agent_id | BIGINT FK→user_agents NULL | 使用的 Agent |
+| conversation_id | BIGINT FK→conversations NULL | 所属会话 |
+| symbol_id | BIGINT FK→symbols NULL | 绑定标的 |
+| run_type | VARCHAR(32) | diagnostic/strategy/radar/plan/custom |
+| status | VARCHAR(16) | queued/running/success/failed |
+| input / output | TEXT | 输入 prompt / 最终输出 |
+| tokens | INT | token 用量 |
+| error | TEXT | 失败原因 |
+| created_at / updated_at | TIMESTAMP | |
+
+**agent_steps** — 多智能体步骤消息（中间输出，供可观测/复盘）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| run_id | BIGINT FK→agent_runs | 所属运行 |
+| step_name | VARCHAR(64) | bull_research/bear_research/risk_mgmt/trader... |
+| agent_role | VARCHAR(32) | analyst/researcher/manager/trader |
+| content | TEXT | 该步输出 |
+| meta | JSONB | 附加（决策/置信度） |
+| created_at | TIMESTAMP | |
+
+**memory_chunks** — 向量记忆切片（LangChain 本地向量库索引）
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL PK | |
+| user_id | BIGINT FK→users | |
+| source_type | VARCHAR(32) | strategy/rule/preference/backtest |
+| source_id | BIGINT | 关联业务 ID（strategy_id 等） |
+| content | TEXT | 记忆文本切片 |
+| vector_id | VARCHAR(64) | 本地向量库(ChromaDB)记录 ID |
+| file_path | VARCHAR(512) | 对应本地记忆文件 |
+| created_at | TIMESTAMP | |
+
+### 3.6 设计要点
 - K线/快照表按月分区，按 symbol_id + ts 建索引。
 - 固定大盘/行业指数用 `is_fixed_index + sort_order` 驱动 G/H 区固定顺序渲染。
-- 策略 + 回测结果 + 记忆文件写入事务保证原子性。
-- 用户专属数据(user_watchlist/strategies/记忆)均带 user_id，支持多用户隔离。
+- 策略 + 回测结果 + 记忆文件写入事务保证原子性；Agent 运行/步骤与对话消息同事务。
+- 用户专属数据(user_watchlist/strategies/agents/记忆)均带 user_id，支持多用户隔离。
+- 记忆本体存本地文件/本地向量库，`user_memory_files`/`memory_chunks` 仅作索引与回溯。
 
 
+v0.0.2扩展方向
+> 第二版扩展思路：基于 TradingAgents-CN（LangChain/LangGraph 多智能体）+ QuantDinger（AI 策略页 UI）。
+> 原则：前端 UI 不大改，主要增强后端 Agent 能力与数据源，逐条可在 v0.0.1 基础上平滑叠加。
+
+1. 多智能体协作：诊断/交易计划/机会雷达由「单 Agent 对话」升级为 LangGraph 多智能体图（行情分析→多空辩论→风险管理→交易决策），L 区卡片与对话 UI 不变，输出更深度。
+2. 机会雷达增强：接入新闻/公告/情绪工具（借鉴 TradingAgents-CN news + social_media_analyst），扫描未来 24 小时机会并标注事实/假设/不确定性。
+3. 财报/基本面因子：借鉴 fundamentals_analyst，为策略加入财报与基本面检测（对齐原有「AI 获取财报数据」方向）。
+4. 工具化数据访问：行情快照/技术指标/回测结果封装为 LangChain Tool（借鉴 tools/analysis/indicators.py），Agent 按需取数，避免整段行情塞入上下文。
+5. 定制交易 Agent：用户可配置自己的 Agent（system_prompt/tools/LLM 模型），记忆本地存储，实现商业化目标（3）的「为用户定制自己的交易 Agent」。
+6. 风险与仓位管理：借鉴 risk_mgmt 三档风险辩论（激进/保守/中性），为「创建交易策略」的仓位管理给出风控建议。
+7. LLM 可插拔：借鉴 llm_adapters（deepseek/qwen/glm/ollama 等），DeepSeek 外可切换供应商，成本与降级更灵活。
+8. 记忆升级：文件记忆升级为 langchain 本地向量库（ChromaDB 本地持久化，仍满足本地存储约束），支持交易体系/规则按相似度检索。
+9. 策略复盘闭环：结合回测结果反哺 Agent 记忆与策略参数，形成「回测→复盘→优化→再回测」，N 区增加复盘入口。
+10. 多数据源扩展：借鉴 dataflows providers（china/hk/us），标的覆盖港股/美股/加密，行情域 schema 已按市场字段预留。

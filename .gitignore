@@ -1,4 +1,290 @@
-# 添加 .gitignore 到暂存区
-git add .gitignore
-# 提交这个文件
-git commit -m "ignore IDEA config files"
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+pdm.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.env.*
+!.env.example
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm / JetBrains IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# Node / Frontend (Vue)
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Vue
+.vuepress/dist/
+.serverless/
+.fusebox/
+.dynamodb/
+.parcel-cache/
+
+# Nuxt
+.nuxt/
+.output/
+.nitro/
+
+# Vite
+.vite/
+
+# Webpack
+webpack/
+
+# Babel cache
+.babel-cache/
+
+# ESLint cache
+.eslintcache
+
+# Stylelint cache
+.stylelintcache
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Tests
+coverage/
+*.lcov
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.psql
+*.dump
+
+# Data files (optional - uncomment if you don't want to commit large data)
+# data/
+# *.csv
+# *.xlsx
+
+# Uploads
+uploads/
+media/
+static/
+
+# Docker
+docker-compose.override.yml
+docker-compose.dev.yml
+.docker-data/
+
+# Redis dump
+dump.rdb
+appendonly.aof
+
+# Certificates
+*.pem
+*.key
+*.crt
+*.cert
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Project specific - stock invest system
+# 本地记忆文件（用户数据，不提交）
+user_memory/
+memory_files/
+*.memory.json
+
+# 回测结果缓存
+backtest_cache/
+*.backtest.pkl
+
+# 行情数据本地缓存
+market_data_cache/
+*.cache.parquet

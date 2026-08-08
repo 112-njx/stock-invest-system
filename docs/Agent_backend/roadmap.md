@@ -1,14 +1,14 @@
 后端实施规划
-在实施规划后方提前写出后端软件vibe coding后需要人配置的地方，要求遵循简洁的原则，一条一句话总结即可
-并且每一条都必须是需要开发者手动配置的。
+在实施规划后方提前写出后端软件vibe coding后需要人配置的地方或日志文件说明，要求遵循简洁的原则，一条一句话总结即可
+并且每一条都必须是需要开发者手动配置或观看系统运行的。
 
 ---
 
 ## 后端开发实施方案（项目启动 → 第一版发布）
 
 > 目标：按 docs.md 需求 + working_docs.md 六要素，自下而上（数据层→用户/指标层→AI 层→回测层→部署）交付生产级最小原型机。
-> 约束：前端不计算复杂指标；回测/AI/同步走 Celery 不阻塞主线程；记忆本地存储；行情走 DataProvider 抽象（默认东方财富/Akshare）。
-> 数据库：docs/sql/01_schema.sql（全部表）+ 02_seed_fixed_indices.sql（固定指数）。
+> 约束：前端不计算复杂指标；回测/AI/同步走 Celery 不阻塞主线程；记忆本地存储（LangChain 本地向量库）；行情走 DataProvider 抽象（默认东方财富/Akshare）。
+> 数据库：docs/sql/01_schema.sql（全部表）+ 02_seed_fixed_indices.sql（固定指数）+ 03_agent_extensions.sql（Agent 扩展）。
 
 ### 阶段一：工程基建与行情数据层
 
@@ -16,6 +16,7 @@
 - 建 FastAPI 分层工程 `app/{api,services,repositories,schemas,models,core}`，router→service→repository 单向依赖，禁反向/循环依赖。
 - 配置：pydantic-settings 读 `.env`（DB/Redis/DeepSeek 密钥、同步间隔、缓存 TTL），禁止硬编码。
 - 全局异常处理 + 统一响应结构 `{code,msg,data}`；ruff/black 规范；`pyproject.toml` + `requirements.lock` 锁依赖。
+- 依赖：FastAPI/SQLAlchemy/Celery/Redis + **langchain/langgraph + langchain-community**（DeepSeek 适配、ChromaDB 本地向量库）。
 - 验收：`uvicorn app.main:app` 启动、Swagger `/docs` 可访问。
 
 **1.2 可观测底座**
@@ -24,7 +25,7 @@
 - 验收：`/health` 返回 200，日志含 request-id。
 
 **1.3 数据库接入**
-- Alembic 初始化，迁移对齐 01_schema.sql 全部表（users/symbols/kline_*/snapshot_realtime/支撑压力/策略/回测/任务等）。
+- Alembic 初始化，迁移对齐 01_schema.sql + 03_agent_extensions.sql 全部表（users/symbols/kline_*/snapshot_realtime/支撑压力/策略/回测/任务/user_agents/agent_runs/agent_steps/memory_chunks）。
 - SQLAlchemy 声明式模型 + 连接池（池大小/超时可配）；时间统一 UTC。
 - 封装 K 线按月分区管理工具（调用 `create_kline_partitions` 建分区、越界写兜底）。
 - 验收：`alembic upgrade head` 成功、分区表可建。
@@ -74,37 +75,48 @@
 - Redis 缓存指标（key 含 symbol+period+K 线最新 ts），失效回源重算。
 - 验收：指标值与已知参考一致（pytest 单测）。
 
-### 阶段三：AI 策略页后端（Agent 对话 + RAG + 本地记忆）
+### 阶段三：AI 策略页后端（LangChain Agent + 本地记忆）
 
 **3.1 会话与消息**
 - `conversations` CRUD：创建/列表/重命名/删除。
 - `chat_messages`：追加消息、按会话拉取（时间升序）；带 symbol_id 绑定标的。
 - 验收：多会话隔离、消息顺序正确。
 
-**3.2 DeepSeek 客户端封装**
-- 封装 `stream_chat(messages, ...)` → SSE 流式输出。
-- 外部调用防护：超时、指数退避重试、熔断（连续失败熔断 + 半开探测）、限流。
+**3.2 LangChain LLM 封装**
+- 用 langchain 集成 DeepSeek（langchain-openai 兼容，`ChatDeepSeek`），流式输出 → SSE 透传前端。
+- 外部调用防护：超时、指数退避重试、熔断（连续失败熔断 + 半开探测）、限流（借鉴 TradingAgents-CN llm_adapters）。
 - 验收：流式逐字返回；模拟断流有降级文案。
 
-**3.3 AI 上下文组装**
-- 按所选标组装：snapshot + 技术指标 + 记忆检索（RAG）片段。
+**3.3 LangChain 工具集 + 上下文组装**
+- 将行情快照/技术指标/记忆检索封装为 LangChain Tool（`@tool`），Agent 按需取数（借鉴 TradingAgents-CN tools/analysis）。
 - 拼接 system prompt（角色 + 风险提示 + 「数据不可用须明说、不编造」）。
-- 验收：请求 DeepSeek 前日志可见完整上下文。
+- 验收：请求 LLM 前日志可见工具调用与完整上下文。
 
-**3.4 本地记忆系统（借鉴 RAGFlow 思路，轻量实现）**
-- 记忆抽取：对话/策略结果 → 关键事实（交易体系/规则/偏好），写用户本地记忆文件（JSON/文本）。
-- 索引：`user_memory_files` 登记 file_path/content_type（strategy/rule/preference）。
-- 检索：先做关键词/简单向量检索注入上下文，预留替换能力。
-- 验收：对话后可打开本地记忆文件；后续请求能命中相关记忆。
+**3.4 本地记忆系统（LangChain 本地向量库）**
+- 记忆抽取：LangChain 从对话/策略结果抽取关键事实（交易体系/规则/偏好），写用户本地记忆文件。
+- 向量化：本地 ChromaDB 持久化（切片 + embedding），`memory_chunks` 登记 chunk/vector_id/file_path，`user_memory_files` 登记文件。
+- 检索：相似度检索 TopK 注入上下文（默认本地 embedding，后续可换）。
+- 验收：对话后可打开本地记忆文件/向量库目录；后续请求命中相关记忆。
 
-**3.5 策略生成（功能卡片 prompt）**
+**3.5 策略生成（LangChain 结构化输出）**
 - 定义四类 prompt 模板：诊断符号/交易计划/机会雷达/创建交易策略（入场/止损/止盈/仓位规则文案）。
-- 描述 → 生成策略代码 + JSON 参数（结构化输出校验）。
-- 验收：点击卡片注入对应模板；生成的代码可入库。
+- 用 LangChain `with_structured_output` 生成策略代码 + JSON 参数，schema 校验。
+- 验收：点击卡片注入对应模板；生成的代码/参数可入库并直接回测。
 
 **3.6 交易策略 CRUD**
 - `trading_strategies`：保存（title/description/code/params/status）/列表/详情/更新，按 user 隔离。
 - 验收：M 区列表数据源、保存后回测可用。
+
+**3.7 用户定制 Agent（user_agents CRUD）**
+- CRUD：创建/列表/启停定制 Agent，配置 system_prompt/tools/llm_config/memory_config（JSONB）。
+- 会话发送时按所选 agent_id 加载配置，构造 LangChain Agent。
+- 验收：可创建并保存定制 Agent，会话可选用。
+
+**3.8 多智能体编排（LangGraph）**
+- 基于 TradingAgents-CN trading_graph 构建：分析（行情/指标/新闻）→ 多空研究员辩论 → 风控 → 交易决策。
+- LangGraph StateGraph 编排，条件路由/反射/信号处理，执行落 `agent_runs`/`agent_steps`。
+- 与 L 区功能卡片对接：诊断/交易计划/机会雷达走不同图分支，UI 不变。
+- 验收：跑通一次多智能体运行，agent_steps 可见各步骤输出。
 
 ### 阶段四：回测引擎（异步，不阻塞主线程）
 
@@ -120,7 +132,7 @@
 **4.3 回测任务流（Celery）**
 - `POST /api/v1/backtest` 创建 `backtest_tasks`（queued）→ worker 执行。
 - 状态机 queued→running→success/failed，`progress` 进度回写。
-- 结果事务写入 `backtest_results`（与策略原子保存）；结果转本地记忆文件。
+- 结果事务写入 `backtest_results`（与策略原子保存）；结果抽取转本地向量记忆（memory_chunks）。
 - 失败自动重试 + `task_logs` 记录。
 - 验收：异步返回任务 ID，前端轮询到 success 及结果。
 
@@ -149,7 +161,7 @@
 - 验收：面板出图、可触发告警。
 
 **5.5 测试补齐**
-- pytest：指标计算/策略解析/记忆抽取/核心 API 冒烟。
+- pytest：指标计算/策略解析/记忆抽取/Agent 编排（LangGraph 单测）/核心 API 冒烟。
 - 验收：CI 跑测通过。
 
 **5.6 收尾检查**
