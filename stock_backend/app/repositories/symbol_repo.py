@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session
 from app.models.symbol import Symbol
 
 
+def get_by_id(db: Session, symbol_id: int) -> Symbol | None:
+    return db.get(Symbol, symbol_id)
+
+
 def get_by_code(db: Session, code: str) -> Symbol | None:
     return db.scalar(select(Symbol).where(Symbol.code == code))
 

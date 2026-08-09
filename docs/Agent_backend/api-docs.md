@@ -326,3 +326,50 @@ api文档，你需要按照：
 请求 Body：无（Path：agent_id；Header：Authorization: Bearer <token>）
 请求示例（curl）：`curl -X DELETE "http://127.0.0.1:8000/api/v1/agents/1" -H "Authorization: Bearer eyJhbGciOi..."`
 成功返回示例：`{"code":0,"msg":"删除成功","data":null}`
+
+# 回测 API（Backtest）
+
+## 1. 发起回测
+接口名称：发起回测（异步）
+请求 Method：POST
+请求 Path：/api/v1/backtest
+接口作用：创建回测任务（queued）→ Celery backtest 队列异步执行，返回任务 ID 供前端轮询；回测结束结果写 backtest_results。
+请求 Body：有（Body-JSON：strategy_id、symbol=标的代码或symbol_id、period?=15m|1d|1w|1mon、start?、end?、fill_on?=close|open；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X POST "http://127.0.0.1:8000/api/v1/backtest" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"strategy_id":1,"symbol":"600519","period":"1d"}'`
+成功返回示例：`{"code":0,"msg":"回测已提交","data":{"id":17,"strategy_id":1,"symbol_id":125,"period":"1d","status":"queued","progress":0,"error":null,"created_at":"...","updated_at":"..."}}`
+
+## 2. 任务状态轮询
+接口名称：回测任务状态
+请求 Method：GET
+请求 Path：/api/v1/backtest/tasks/{task_id}
+接口作用：查询回测任务状态（queued/running/success/failed）与进度（0-100），前端轮询。
+请求 Body：无（Path：task_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/backtest/tasks/17" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":{"id":17,"strategy_id":1,"symbol_id":125,"period":"1d","status":"success","progress":100,"error":null,"created_at":"...","updated_at":"..."}}`
+
+## 3. 回测任务列表
+接口名称：回测任务列表
+请求 Method：GET
+请求 Path：/api/v1/backtest/tasks
+接口作用：当前用户回测任务列表（可按 strategy_id 过滤，N 区历史任务）。
+请求 Body：无（Query：strategy_id?；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/backtest/tasks?strategy_id=1" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":[{"id":17,"strategy_id":1,"symbol_id":125,"status":"success","progress":100},...]}`
+
+## 4. 结果查询（按策略）
+接口名称：回测结果列表（按策略）
+请求 Method：GET
+请求 Path：/api/v1/backtest/results
+接口作用：按策略查询回测结果列表（N 区与全景K线策略指标数据源：胜率/盈亏比/夏普/年化/最大回撤等）。
+请求 Body：无（Query：strategy_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/backtest/results?strategy_id=1" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":[{"id":5,"task_id":17,"strategy_id":1,"symbol_id":125,"win_rate":0.25,"profit_loss_ratio":1.8273,"sharpe":-0.8449,"total_buys":8,"total_sells":8,"annual_return":-0.1472,"max_drawdown":0.1124,"metrics_json":{"total_return":-0.0493,"total_trades":8,"commission_total":7750.04,...},"start_ts":"...","end_ts":"..."}]}`
+
+## 5. 结果详情
+接口名称：回测结果详情
+请求 Method：GET
+请求 Path：/api/v1/backtest/results/{result_id}
+接口作用：单条回测结果详情（含 metrics_json 扩展指标与交易统计）。
+请求 Body：无（Path：result_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/backtest/results/5" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":{"id":5,"task_id":17,"strategy_id":1,"win_rate":0.25,"metrics_json":{...}}}`

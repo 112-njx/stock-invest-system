@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from .v1 import (
     agents,
     auth,
+    backtest,
     chat,
     conversations,
     health,
@@ -28,3 +29,4 @@ api_router.include_router(conversations.router)  # /api/v1/conversations
 api_router.include_router(chat.router)  # /api/v1/chat（SSE）
 api_router.include_router(strategies.router)  # /api/v1/strategies
 api_router.include_router(agents.router)  # /api/v1/agents
+api_router.include_router(backtest.router)  # /api/v1/backtest

@@ -415,6 +415,9 @@ K线数据 → 指标服务(服务端计算 MACD/KDJ/成交量/成交额)
 | id | BIGSERIAL PK | |
 | strategy_id | BIGINT FK→trading_strategies | |
 | symbol_id | BIGINT FK→symbols | 回测标的 |
+| period | VARCHAR(8) | 回测K线周期 15m/1d/1w/1mon |
+| start_ts / end_ts | TIMESTAMP | 回测区间 |
+| fill_on | VARCHAR(8) | 撮合价 close/open |
 | status | VARCHAR(16) | queued/running/success/failed |
 | progress | INT | 进度 0-100 |
 | error | TEXT | 失败原因 |

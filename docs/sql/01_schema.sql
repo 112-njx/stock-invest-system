@@ -241,6 +241,10 @@ CREATE TABLE backtest_tasks (
     id          BIGSERIAL   PRIMARY KEY,
     strategy_id BIGINT      NOT NULL REFERENCES trading_strategies(id) ON DELETE CASCADE,
     symbol_id   BIGINT      NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+    period      VARCHAR(8)  NOT NULL DEFAULT '1d',     -- 回测K线周期 15m/1d/1w/1mon
+    start_ts    TIMESTAMP,                              -- 回测区间起
+    end_ts      TIMESTAMP,                              -- 回测区间止
+    fill_on     VARCHAR(8)  NOT NULL DEFAULT 'close',  -- 撮合价 close/open
     status      VARCHAR(16) NOT NULL DEFAULT 'queued',  -- queued/running/success/failed
     progress    INT         NOT NULL DEFAULT 0,
     error       TEXT,
@@ -298,3 +302,16 @@ CREATE INDEX idx_tlog_req ON task_logs(request_id);
 CREATE INDEX idx_tlog_created ON task_logs(created_at);
 
 COMMIT;
+
+--阶段四更改表结构的sql语句
+ALTER TABLE backtest_tasks
+    ADD COLUMN period   VARCHAR(8)  NOT NULL DEFAULT '1d',
+    ADD COLUMN start_ts TIMESTAMP,
+    ADD COLUMN end_ts   TIMESTAMP,
+    ADD COLUMN fill_on  VARCHAR(8)  NOT NULL DEFAULT 'close';
+
+-- 可选：添加列注释（PostgreSQL）
+COMMENT ON COLUMN backtest_tasks.period   IS '回测K线周期 15m/1d/1w/1mon';
+COMMENT ON COLUMN backtest_tasks.start_ts IS '回测区间起';
+COMMENT ON COLUMN backtest_tasks.end_ts   IS '回测区间止';
+COMMENT ON COLUMN backtest_tasks.fill_on  IS '撮合价 close/open';

@@ -75,3 +75,19 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-08-09
 编码内容（描述）：阶段三3.8多智能体编排（LangGraph）。app/agent/research_graph.py 借鉴 TradingAgents-CN trading_graph 组织架构：StateGraph 五节点 技术分析师→看多研究员→看空研究员→风控经理→交易决策者（诊断/交易计划/机会雷达走不同 trader 输出要求）；run_research_graph 预取行情快照+指标拼上下文注入各节点，astream(updates) 逐节点产出；chat_service 集成 DEEP_RUN_TYPES={diagnose,plan,radar} 走深度图（每节点落 agent_steps，SSE delta 带 node），其余走轻量 ReAct。验收：3 个 pytest（图节点顺序、深度聊天 agent_steps 五步可见、轻量模式仍走 ReAct），全库 94 个全绿。
+
+---
+编码时间：2026-08-09
+编码内容（描述）：阶段四4.1回测引擎。app/backtest/：sandbox.py 用 RestrictedPython 编译策略代码（AST 禁 import + 危险内置 open/eval/exec/__import__ 编译期硬拒，安全内建 min/max/sum 等补充，守卫拦截 _ 开头属性）；engine.py 撮合引擎（BacktestConfig 初始资金/佣金万分之三/印花税卖出万分之五/撮合价 close|open/时间预算，BacktestContext 提供 params/cash/pos/price/history/closes/buy/sell/flat，initialize/on_bar 回调，T+1 当日买入次日可卖，自动止损止盈按 params stop_loss/take_profit pct 触发价成交，权益曲线+交易流水，逐 bar 时间预算）。验收：双均线策略跑出交易流水，沙箱 import/open/eval 拦截，T+1/止损/费用/超时正确，9 个 pytest。
+
+---
+编码时间：2026-08-09
+编码内容（描述）：阶段四4.2指标计算。app/backtest/metrics.py：FIFO 买入-卖出配对算胜率/盈亏比，夏普用权益序列逐 bar 收益率按周期（15m/1d/1w/1mon）年化折算，年化收益按首末净值与时间跨度，最大回撤遍历峰值，metrics_json 扩展（总收益/交易数/佣金/持仓bar数/年化波动/最佳最差交易），无交易返回 None 不除零。验收：已知案例对照（胜率0.5/盈亏比1.0/回撤一致/夏普为正），6 个 pytest。
+
+---
+编码时间：2026-08-09
+编码内容（描述）：阶段四4.3回测任务流（Celery）。Alembic 迁移 0002 给 backtest_tasks 加 period/start_ts/end_ts/fill_on（任务自包含）；repositories/backtest_repo.py（任务状态机+结果读写）；services/backtest_service.py（create_backtest 校验策略归属/标的后建任务并 .delay 入 backtest 队列；execute_backtest 拉K线→引擎→指标→结果+success 同事务写入→best-effort 转本地记忆 memory_chunks；业务错误 BacktestFatalError 不重试）；worker/tasks/backtest_tasks.py 指数退避重试（重试前回 queued，耗尽标 failed）+ task_logs 全链路日志。验收：6 个 pytest + 真实端到端（API→Redis→worker→结果）跑通。
+
+---
+编码时间：2026-08-09
+编码内容（描述）：阶段四4.4回测API。app/api/v1/backtest.py + schemas/backtest.py：POST /backtest（异步发起，返回 task_id）、GET /backtest/tasks/{id}（状态轮询）、GET /backtest/tasks（按 strategy_id 过滤）、GET /backtest/results?strategy_id=（N 区与全景K线策略指标数据源）、GET /backtest/results/{id}（详情含 metrics_json），全部 user 隔离防越权。router.py 注册。验收：6 个 pytest（完整链路/无K线失败/越权404/鉴权/参数校验/任务列表），api-docs.md 已补，冒烟 scripts/smoke_phase4.py，全库 115 个全绿。

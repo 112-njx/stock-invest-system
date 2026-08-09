@@ -19,6 +19,11 @@
 - 本地记忆文件在 stock_backend/data/memory/{user_id}/*.md（人类可读，M 区「记忆文件」可打开），向量库持久化在 data/chroma/，首次运行自动创建。
 - LLM 调用审计日志：结构化 JSON 输出到 stdout（`llm_call ok/failed`，含 prompt/响应/token/耗时/错误），用于排查 AI 调用问题。
 - 阶段三冒烟测试：`uvicorn app.main:app` 启动后运行 `python scripts/smoke_phase3.py`，可观察会话/策略/定制Agent/聊天 SSE 全流程（脚本自动清理测试用户；未配 DeepSeek Key 时聊天走降级文案）。
+- 回测前需先同步标的 K 线数据（贵州茅台可跑同步任务或阶段一数据），否则回测任务 failed（错误提示"请先同步行情"）。
+- 回测由 Celery backtest 队列异步执行：需额外启动 `celery -A app.worker.celery_app:celery_app worker -Q backtest --pool=solo`，未启动时任务停留 queued。
+- 策略代码在 RestrictedPython 沙箱执行（禁 import/网络/文件/eval），策略死循环由 Celery 任务硬超时兜底（BACKTEST_HARD_TIME_LIMIT，触发后 worker 进程被终止重启，可观察日志）。
+- 阶段四冒烟测试：`uvicorn app.main:app` + 上述 backtest worker 同时运行后执行 `python scripts/smoke_phase4.py`，可观察发起回测→任务状态→结果查询全流程（脚本自动清理测试用户）。
+- 回测费用/撮合参数可在 .env 配置（BACKTEST_INITIAL_CASH/佣金/印花税/撮合价/时间预算，见 stock_backend/.env 注释）。
 ---
 
 ## 后端开发实施方案（项目启动 → 第一版发布）

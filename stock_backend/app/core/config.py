@@ -75,6 +75,17 @@ class Settings(BaseSettings):
     MEMORY_TOP_K: int = 5  # 记忆检索注入条数
     MEMORY_IMPORTANCE_MIN: int = 5  # 抽取时重要性低于该值不入库（噪音过滤）
 
+    # ---- 回测引擎（阶段四：异步 Celery，不阻塞主线程）----
+    BACKTEST_INITIAL_CASH: float = 1_000_000  # 初始资金（元）
+    BACKTEST_COMMISSION_RATE: float = 0.0003  # 佣金（双边，万分之三）
+    BACKTEST_STAMP_DUTY_RATE: float = 0.0005  # 印花税（卖出单边，万分之五）
+    BACKTEST_FILL_ON: str = "close"  # 撮合价：close（收盘价）/ open（开盘价）
+    BACKTEST_TIME_BUDGET: float = 30.0  # 单次回测执行时间预算（秒，超预算中止）
+    BACKTEST_DEFAULT_DAYS: int = 730  # 默认回测区间天数（约2年）
+    BACKTEST_MAX_RETRIES: int = 2  # 回测任务失败自动重试次数
+    BACKTEST_SOFT_TIME_LIMIT: int = 120  # Celery 任务软超时（秒）
+    BACKTEST_HARD_TIME_LIMIT: int = 180  # Celery 任务硬超时（秒，触发后 worker 被终止重启）
+
     # ---- 时区 ----
     TIMEZONE: str = "Asia/Shanghai"  # 展示用；DB 内一律存 UTC
 

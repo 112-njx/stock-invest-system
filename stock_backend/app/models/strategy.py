@@ -55,6 +55,10 @@ class BacktestTask(Base):
         BigInteger, ForeignKey("trading_strategies.id", ondelete="CASCADE"), nullable=False
     )
     symbol_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("symbols.id", ondelete="CASCADE"), nullable=False)
+    period: Mapped[str] = mapped_column(String(8), nullable=False, default="1d")  # 回测K线周期 15m|1d|1w|1mon
+    start_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 回测区间起
+    end_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 回测区间止
+    fill_on: Mapped[str] = mapped_column(String(8), nullable=False, default="close")  # 撮合价 close|open
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")  # queued/running/success/failed
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[str | None] = mapped_column(Text)

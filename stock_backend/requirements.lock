@@ -122,6 +122,7 @@ regex==2026.7.19
 requests==2.34.2
 requests-oauthlib==2.0.0
 requests-toolbelt==1.0.0
+RestrictedPython==8.4
 rich==15.0.0
 rpds-py==2026.6.3
 ruff==0.16.2

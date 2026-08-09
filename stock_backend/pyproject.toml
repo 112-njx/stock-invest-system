@@ -26,6 +26,7 @@ dependencies = [
     "langgraph>=0.2",
     "chromadb>=0.5",
     "tiktoken>=0.7",
+    "RestrictedPython>=7.0",
 ]
 
 [project.optional-dependencies]
