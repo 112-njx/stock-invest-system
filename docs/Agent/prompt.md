@@ -12,7 +12,7 @@
   格式已经给出,要求你不要更改或删除该文档最上方的文字说明,直接在文字说明下方补充api格式。如果代码有需要我人工配置的地方或者需要说明日志文件的内容，按照
   D:\stock-invest-system\docs\Agent_backend\roadmap.md上方的文字要求将说明补充在该文件下方，同样不要更改文档最上方的文字说明。在你编程完一个阶段下的
   一个细分任务后（例如1.1），在D:\stock-invest-system\docs\Agent_backend\Agent_code.md中按文件要求补充编码记录，同样不要更改
-  文档最上方的文字说明。 在你清楚之后，接着完成阶段三的八个任务的开发。
+  文档最上方的文字说明。 在你清楚之后，接着完成阶段四的四个任务的开发。开发过程中请你用中文回答我。   ---如果编程中出现bug需要修复并记录（什么类型的需要记录？感觉并非全部）
 
 架构工程师：
 考虑到项目未来的扩展性以及我对你说的生产级架构思路，我认为应该使用langchain框架实现软件“为用户定制Agent”的功能而非原来的RAGflow，相关项目借鉴方案
@@ -31,7 +31,10 @@ D:\stock-invest-system\docs\project_docs\docs.md中第一版的数据库设计�
   D:\stock-invest-system\docs\Agent_backend\api-docs.md是后端api文档，在对接api时你需要对照该文档，你不要更改或删除该文档最上方的文字说明。
   前提条件：在观看D:\stock-invest-system\docs\Agent_frontend\roadmap.md时如果对开发需求有不清楚的情况，观看D:\stock-i
   nvest-system\docs\project_docs\docs.md项目需求文档等等信息，如果你对具体的开发细节不清楚，请停止工作，先问我你疑惑的开发细节，清楚后在进行开发。另外开发的前
-  端页面的色调整体风格参考图片。D:\stock-invest-system\docs\Agent_frontend\fenggecankao.png,特别是编写AI Agent页面时。如果代码有需要我人工配置的地方或
+  端页面的色调整体风格，以及参考图片有两张：D:\stock-invest-system\docs\Agent_frontend\fenggecankao.png,特别是编写AI Agent页面时。如果代码有需要我人工配置的地方或
   者需要说明日志文件的内容，按照D:\stock-invest-system\docs\Agent_frontend\roadmap.md上方的文字要求将说明补充在该文件下方，同样不要更改文档最上方的文字说明。
   在你编程完一个阶段下的一个细分任务后（例如1.1），在D:\stock-invest-system\docs\Agent_frontend\Agent_code.md中按文件要求补充编码记录，同样不要更改
-  文档最上方的文字说明。 在你清楚之后，首先完成前端阶段一的四个任务的开发。
+  文档最上方的文字说明。 在你清楚之后，首先完成前端阶段一的四个任务的开发。开发过程中请你用中文回答我。    ---页面风格参考
+
+
+---学习编程中fastapi的知识

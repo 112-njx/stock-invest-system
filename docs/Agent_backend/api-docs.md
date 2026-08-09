@@ -157,3 +157,172 @@ api文档，你需要按照：
 请求 Body：无（Query：symbol=代码或 id、period=15m|1d|1w|1mon、names=逗号分隔指标名、start?、end?、limit?、params?=JSON 指标参数）
 请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/indicators?symbol=600519&period=1d&names=macd,kdj&params=%7B%22kdj%22%3A%7B%22n%22%3A9%7D%7D"`
 成功返回示例：`{"code":0,"msg":"ok","data":[{"ts":"2026-08-07T08:00:00","open":1308.66,"high":1315.28,"low":1301.0,"close":1309.22,"volume":24976,"amount":3266919421.0,"macd_dif":29.46,"macd_dea":33.11,"macd_hist":-7.30,"kdj_k":44.22,"kdj_d":59.02,"kdj_j":14.63},...]}`
+# 会话与消息 API（Conversations）
+
+## 1. 创建会话
+接口名称：创建会话
+请求 Method：POST
+请求 Path：/api/v1/conversations
+接口作用：创建新会话（默认标题「新会话」），J区历史会话数据源。
+请求 Body：有（Body-JSON：title?；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X POST "http://127.0.0.1:8000/api/v1/conversations" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{}'`
+成功返回示例：`{"code":0,"msg":"创建成功","data":{"id":1,"title":"新会话","created_at":"2026-08-09T05:00:00Z","updated_at":"2026-08-09T05:00:00Z"}}`
+
+## 2. 会话列表
+接口名称：会话列表
+请求 Method：GET
+请求 Path：/api/v1/conversations
+接口作用：当前用户会话列表（按更新时间倒序）。
+请求 Body：无（Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/conversations" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":[{"id":1,"title":"新会话","created_at":"...","updated_at":"..."}]}`
+
+## 3. 重命名会话
+接口名称：重命名会话
+请求 Method：PATCH
+请求 Path：/api/v1/conversations/{conversation_id}
+接口作用：重命名会话（仅本人）。
+请求 Body：有（Body-JSON：title；Path：conversation_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X PATCH "http://127.0.0.1:8000/api/v1/conversations/1" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"title":"贵州茅台研究"}'`
+成功返回示例：`{"code":0,"msg":"重命名成功","data":{"id":1,"title":"贵州茅台研究","created_at":"...","updated_at":"..."}}`
+
+## 4. 删除会话
+接口名称：删除会话
+请求 Method：DELETE
+请求 Path：/api/v1/conversations/{conversation_id}
+接口作用：删除会话及其全部消息（仅本人）。
+请求 Body：无（Path：conversation_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X DELETE "http://127.0.0.1:8000/api/v1/conversations/1" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"删除成功","data":null}`
+
+## 5. 追加消息
+接口名称：追加消息
+请求 Method：POST
+请求 Path：/api/v1/conversations/{conversation_id}/messages
+接口作用：向会话追加消息（user/assistant/system），可绑定标的 symbol_id。
+请求 Body：有（Body-JSON：role、content、symbol?=代码或symbol_id、tokens?；Path：conversation_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X POST "http://127.0.0.1:8000/api/v1/conversations/1/messages" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"role":"user","content":"分析贵州茅台","symbol":"600519"}'`
+成功返回示例：`{"code":0,"msg":"发送成功","data":{"id":1,"conversation_id":1,"role":"user","symbol_id":125,"content":"分析贵州茅台","tokens":null,"created_at":"2026-08-09T05:00:00Z"}}`
+
+## 6. 拉取消息
+接口名称：拉取消息
+请求 Method：GET
+请求 Path：/api/v1/conversations/{conversation_id}/messages
+接口作用：按会话拉取消息（时间升序），前端渲染历史对话。
+请求 Body：无（Path：conversation_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/conversations/1/messages" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":[{"id":1,"conversation_id":1,"role":"user","symbol_id":125,"content":"分析贵州茅台","tokens":null,"created_at":"..."}]}`
+
+# AI 聊天 API（Chat）
+
+## 1. 流式对话
+接口名称：流式对话（SSE）
+请求 Method：POST
+请求 Path：/api/v1/chat
+接口作用：AI 流式对话（SSE 透传前端）。保存消息→组装上下文（系统提示+历史+工具）→ReAct Agent 取数→流式输出；落库 chat_messages + agent_runs/agent_steps。LLM 不可用/失败返回降级文案。
+请求 Body：有（Body-JSON：content、conversation_id?、symbol?=代码或symbol_id、agent_id?、run_type?=diagnostic|plan|radar|strategy|custom；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -N -X POST "http://127.0.0.1:8000/api/v1/chat" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"content":"分析贵州茅台趋势","symbol":"600519","run_type":"diagnose"}'`
+成功返回示例（SSE data 行）：`data: {"type":"start"}` → `data: {"type":"tool_call","tool":"market_snapshot","input":{"symbol":"600519"}}` → `data: {"type":"delta","content":"..."}` → `data: {"type":"done","message_id":9,"conversation_id":2,"run_id":3}`
+
+# 交易策略 API（Strategies）
+
+## 1. AI 生成策略
+接口名称：AI 生成策略（结构化输出）
+请求 Method：POST
+请求 Path：/api/v1/strategies/generate
+接口作用：LangChain with_structured_output 按用户描述生成策略代码+JSON参数（schema 校验 + ast.parse 语法检查）。
+请求 Body：有（Body-JSON：description、symbol?=代码或symbol_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X POST "http://127.0.0.1:8000/api/v1/strategies/generate" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"description":"金叉买入死叉卖出的双均线策略"}'`
+成功返回示例：`{"code":0,"msg":"ok","data":{"strategy_name":"双均线策略","description":"...","code":"def initialize(context):...","params":{"entry":{"fast":5,"slow":20},"stop_loss":{},"take_profit":{},"position":{}},"risk_warning":"震荡市可能反复止损"}}`
+
+## 2. 策略列表
+接口名称：策略列表
+请求 Method：GET
+请求 Path：/api/v1/strategies
+接口作用：当前用户交易策略列表（按创建倒序），M 区策略栏数据源。
+请求 Body：无（Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/strategies" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":[{"id":1,"title":"双均线","description":"...","code":"...","params":{...},"status":"active","created_at":"...","updated_at":"..."}]}`
+
+## 3. 保存策略
+接口名称：保存策略
+请求 Method：POST
+请求 Path：/api/v1/strategies
+接口作用：保存交易策略（title/description/code/params/status），与 M 区联动、回测数据源。
+请求 Body：有（Body-JSON：title、description?、code?、params?、status?；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X POST "http://127.0.0.1:8000/api/v1/strategies" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"title":"双均线","code":"def on_bar(bar,context): pass"}'`
+成功返回示例：`{"code":0,"msg":"保存成功","data":{"id":1,"title":"双均线","status":"draft",...}}`
+
+## 4. 策略详情
+接口名称：策略详情
+请求 Method：GET
+请求 Path：/api/v1/strategies/{strategy_id}
+接口作用：单条策略详情（N 区展示代码/参数）。
+请求 Body：无（Path：strategy_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/strategies/1" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":{"id":1,"title":"双均线",...}}`
+
+## 5. 更新策略
+接口名称：更新策略
+请求 Method：PUT
+请求 Path：/api/v1/strategies/{strategy_id}
+接口作用：更新策略字段（title/description/code/params/status）。
+请求 Body：有（Body-JSON：title?、description?、code?、params?、status?；Path：strategy_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X PUT "http://127.0.0.1:8000/api/v1/strategies/1" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"status":"active"}'`
+成功返回示例：`{"code":0,"msg":"更新成功","data":{"id":1,"title":"双均线","status":"active",...}}`
+
+## 6. 删除策略
+接口名称：删除策略
+请求 Method：DELETE
+请求 Path：/api/v1/strategies/{strategy_id}
+接口作用：删除策略（仅本人）。
+请求 Body：无（Path：strategy_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X DELETE "http://127.0.0.1:8000/api/v1/strategies/1" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"删除成功","data":null}`
+
+# 用户定制 Agent API（Agents）
+
+## 1. 创建定制 Agent
+接口名称：创建定制 Agent
+请求 Method：POST
+请求 Path：/api/v1/agents
+接口作用：创建用户定制 Agent（system_prompt/tools/llm_config/memory_config JSONB），支持从预设模板（technical/fundamental/risk_control）创建。
+请求 Body：有（Body-JSON：name、agent_type?、system_prompt?、tools?、llm_config?、memory_config?、status?、template?；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X POST "http://127.0.0.1:8000/api/v1/agents" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"name":"我的风控","template":"risk_control"}'`
+成功返回示例：`{"code":0,"msg":"创建成功","data":{"id":1,"name":"我的风控","agent_type":"custom","system_prompt":"你是风控专员...","tools":{...},"llm_config":{"temperature":0.2},"memory_config":{...},"status":"draft","created_at":"...","updated_at":"..."}}`
+
+## 2. Agent 列表
+接口名称：Agent 列表
+请求 Method：GET
+请求 Path：/api/v1/agents
+接口作用：当前用户定制 Agent 列表。
+请求 Body：无（Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/agents" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":[{"id":1,"name":"我的风控",...}]}`
+
+## 3. Agent 详情
+接口名称：Agent 详情
+请求 Method：GET
+请求 Path：/api/v1/agents/{agent_id}
+接口作用：单条定制 Agent 配置详情。
+请求 Body：无（Path：agent_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/agents/1" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":{"id":1,"name":"我的风控",...}}`
+
+## 4. 更新 Agent
+接口名称：更新 Agent（启停）
+请求 Method：PATCH
+请求 Path：/api/v1/agents/{agent_id}
+接口作用：更新 Agent 配置或启停（status=active|draft）。
+请求 Body：有（Body-JSON：name?、agent_type?、system_prompt?、tools?、llm_config?、memory_config?、status?；Path：agent_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X PATCH "http://127.0.0.1:8000/api/v1/agents/1" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"status":"active"}'`
+成功返回示例：`{"code":0,"msg":"更新成功","data":{"id":1,"name":"我的风控","status":"active",...}}`
+
+## 5. 删除 Agent
+接口名称：删除 Agent
+请求 Method：DELETE
+请求 Path：/api/v1/agents/{agent_id}
+接口作用：删除定制 Agent（仅本人）。
+请求 Body：无（Path：agent_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl -X DELETE "http://127.0.0.1:8000/api/v1/agents/1" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"删除成功","data":null}`

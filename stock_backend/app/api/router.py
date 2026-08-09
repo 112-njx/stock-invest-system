@@ -2,7 +2,19 @@
 
 from fastapi import APIRouter
 
-from .v1 import auth, health, indicators, market, support_resistance, users, watchlist
+from .v1 import (
+    agents,
+    auth,
+    chat,
+    conversations,
+    health,
+    indicators,
+    market,
+    strategies,
+    support_resistance,
+    users,
+    watchlist,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router)  # /health /ready /metrics
@@ -12,3 +24,7 @@ api_router.include_router(users.router)  # /api/v1/users/me
 api_router.include_router(watchlist.router)  # /api/v1/watchlist
 api_router.include_router(support_resistance.router)  # /api/v1/support-resistance
 api_router.include_router(indicators.router)  # /api/v1/indicators
+api_router.include_router(conversations.router)  # /api/v1/conversations
+api_router.include_router(chat.router)  # /api/v1/chat（SSE）
+api_router.include_router(strategies.router)  # /api/v1/strategies
+api_router.include_router(agents.router)  # /api/v1/agents

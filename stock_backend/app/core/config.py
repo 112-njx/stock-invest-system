@@ -4,9 +4,12 @@
 """
 
 from functools import lru_cache
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BASE_DIR = Path(__file__).resolve().parents[2]  # stock_backend/（相对路径基于工程根）
 
 
 class Settings(BaseSettings):
@@ -56,6 +59,21 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     DEEPSEEK_MODEL: str = "deepseek-chat"
+
+    # ---- LLM 调用防护（超时/重试/熔断/限流，借鉴 TradingAgents-CN llm_adapters）----
+    LLM_TIMEOUT: float = 60.0  # 单次 LLM 调用超时（秒）
+    LLM_MAX_RETRIES: int = 2  # 失败指数退避重试次数
+    LLM_RETRY_BACKOFF: float = 1.5  # 退避基数（秒，2^attempt 递增）
+    LLM_CIRCUIT_FAILURE_THRESHOLD: int = 5  # 连续失败 N 次熔断
+    LLM_CIRCUIT_COOLDOWN: int = 60  # 熔断冷却（秒），冷却后半开探测
+    LLM_RATE_LIMIT_RPM: int = 30  # 每分钟限流请求数
+    LLM_TEMPERATURE: float = 0.7  # 默认采样温度
+
+    # ---- 本地记忆（ChromaDB 持久化 + 人类可读记忆文件，本地存储约束）----
+    MEMORY_DIR: str = str(_BASE_DIR / "data" / "memory")  # 记忆文件根目录（M 区可打开）
+    CHROMA_DIR: str = str(_BASE_DIR / "data" / "chroma")  # 向量库持久化目录
+    MEMORY_TOP_K: int = 5  # 记忆检索注入条数
+    MEMORY_IMPORTANCE_MIN: int = 5  # 抽取时重要性低于该值不入库（噪音过滤）
 
     # ---- 时区 ----
     TIMEZONE: str = "Asia/Shanghai"  # 展示用；DB 内一律存 UTC

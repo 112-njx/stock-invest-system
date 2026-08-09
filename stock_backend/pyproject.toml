@@ -20,6 +20,12 @@ dependencies = [
     "PyJWT>=2.8",
     "pandas>=2.2",
     "numpy>=1.26",
+    "langchain>=0.3",
+    "langchain-community>=0.3",
+    "langchain-openai>=0.2",
+    "langgraph>=0.2",
+    "chromadb>=0.5",
+    "tiktoken>=0.7",
 ]
 
 [project.optional-dependencies]
@@ -29,8 +35,6 @@ dev = [
     "ruff>=0.5",
     "black>=24.4",
 ]
-# 阶段三（AI/LangChain Agent）时解锁：
-# ai = ["langchain>=0.3", "langchain-community>=0.3", "langchain-openai>=0.2", "langgraph>=0.2", "chromadb>=0.5"]
 # 行情数据源（DataProvider 默认实现 EastMoney，依赖 akshare）：
 # data = ["akshare>=1.14"]
 
