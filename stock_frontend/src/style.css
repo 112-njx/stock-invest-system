@@ -1,0 +1,131 @@
+/* ==========================================================================
+   全局样式：交易终端风格设计体系
+   主题：默认暗黑（data-theme="dark"），明亮（data-theme="light"）由 themeStore 切换
+   语义色：涨=红 up / 跌=绿 down / 平=灰 flat
+   ========================================================================== */
+
+/* ---------- 主题变量 ---------- */
+:root,
+[data-theme='dark'] {
+  --bg: #0b0e11;
+  --bg-panel: #111827;
+  --bg-panel-2: #161b22;
+  --bg-hover: #1f2937;
+  --bg-active: #243244;
+  --border: #1f2937;
+  --border-strong: #2d3748;
+  --text: #e5e7eb;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --accent: #3b82f6;
+  --accent-soft: rgba(59, 130, 246, 0.14);
+  --up: #ef4444;
+  --down: #22c55e;
+  --flat: #9ca3af;
+  --up-soft: rgba(239, 68, 68, 0.1);
+  --down-soft: rgba(34, 197, 94, 0.1);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --bg: #f4f6f8;
+  --bg-panel: #ffffff;
+  --bg-panel-2: #f7f8fa;
+  --bg-hover: #f0f2f5;
+  --bg-active: #e8edf2;
+  --border: #e4e7ec;
+  --border-strong: #d1d5db;
+  --text: #1f2937;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+  --up: #dc2626;
+  --down: #059669;
+  --flat: #6b7280;
+  --up-soft: rgba(220, 38, 38, 0.08);
+  --down-soft: rgba(5, 150, 105, 0.08);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  color-scheme: light;
+}
+
+/* ---------- Reset 与基础 ---------- */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button {
+  font-family: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+input,
+select {
+  font-family: inherit;
+}
+
+/* ---------- 语义色工具类（红涨绿跌） ---------- */
+.t-up {
+  color: var(--up);
+}
+.t-down {
+  color: var(--down);
+}
+.t-flat {
+  color: var(--flat);
+}
+.t-secondary {
+  color: var(--text-secondary);
+}
+.t-muted {
+  color: var(--text-muted);
+}
+.bg-up {
+  background: var(--up-soft);
+}
+.bg-down {
+  background: var(--down-soft);
+}
+
+/* ---------- 滚动条 ---------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

@@ -156,3 +156,12 @@
 **5.5 收尾检查**
 - 对照 working_docs.md 六要素逐项自查（可维护/扩展/演进/稳定/可观测/可部署）。
 - 验收：每项有结论并补全前端开发收尾记录（docs/Agent_frontend/Agent_code.md）。
+
+---
+
+## 需要人工配置的地方 / 日志文件说明
+
+### 阶段一（1.1~1.4）
+- 启动后端：`cd stock_backend && .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000`（需 PostgreSQL 本机 5432 与 Docker Redis stock-redis 已运行）。
+- 启动前端：`cd stock_frontend && npm install && npm run dev`，浏览器访问 http://localhost:5173；开发环境 `/api` 由 vite 代理到后端 8000。
+- 登录/注册为普通用户流程，无手动配置项；新用户注册后即自动登录。

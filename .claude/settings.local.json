@@ -94,7 +94,13 @@
       "Bash(timeout 120 ./.venv/Scripts/python -c ' *)",
       "Bash(timeout 60 ./.venv/Scripts/python -c ' *)",
       "Bash(.venv/Scripts/python.exe -m pip freeze)",
-      "Bash(.venv/Scripts/python.exe -m ruff check app/backtest app/services/backtest_service.py app/api/v1/backtest.py app/schemas/backtest.py app/repositories/backtest_repo.py app/repositories/symbol_repo.py app/worker/tasks/backtest_tasks.py app/models/strategy.py tests/test_backtest_engine.py tests/test_backtest_api.py alembic/versions/0002_backtest_task_params.py)"
+      "Bash(.venv/Scripts/python.exe -m ruff check app/backtest app/services/backtest_service.py app/api/v1/backtest.py app/schemas/backtest.py app/repositories/backtest_repo.py app/repositories/symbol_repo.py app/worker/tasks/backtest_tasks.py app/models/strategy.py tests/test_backtest_engine.py tests/test_backtest_api.py alembic/versions/0002_backtest_task_params.py)",
+      "Bash(npm run *)",
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(curl -s http://127.0.0.1:8000/health)",
+      "Bash(curl -s http://localhost:5173/api/v1/health)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(npx eslint *)"
     ]
   }
 }
