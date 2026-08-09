@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     SYNC_RETRY_BACKOFF: float = 2.0  # 退避基数（秒）
     SYNC_DAILY_LIST_TIMES: str = "16,17"  # 增量同步 beat cron 小时，逗号分隔
 
+    # ---- JWT 鉴权 ----
+    JWT_SECRET_KEY: str = "dev-secret-change-in-production-0123456789abcdef"  # ≥32字节，生产必须覆盖为强随机值
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # token 有效期 7 天
+
+    # ---- 技术指标 ----
+    INDICATOR_CACHE_TTL: int = 300  # 指标缓存秒数（key 含 K 线最新 ts，新数据到达自动失效）
+
     # ---- DeepSeek（阶段三 LangChain 启用）----
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"

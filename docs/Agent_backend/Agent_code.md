@@ -28,3 +28,19 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-08-08
 编码内容（描述）：阶段一1.7行情查询API。新增 GET /api/v1/symbols（type/search/is_fixed 过滤，供下拉与 G/H 固定列表）、/symbols/search（6位代码/名称联想，精确代码优先）、/kline（15m/1d/1w/1mon，区间/分页，代码或id解析）、/snapshot（批量实时快照，按类型合并 stock_fundamentals/etf_premiums/index_valuations 特殊字段）。新增 schemas/market.py 响应模型、services/market_service.py 查询服务、repositories/snapshot 查询扩展。统一响应 {code,msg,data}。验收：四接口实测返回正确（上证指数49条、茅台22根日K/336根15m、快照合并），api-docs.md 已补，7 个单测通过。
+
+---
+编码时间：2026-08-09
+编码内容（描述）：阶段二2.1用户鉴权。新增 app/core/security.py（bcrypt哈希+JWT签发校验）、schemas/user.py、repositories/user_repo.py、services/auth_service.py（register/login 签发JWT）、api/v1/auth.py+users.py（/auth/register、/auth/login、/users/me GET+PUT）。deps.py 加 get_current_user（HTTPBearer→JWT→User）。配置加 JWT_SECRET_KEY/ALGORITHM/EXPIRE_MINUTES。依赖 bcrypt+PyJWT。验收：7 个 pytest 通过（登录拿token、受保护接口校验/拒绝）。
+
+---
+编码时间：2026-08-09
+编码内容（描述）：阶段二2.2重点关注股票。user_repo.py 加 user_watchlist 读写（UNIQUE(user,symbol) 幂等）；user_service.py 加 add/list/delete（列表合并 snapshot 实时价：代码/名称/最新价/涨跌幅）；api/v1/watchlist.py（GET/POST /watchlist、DELETE /watchlist/{id}），代码或id解析，user_id 强制隔离。预留 sort_order/group_name 扩展位（表结构未加列，后续按需迁移）。验收：6 个 pytest 通过。
+
+---
+编码时间：2026-08-09
+编码内容（描述）：阶段二2.3支撑/压力位。support_resistance 读写（user,symbol,type=support|pressure,price,note）；api/v1/support_resistance.py（GET 按 symbol_id 过滤、POST、DELETE /{sr_id}），K线图叠加横线数据源。预留 strength/test_count 扩展位，未来 AI 自动识别在 service 层加方法即可。验收：6 个 pytest 通过。
+
+---
+编码时间：2026-08-09
+编码内容（描述）：阶段二2.4技术指标服务。app/services/indicators/ 建 BaseIndicator 抽象+MACD/KDJ/成交量/成交额（借鉴 TradingAgents-CN 指标接口；MACD 柱×2 同花顺惯例、KDJ 经典递推）；indicator_service.py 拉K线→计算→Redis 缓存（key 含 symbol+period+params+最新ts，新数据自动失效）；GET /api/v1/indicators 支持 names+params。验收：10 个 pytest 通过（公式对照手算参考）。

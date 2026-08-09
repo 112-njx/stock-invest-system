@@ -4,6 +4,7 @@ amqp==5.3.1
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.14.2
+bcrypt==5.0.0
 beautifulsoup4==4.15.0
 billiard==4.2.4
 black==26.5.1
@@ -46,6 +47,7 @@ prometheus_client==0.26.0
 prompt_toolkit==3.0.53
 psycopg2-binary==2.9.12
 pycparser==3.0
+PyJWT==2.13.0
 pydantic==2.13.4
 pydantic-settings==2.15.0
 pydantic_core==2.46.4
