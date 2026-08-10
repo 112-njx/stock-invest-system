@@ -100,7 +100,26 @@
       "Bash(curl -s http://127.0.0.1:8000/health)",
       "Bash(curl -s http://localhost:5173/api/v1/health)",
       "Bash(echo \"exit=$?\")",
-      "Bash(npx eslint *)"
+      "Bash(npx eslint *)",
+      "Bash(/d/stock-invest-system/stock_backend/.venv/Scripts/python.exe -c ' *)",
+      "Bash(node -e \"console.log\\('node ok', process.version\\)\")",
+      "Bash(cd /tmp)",
+      "Bash(npm init *)",
+      "Bash(node -e ' *)",
+      "Bash(mkdir -p /d/stock-invest-system/docs/Agent_frontend/_preview)",
+      "Bash(node -e \"console.log\\('version:', require\\('lightweight-charts/package.json'\\).version\\)\")",
+      "Bash(node *)",
+      "Bash(curl -s -o /dev/null -w \"backend:%{http_code}\\\\n\" http://127.0.0.1:8000/health)",
+      "Bash(curl -s -o /dev/null -w \"pg:5432 %{http_code}\\\\n\" --max-time 2 http://127.0.0.1:5432/)",
+      "Bash(/d/stock-invest-system/stock_backend/.venv/Scripts/python.exe *)",
+      "Bash(echo \"backend starting pid $!\")",
+      "Bash(xargs grep -lnE \"FileHandler|RotatingFileHandler|logs/\")",
+      "Bash(netstat -ano)",
+      "Bash(curl -s http://localhost:5173/)",
+      "Bash(curl -s http://localhost:5175/)",
+      "Bash(curl -s \"http://localhost:5175/src/components/trading/KLineChart.vue\")",
+      "Bash(curl -s \"http://localhost:5175/src/components/trading/IndicatorPanel.vue\")",
+      "Bash(taskkill //PID 13296 //F)"
     ]
   }
 }

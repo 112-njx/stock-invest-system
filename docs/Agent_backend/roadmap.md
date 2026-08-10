@@ -14,7 +14,6 @@
 - 启动命令：`uvicorn app.main:app`，Swagger 在 `/docs`。
 - 日志：结构化 JSON 输出到 stdout，全链路 `request-id`（响应头 `X-Request-ID` 透传）。
 - 行情源为东方财富接口（akshare），偶发反爬断连（如 17.push2 主机被节流）；已内置 curl_cffi 浏览器指纹 + 指数退避重试 + 缺数降级，观察日志 `[eastmoney] ... failed/give up` 判断，冷却后可自动恢复。
-- 生产/多用户环境请在 stock_backend/.env 设置强随机 JWT_SECRET_KEY（≥32 字节），dev 默认值仅限本地。
 - 阶段三 AI 聊天需在 stock_backend/.env 配置 DeepSeek API Key（DEEPSEEK_API_KEY）；未配置时 /api/v1/chat 返回降级文案而非报错。
 - 本地记忆文件在 stock_backend/data/memory/{user_id}/*.md（人类可读，M 区「记忆文件」可打开），向量库持久化在 data/chroma/，首次运行自动创建。
 - LLM 调用审计日志：结构化 JSON 输出到 stdout（`llm_call ok/failed`，含 prompt/响应/token/耗时/错误），用于排查 AI 调用问题。

@@ -133,6 +133,24 @@
 - 四部分居中：策略描述 / 回测结果（已保存）/ 代码实现（展示 + 可编辑保存）/ 回测模块（选标的 → 发起回测 → 保存结果）。
 - 验收：可编辑代码并保存、可发起回测并轮询到结果。
 
+**4.8：多智能体编排功能显示**
+- 4.8.1 深度模式触发
+L 区四个功能卡片旁增加"深度分析"图标按钮（或输入区增加模式切换）。 
+点击后请求后端 POST /api/v1/agent/graph/run（或现有 chat 接口增加 mode=deep 参数），走 LangGraph 分支。
+- 4.8.2 流式输出适配
+SSE 流中除了最终 markdown 结论，还透传 agent_step 事件（节点名 + 节点输出摘要）。
+前端维护一个 steps 数组，实时渲染步骤进度条/时间线。
+- 4.8.3 步骤展开面板（N 区或对话区嵌入）
+在 AI 回复气泡下方增加"查看分析过程"折叠面板。
+面板内用时间线/树状图展示各智能体节点输出：
+节点名称（技术分析师 / 多头 / 空头 / 风控 / 决策）
+节点状态（运行中 / 完成 / 错误）
+节点输出摘要（可点击展开全文）
+- 4.8.4 Agent 运行历史（M 区新增）
+M 区增加"运行记录"标签页。
+列表展示 GET /api/v1/agent/runs 数据。
+点击单条记录可查看完整的 agent_steps 和各节点原始输出。
+
 ### 阶段五：联调、打磨与部署
 
 **5.1 全链路联调**
@@ -165,3 +183,9 @@
 - 启动后端：`cd stock_backend && .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000`（需 PostgreSQL 本机 5432 与 Docker Redis stock-redis 已运行）。
 - 启动前端：`cd stock_frontend && npm install && npm run dev`，浏览器访问 http://localhost:5173；开发环境 `/api` 由 vite 代理到后端 8000。
 - 登录/注册为普通用户流程，无手动配置项；新用户注册后即自动登录。
+
+### 阶段二（2.1~2.5）
+- 访问 http://localhost:5173/market/detail 直接查看第一层 A/B/C/D 区；无当前标时自动选中关注第一项或固定指数第一项（上证指数）。
+- 实时价刷新依赖后端 Celery 行情同步（realtime_poll/kline_init）已入库，前端 4s 轮询 /api/v1/snapshot；未同步标的现价/涨跌幅显示 --。
+- 技术指标、支撑/压力位、关注列表均需登录（JWT）；Redis 未启动时指标缓存自动降级直查库，K 线不受影响。
+- 页面调试看浏览器 F12 Console/Network（轮询失败静默不弹 toast）；后端 JSON 日志输出到 uvicorn 控制台 stdout。

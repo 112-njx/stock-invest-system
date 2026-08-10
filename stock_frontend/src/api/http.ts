@@ -4,6 +4,13 @@ import { toast } from '@/utils/toast'
 import { useUserStore } from '@/stores/user'
 import router from '@/router'
 
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /** 静默模式：业务错误不 toast（轮询等高频请求使用，避免错误刷屏） */
+    silent?: boolean
+  }
+}
+
 /**
  * axios 实例：
  * - baseURL `/api/v1`（开发代理到后端 8000，生产由 Nginx 反代）
@@ -26,7 +33,7 @@ http.interceptors.response.use(
     const body = response.data as ApiResponse<unknown>
     // 兼容 HTTP 200 但业务码非 0 的情况
     if (body && typeof body === 'object' && 'code' in body && body.code !== 0) {
-      toast.error(body.msg || '请求失败')
+      if (!response.config.silent) toast.error(body.msg || '请求失败')
       return Promise.reject(new Error(body.msg || '请求失败'))
     }
     return response
@@ -46,12 +53,12 @@ http.interceptors.response.use(
         return Promise.reject(error)
       }
     }
-    toast.error(msg)
+    if (!error.config?.silent) toast.error(msg)
     return Promise.reject(error)
   },
 )
 
-/** 发起请求并直接返回后端 data 字段 */
+/** 发起请求并直接返回后端 data 字段（silent 用于轮询等高频场景） */
 export async function request<T>(config: AxiosRequestConfig): Promise<T> {
   const res = await http.request<ApiResponse<T>>(config)
   return res.data.data
