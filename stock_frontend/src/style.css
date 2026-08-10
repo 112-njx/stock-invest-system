@@ -129,3 +129,94 @@ select {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ---------- Markdown 渲染（AI 输出，renderMarkdown 白名单输出） ---------- */
+.md-body {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+  word-break: break-word;
+}
+.md-body > *:first-child {
+  margin-top: 0;
+}
+.md-body > *:last-child {
+  margin-bottom: 0;
+}
+.md-body p {
+  margin: 6px 0;
+}
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+  margin: 10px 0 6px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.md-body h1 {
+  font-size: 17px;
+}
+.md-body h2 {
+  font-size: 15px;
+}
+.md-body h3 {
+  font-size: 14px;
+}
+.md-body h4 {
+  font-size: 13px;
+}
+.md-body ul,
+.md-body ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.md-body li {
+  margin: 3px 0;
+}
+.md-body code {
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  font-size: 12px;
+  background: var(--bg-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.md-body pre {
+  margin: 8px 0;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.md-body pre code {
+  background: none;
+  padding: 0;
+}
+.md-body table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+  font-size: 12px;
+}
+.md-body th,
+.md-body td {
+  border: 1px solid var(--border-strong);
+  padding: 5px 9px;
+  text-align: left;
+}
+.md-body th {
+  background: var(--bg-panel-2);
+  font-weight: 600;
+}
+.md-body a {
+  color: var(--accent);
+}
+.md-body strong {
+  font-weight: 600;
+}
+.md-body em {
+  font-style: italic;
+}

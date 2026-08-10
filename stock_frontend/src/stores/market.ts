@@ -4,7 +4,7 @@ import type { Snapshot, SymbolInfo, WatchlistItem } from '@/api/market'
 export type Period = '15m' | '1d' | '1w' | '1mon'
 
 //前端状态管理，当前对话的临时状态，存储在浏览器缓存。
-/** 行情状态：当前选中标的 + 快照缓存 + 关注列表（D/E 区共用同一数据源） */
+/** 行情状态：当前选中标的 + 快照缓存 + 关注列表（D/E 区共用同一数据源）+ 固定指数列表（G/H 区） */
 export const useMarketStore = defineStore('market', {
   state: () => ({
     current: null as SymbolInfo | null,
@@ -13,6 +13,8 @@ export const useMarketStore = defineStore('market', {
     snapshots: {} as Record<number, Snapshot>,
     /** 关注列表（watchlist API 返回，含记录 id 用于删除） */
     watchlist: [] as WatchlistItem[],
+    /** 固定指数列表（GET /symbols?type=index&is_fixed=1，G/H 区共用，按 sort_order 前端分组） */
+    fixedIndices: [] as SymbolInfo[],
   }),
   actions: {
     setCurrent(symbol: SymbolInfo | null) {
@@ -27,6 +29,9 @@ export const useMarketStore = defineStore('market', {
     },
     setWatchlist(list: WatchlistItem[]) {
       this.watchlist = list
+    },
+    setFixedIndices(list: SymbolInfo[]) {
+      this.fixedIndices = list
     },
     /** 本地移除一条关注（接口删除成功后由组件调用） */
     removeWatchlistItem(id: number) {

@@ -189,3 +189,15 @@ M 区增加"运行记录"标签页。
 - 实时价刷新依赖后端 Celery 行情同步（realtime_poll/kline_init）已入库，前端 4s 轮询 /api/v1/snapshot；未同步标的现价/涨跌幅显示 --。
 - 技术指标、支撑/压力位、关注列表均需登录（JWT）；Redis 未启动时指标缓存自动降级直查库，K 线不受影响。
 - 页面调试看浏览器 F12 Console/Network（轮询失败静默不弹 toast）；后端 JSON 日志输出到 uvicorn 控制台 stdout。
+
+### 阶段四（4.1~4.8）
+- 访问 http://localhost:5173/ai 进入 AI 策略页（需登录）；SSE 流式对话经 vite 代理到后端 8000，F12 Network 可见 data: JSON 帧（start/delta/done）。
+- 4.6 记忆文件（GET /api/v1/memory/files）、4.8.4 运行记录（GET /api/v1/agent/runs）两个后端接口暂未实现，前端已按约定对接并做 404 占位；需后端补齐后自动生效（详见 docs 两个 fixed.md）。
+- AI 流式对话、深度分析、策略代码生成依赖后端 DeepSeek API Key（stock_backend/.env 配 DEEPSEEK_API_KEY）；未配置时后端返回降级文案，前端打字机照常渲染。
+- 回测显示跳转第一层需策略已有回测结果：先启动 Celery backtest worker 并发起回测（后端阶段四冒烟已跑通）。
+
+### 阶段三（3.1~3.5）
+- 访问 http://localhost:5173 默认首页即行情第二层 E/F/G/H/I 区；E/G/H 行点击联动 F 区，双击 F 区 K 线进入第一层详情页（Esc/返回退出）。
+- 关注增删仍在第一层 D 区操作，第二层 E 区只读展示、与 D 区共用同一 store 数据源；两页关注数据一致。
+- 固定指数列表为后端 is_fixed=1 的 49 条（G 大盘 14 + H 行业 35），前端按 sort_order 分组，顺序与种子数据一致；指数现价依赖 Celery 同步已入库，未同步显示 --。
+- 页面调试看浏览器 F12 Console/Network（轮询失败静默不弹 toast）；后端 JSON 日志输出到 uvicorn 控制台 stdout。

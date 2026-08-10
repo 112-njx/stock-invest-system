@@ -4,6 +4,7 @@
  * - 行：代码/名称/最新价/涨跌幅（红涨绿跌），行点击切换 K 线标的
  * - 底部搜索栏：6 位代码实时联想（GET /symbols/search），选中添加关注
  * - 行内删除（DELETE /watchlist）
+ * - readonly：第二层 E 区只读模式——隐藏搜索栏与删除按钮，仅行点击联动
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import {
@@ -18,6 +19,8 @@ import { useMarketStore } from '@/stores/market'
 import { formatPct, formatPrice, trendClass } from '@/utils/color'
 import { toast } from '@/utils/toast'
 import ListRow from '@/components/base/ListRow.vue'
+
+withDefaults(defineProps<{ readonly?: boolean }>(), { readonly: false })
 
 const market = useMarketStore()
 
@@ -142,12 +145,12 @@ onMounted(load)
           <span class="wl-pct" :class="trendClass(item.change_pct)">
             {{ formatPct(item.change_pct) }}
           </span>
-          <button class="wl-del" title="删除" @click.stop="onDelete(item)">×</button>
+          <button v-if="!readonly" class="wl-del" title="删除" @click.stop="onDelete(item)">×</button>
         </ListRow>
       </template>
     </div>
 
-    <div class="watchlist-panel__search">
+    <div v-if="!readonly" class="watchlist-panel__search">
       <div class="search-box">
         <input
           v-model="query"

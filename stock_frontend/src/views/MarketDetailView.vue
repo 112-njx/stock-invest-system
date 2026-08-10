@@ -7,43 +7,26 @@
  * - D 重点关注列表（WatchlistPanel，行点击切换 A 区标的）
  * - 交互：Esc / 左上角按钮退出返回 /market；轮询刷新实时行情
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { fetchSymbols, fetchWatchlist } from '@/api/market'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useMarketStore } from '@/stores/market'
+import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
 import { useSnapshotPolling } from '@/composables/useSnapshotPolling'
 import KLineChart from '@/components/trading/KLineChart.vue'
 import IndicatorPanel from '@/components/trading/IndicatorPanel.vue'
 import BasicInfoPanel from '@/components/trading/BasicInfoPanel.vue'
 import WatchlistPanel from '@/components/trading/WatchlistPanel.vue'
+import StrategyMetricsPanel from '@/components/trading/StrategyMetricsPanel.vue'
 
 const router = useRouter()
+const route = useRoute()
 const market = useMarketStore()
+
+/** 回测显示跳转：带 strategy_id 时 D 区替换为策略指标面板（4.5） */
+const strategyId = computed(() => (route.query.strategy_id ? Number(route.query.strategy_id) : null))
 const klineRef = ref<InstanceType<typeof KLineChart> | null>(null)
 
 const { start } = useSnapshotPolling(4000)
-
-/** 无当前标的时兜底：优先取关注第一项，否则取固定大盘指数第一项（上证指数） */
-async function ensureDefaultSymbol() {
-  if (market.current) return
-  try {
-    const wl = await fetchWatchlist()
-    if (wl.length) {
-      market.setWatchlist(wl)
-      const w = wl[0]
-      market.setCurrent({ id: w.symbol_id, code: w.code, name: w.name, type: w.type })
-      return
-    }
-  } catch {
-    /* 继续走指数兜底 */
-  }
-  try {
-    const list = await fetchSymbols({ type: 'index', is_fixed: 1 })
-    if (list.length) market.setCurrent(list[0])
-  } catch {
-    /* 静默：页面显示未选择标的 */
-  }
-}
 
 function goBack() {
   router.push('/market')
@@ -82,7 +65,8 @@ onBeforeUnmount(() => {
       </div>
       <div class="col-right">
         <BasicInfoPanel />
-        <WatchlistPanel />
+        <StrategyMetricsPanel v-if="strategyId" :strategy-id="strategyId" />
+        <WatchlistPanel v-else />
       </div>
     </div>
   </div>

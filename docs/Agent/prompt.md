@@ -36,7 +36,7 @@ D:\stock-invest-system\docs\project_docs\docs.md中第一版的数据库设计�
   （该图片是行情页的风格参考，色调为明亮设计）,整体前端设计应该对标专业金融软件以及市面上的大模型软件的风格,特别是编写AI Agent页面时。如果代码有需要我人工配置的地方或
   者需要说明日志文件的内容，按照D:\stock-invest-system\docs\Agent_frontend\roadmap.md上方的文字要求将说明补充在该文件下方，同样不要更改文档最上方的文字说明。
   在你编程完一个阶段下的一个细分任务后（例如1.1），在D:\stock-invest-system\docs\Agent_frontend\Agent_code.md中按文件要求补充编码记录，同样不要更改
-  文档最上方的文字说明。 在你清楚之后，完成前端阶段三的五个任务的开发。开发过程中请你用中文回答我。
+  文档最上方的文字说明。 在你清楚之后，完成前端阶段四的八个任务的开发。开发过程中请你用中文回答我。
   注意：考虑到你的模型可能不支持图片阅读，两张图片的详细描述在D:\stock-invest-system\docs\Agent_frontend\PageDesign.md的第162-208页，你可以参考。
 
 ---学习编程中fastapi的知识

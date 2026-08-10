@@ -9,12 +9,15 @@ export function useSnapshotPolling(intervalMs = 7000) {
   const running = ref(false)
   let timer: ReturnType<typeof setInterval> | null = null
 
-  /** 收集需要轮询的 symbol_id：当前标的 + 关注列表（去重） */
+  /** 收集需要轮询的 symbol_id：当前标的 + 关注列表 + 固定指数（G/H 区，去重） */
   function collectIds(): number[] {
     const ids: number[] = []
     if (market.current) ids.push(market.current.id)
     for (const w of market.watchlist) {
       if (!ids.includes(w.symbol_id)) ids.push(w.symbol_id)
+    }
+    for (const i of market.fixedIndices) {
+      if (!ids.includes(i.id)) ids.push(i.id)
     }
     return ids
   }
