@@ -288,3 +288,34 @@ backtest_cache/
 # 行情数据本地缓存
 market_data_cache/
 *.cache.parquet
+
+# ============================================================
+# 项目敏感配置与本地数据（生产级配置不上传 GitHub）
+# ============================================================
+
+# 后端本地数据：Agent 记忆文件 + ChromaDB 本地向量库（用户数据，M 区可打开）
+stock_backend/data/
+
+# 后端运行时缓存
+stock_backend/.ruff_cache/
+stock_backend/.pytest_cache/
+
+# Claude Code 本地配置（含权限/密钥，仅本地）
+.claude/settings.local.json
+
+# 密钥/凭据兜底（.env 已由上方规则排除，.env.example 仍保留）
+*.p12
+*.pfx
+*.jks
+*.p8
+secrets/
+.secrets/
+*.secret
+*credentials*.json
+service-account*.json
+
+# 前端环境变量（Vite：VITE_* 可能含 API key；.env.example 仍保留）
+stock_frontend/.env*
+stock_frontend/.env.local
+stock_frontend/.env.*.local
+!.env.example

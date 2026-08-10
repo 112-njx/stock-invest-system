@@ -186,7 +186,7 @@ M 区增加"运行记录"标签页。
 
 ### 阶段二（2.1~2.5）
 - 访问 http://localhost:5173/market/detail 直接查看第一层 A/B/C/D 区；无当前标时自动选中关注第一项或固定指数第一项（上证指数）。
-- 实时价刷新依赖后端 Celery 行情同步（realtime_poll/kline_init）已入库，前端 4s 轮询 /api/v1/snapshot；未同步标的现价/涨跌幅显示 --。
+- 实时价刷新依赖后端 Celery 行情同步（realtime_poll/kline_init）已入库，前端 7s 轮询 /api/v1/snapshot；未同步标的现价/涨跌幅显示 --。
 - 技术指标、支撑/压力位、关注列表均需登录（JWT）；Redis 未启动时指标缓存自动降级直查库，K 线不受影响。
 - 页面调试看浏览器 F12 Console/Network（轮询失败静默不弹 toast）；后端 JSON 日志输出到 uvicorn 控制台 stdout。
 
