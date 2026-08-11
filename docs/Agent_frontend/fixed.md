@@ -14,3 +14,8 @@
 2. **GET /api/v1/memory/files 缺失**：roadmap 4.6「记忆文件」按钮需展示/打开用户本地记忆文件夹，PageDesign 注明「由后端提供打开能力/返回本地路径」。后端当前仅配置 MEMORY_DIR，无返回记忆文件列表的接口。前端 MemoryFilesDialog 已按约定实现只读文件列表展示，请求 404 时展示占位说明（含记忆路径提示 data/memory/{user_id}/*.md）。同上为编排缺失：规划了能力但后端未实现。
 
 以上两条已同步记录至 docs/Agent_backend/fixed.md，由后端在后续阶段补齐接口。
+
+---
+
+时间：2026-08-11
+修复bug内容（描述）：行情页 G/H 区（IndexListPanel）与 D/E 区（WatchlistPanel）行此前只有单击联动 F 区 K 线，缺少双击打开第一层详情页（A/B/C/D 区）的事件，与需求「双击鼠标左键点开个股/ETF/行业指数具体K线」不符；另因固定指数无 K 线/快照数据，指数最新价、涨跌幅与行业关联 ETF 显示 "--"。已：① 两面板行增加 dblclick 事件，MarketView 接线跳转 /market/detail（单击仍联动）；② 依赖后端补齐固定指数数据（见 Agent_backend/fixed.md）。需重建前端（npm run build 或重启 dev）生效。

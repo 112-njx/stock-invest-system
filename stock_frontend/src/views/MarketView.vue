@@ -55,7 +55,7 @@ onMounted(async () => {
   <div class="market">
     <div class="market-grid">
       <div class="grid-e">
-        <WatchlistPanel readonly />
+        <WatchlistPanel readonly @dblclick="goDetail" />
       </div>
 
       <div class="grid-f">
@@ -63,11 +63,11 @@ onMounted(async () => {
       </div>
 
       <div class="grid-g">
-        <IndexListPanel title="大盘指数" :list="marketIndices" :loading="indicesLoading" />
+        <IndexListPanel title="大盘指数" :list="marketIndices" :loading="indicesLoading" @dblclick="goDetail" />
       </div>
 
       <div class="grid-h">
-        <IndexListPanel title="行业指数" :list="industryIndices" :loading="indicesLoading" />
+        <IndexListPanel title="行业指数" :list="industryIndices" :loading="indicesLoading" @dblclick="goDetail" />
       </div>
 
       <div class="grid-i">

@@ -76,17 +76,97 @@ class EastMoneyProvider(BaseDataProvider):
     ) -> list[KlineBar]:
         if period in _MIN_PERIODS:
             return self._fetch_min_kline(symbol, start, end, asset_type)
+        bars = self._fetch_daily_kline(symbol, period, start, end, asset_type)
+        # 东方财富指数接口反爬限流时降级新浪（仅 A 股指数日K），保证默认大盘指数行情可用
+        if not bars and asset_type == "index" and period == "1d":
+            bars = self._fetch_sina_index_daily(symbol, start, end)
+        return bars
+
+    def _fetch_daily_kline(self, symbol, period, start, end, asset_type) -> list[KlineBar]:
         bars: list[KlineBar] = []
         args = self._daily_args(asset_type, symbol, period, start, end)
         if args is None:
             return bars
         df = self._call(args.pop("fn"), **args)
         if df is None or df.empty:
+            # 东方财富行业板块接口被限流时，降级同花顺板块指数（仅 industry_index 日K）
+            if asset_type == "industry_index" and period == "1d":
+                return self._fetch_ths_board_daily(symbol, start, end)
             return bars
         for _, row in df.iterrows():
             bar = _row_to_daily_bar(row)
             if bar is not None:
                 bars.append(bar)
+        return bars
+
+    def _fetch_ths_board_daily(self, board_name, start, end) -> list[KlineBar]:
+        """同花顺板块指数日K降级兜底（stock_board_industry_index_ths，仅 industry_index 1d）。"""
+        df = self._call(
+            self._ak.stock_board_industry_index_ths,
+            symbol=board_name,
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+        )
+        if df is None or df.empty:
+            return []
+        bars: list[KlineBar] = []
+        for _, row in df.iterrows():
+            try:
+                ts = pd.to_datetime(row["日期"]).to_pydatetime().replace(tzinfo=UTC)
+            except Exception:  # noqa: BLE001
+                continue
+            o = _to_float(row.get("开盘价"))
+            h = _to_float(row.get("最高价"))
+            low = _to_float(row.get("最低价"))
+            c = _to_float(row.get("收盘价"))
+            if o is None or c is None or h is None or low is None or h < low:
+                continue
+            bars.append(
+                KlineBar(
+                    ts=ts,
+                    open=o,
+                    high=h,
+                    low=low,
+                    close=c,
+                    volume=int(_to_float(row.get("成交量")) or 0),
+                    amount=_to_float(row.get("成交额")) or 0.0,
+                )
+            )
+        return bars
+
+    def _fetch_sina_index_daily(self, symbol, start, end) -> list[KlineBar]:
+        """新浪指数日K降级兜底（stock_zh_index_daily 仅 A 股指数，1d）。"""
+        sina_symbol = _to_sina_index(symbol)
+        if not sina_symbol:
+            return []
+        df = self._call(self._ak.stock_zh_index_daily, symbol=sina_symbol)
+        if df is None or df.empty:
+            return []
+        bars: list[KlineBar] = []
+        for _, row in df.iterrows():
+            try:
+                ts = pd.to_datetime(row["date"]).to_pydatetime().replace(tzinfo=UTC)
+            except Exception:  # noqa: BLE001
+                continue
+            if not (start <= ts <= end):
+                continue
+            o = _to_float(row.get("open"))
+            h = _to_float(row.get("high"))
+            low = _to_float(row.get("low"))
+            c = _to_float(row.get("close"))
+            if o is None or c is None or h is None or low is None or h < low:
+                continue
+            bars.append(
+                KlineBar(
+                    ts=ts,
+                    open=o,
+                    high=h,
+                    low=low,
+                    close=c,
+                    volume=int(_to_float(row.get("volume")) or 0),
+                    amount=0.0,  # 新浪指数日K无成交额，置 0
+                )
+            )
         return bars
 
     def _daily_args(self, asset_type, symbol, period, start, end) -> dict | None:
@@ -231,6 +311,15 @@ class EastMoneyProvider(BaseDataProvider):
 
 
 # ---- 数据清洗 / 转换 ----
+def _to_sina_index(code: str) -> str | None:
+    """东方财富指数代码 → 新浪指数代码（sh/sz 前缀），非 A 股指数返回 None。"""
+    if code.startswith(("399", "932")):
+        return f"sz{code}"
+    if code.startswith(("000", "6")):
+        return f"sh{code}"
+    return None
+
+
 def _row_to_daily_bar(row: pd.Series) -> KlineBar | None:
     try:
         ts = pd.to_datetime(row["日期"])

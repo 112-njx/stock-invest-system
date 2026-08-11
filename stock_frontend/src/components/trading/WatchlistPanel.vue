@@ -22,6 +22,8 @@ import ListRow from '@/components/base/ListRow.vue'
 
 withDefaults(defineProps<{ readonly?: boolean }>(), { readonly: false })
 
+const emit = defineEmits<{ (e: 'dblclick', item: WatchlistItem): void }>()
+
 const market = useMarketStore()
 
 const loading = ref(false)
@@ -63,6 +65,11 @@ function onSelect(item: WatchlistItem) {
     name: item.name,
     type: item.type,
   } as SymbolInfo)
+}
+
+/** 双击打开第一层详情页（A/B/C/D 区），由父级决定是否跳转 */
+function onDblClick(item: WatchlistItem) {
+  emit('dblclick', item)
 }
 
 async function onDelete(item: WatchlistItem) {
@@ -136,6 +143,7 @@ onMounted(load)
           clickable
           :active="item.symbol_id === currentId"
           @click="onSelect(item)"
+          @dblclick="onDblClick(item)"
         >
           <span class="wl-code">{{ item.code }}</span>
           <span class="wl-name">{{ item.name }}</span>

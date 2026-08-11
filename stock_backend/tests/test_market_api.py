@@ -87,14 +87,14 @@ def test_kline_unknown_symbol_empty(client: TestClient):
     assert resp.json()["data"] == []
 
 
-def test_snapshot_merges_symbols(client: TestClient):
-    resp = client.get("/api/v1/snapshot", params={"symbols": "70,125"})
+def test_snapshot_merges_symbols(client: TestClient, _kline_test_data):
+    # 用测试标的（有K线无快照，不受实时库数据影响）验证：按 id 合并返回 + 无快照字段为 null
+    resp = client.get("/api/v1/snapshot", params={"symbols": str(_kline_test_data.id)})
     assert resp.status_code == 200
     data = resp.json()["data"]
-    codes = [d["code"] for d in data]
-    assert "000001" in codes and "600519" in codes
-    # 无快照数据时字段为 null
-    assert all(d["price"] is None for d in data)
+    assert data and data[0]["code"] == "666666"
+    assert data[0]["price"] is None
+    assert data[0]["change"] is None
 
 
 def test_snapshot_invalid_id(client: TestClient):

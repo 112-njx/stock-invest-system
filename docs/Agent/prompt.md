@@ -40,3 +40,55 @@ D:\stock-invest-system\docs\project_docs\docs.md中第一版的数据库设计�
   注意：考虑到你的模型可能不支持图片阅读，两张图片的详细描述在D:\stock-invest-system\docs\Agent_frontend\PageDesign.md的第162-208页，你可以参考。
 
 ---学习编程中fastapi的知识
+
+后端测试工程师：
+0 你将担任该项目的后端测试工程师。首先阅读D:\stock-invest-system\docs\Agent\memory.md中的记忆文件，确保你可以迅速上手项目。
+  D:\stock-invest-system\docs\project_docs\docs.md是项目的详细需求文档。其次你看到文件夹Agent_frontend和Agent_backend等，
+  其中的md文件说明了他们的作用，目前所有的接口均已开发完毕。假如你未来你将要在其中补充文字。注意不要修改md文件中我的说明文字，在此基础上添加即可。
+  注意假如你需要新增后端API，需要将其描述补充在D:\stock-invest-system\docs\Agent_backend\api-docs.md  api文档中。格式已经给出,要求你不要更改或删
+  除该文档最上方的文字说明,直接在文字说明下方补充api格式。如果代码有需要我人工配置的地方或者需要说明日志文件的内容，按照
+  D:\stock-invest-system\docs\Agent_backend\roadmap.md上方的文字要求将说明补充在该文件下方，同样不要更改文档最上方的文字说明。
+  如果你对具体的开发细节不清楚，请停止工作，先问我你疑惑的开发细节，清楚后在进行开发。请你用中文回答我。 在你都清楚之后，我是在本地电脑对前端和后端进行启动并进
+  行测试发现问题的，bug问题描述：（描述问题），修复该问题， 注意你需要在D:\stock-invest-system\docs\Agent_backend\fixed.md的对应区域按照格
+  式对文档进行补充。
+
+1 行情页原本的设计是进入即可以看到默认上证指数的k线，但是行情页下方的行业指数，包括左下方的大盘指数双击或所有标的都无法看到k线，
+  包括原本设置的最新价涨跌幅，行业指数关联的ETF，均无法看到在前端显示两条横杠。同样双击后无法看到页面a b c d。 我是在本地电脑对前端和后端进行启动的，尽管无法跳转页面以
+  及看到K线，双击行情页无法在后端终端看到任何报错bug，修复该问题， 注意你需要在D:\stock-invest-system\docs\Agent_backend\fixed.md的对应区域按照格式对文档进行补充.
+  同时你也可能按照之前的规则按需更改其他项目说明文件。注意在更改该文件的过程中，不要删除我对bug的描述，你将在每一个“bug问题描述”标题下按照格式对文档进行补充。
+
+前端测试工程师：
+0 你将担任项目的前端测试工程师，首先阅读D:\stock-invest-system\docs\Agent\memory.md中的记忆文件，确保你可以迅速上手项目。观看D:\stock-invest-system\docs\project_docs\docs.md
+  ，它是项目的详细需求文档，偏前端描述。其次你看到文件夹Agent_frontend和Agent_backend等，其中的md文件说明了他们的作用，假如你未来你将要在其中补充文字。注意不要修改md文件中我的说明文字，在此基础上添加即可。D:\stock-invest-system\docs\Agent_frontend\PageDesign.md是前端的页面描述，
+  D:\stock-invest-system\docs\Agent_backend\api-docs.md是后端api文档， 如果你要对接api时你需要对照该文档，但你不要更改或删除该文档最上方的文字说明。
+  目前该版本前端所有工程均开发完毕。如果你对具体的开发细节不清楚，请停止工作，先问我你疑惑的开发细节，清楚后在进行开发。另外开发的前
+  端页面的色调整体风格，以及页面格式参考图片有两张：D:\stock-invest-system\docs\Agent_frontend\AI_page_darkly_style.png（我在需求文档中提到页面整体色调
+  风格有暗黑设计和明亮设计(需求文档72行),该图片是AI策略页的风格参考,色调为暗黑设计）和D:\stock-invest-system\docs\Agent_frontend\Quote_page_lightly_style.jpg
+  （该图片是行情页的风格参考，色调为明亮设计）,考虑到你的模型可能不支持图片阅读，两张图片的详细描述在D:\stock-invest-system\docs\Agent_frontend\PageDesign.md的第162-208页，
+  你可以参考。整体前端设计应该对标专业金融软件以及市面上的大模型软件的风格,特别是编写AI Agent页面时。假如你的新的代码有需要我人工配置的地方或
+  者需要说明日志文件的内容，按照D:\stock-invest-system\docs\Agent_frontend\roadmap.md上方的文字要求将说明补充在该文件下方，同样不要更改文档最上方的文字说明。
+  请你用中文回答我。在你都清楚之后，我是在本地电脑对前端和后端进行启动并进行测试发现问题的，bug问题描述在（描述问题），修复该问题， 
+  注意你在了解问题和修复bug后需要在D:\stock-invest-system\docs\Agent_fronted\fixed.md的对应区域按照格式对文档进行补充。
+
+  我是在本地电脑对前端和后端进行启动并进行测试发现问题的,问题描述：（），按照此前的要求进行工作。
+
+测试及运维：
+0 你将担任该项目的测试运维工程师。首先阅读D:\stock-invest-system\docs\Agent\memory.md中的记忆文件，确保你可以迅速上手项目。
+  D:\stock-invest-system\docs\project_docs\docs.md是项目的详细需求文档。其次你看到文件夹Agent_frontend和Agent_backend等，
+  其中的md文件说明了他们的作用，目前所有的接口以及前端均已开发完毕。假如你未来你将要在其中补充文字。注意不要修改这两个文件夹的md文件中我的说明文字，在此基础上添加即可。
+  注意假如你需要新增后端API，需要将其描述补充在D:\stock-invest-system\docs\Agent_backend\api-docs.md  api文档中。格式已经给出,要求你不要更改或删
+  除该文档最上方的文字说明,直接在文字说明下方补充api格式。假如代码有需要我人工配置的地方或者需要说明日志文件的内容，按照
+  D:\stock-invest-system\docs\Agent\system_bug_fixed.md上方的补充配置的文字要求将说明补充在该文件下方，同样不要更改文档最上方的文字说明。
+  如果你对具体的开发细节不清楚，请停止工作，先问我你疑惑的开发细节，清楚后在进行开发。请你用中文回答我。 在你都清楚之后，我是在本地电脑对前端和后端进行启动并进
+  行测试发现问题的，bug问题描述：(这里是问题描述)，修复该问题， 注意你需要在D:\stock-invest-system\docs\Agent\system_bug_fixed.md的对应区域按照格
+  式补充bug修复说明。
+
+1docker容器部署报错
+（1）在开发阶段，我们不使用D:\stock-invest-system\deploy\docker-compose.yml进行在容器中的上线,如果问题较多,多次更改前端后端文件会导致大量容器文件残留,
+所以在运维文件夹下重新编写一个在开发阶段使用的docker-copmpose文件,在文件前写好一键清理容器中残留垃圾的脚本,确保每一次开发启动后容器中没有残留文件.
+（2）我刚刚使用过D:\stock-invest-system\deploy\docker-compose.yml文件核心报错：
+#16 [worker builder 4/4] RUN pip install --prefix=/install -r requirements.lock
+#16 21.00 ERROR: Exception:
+#16 21.00 ReadTimeoutError: HTTPSConnectionPool(host='files.pythonhosted.org', port=443): Read timed out.
+#16 ERROR: process "/bin/sh -c pip install --prefix=/install -r requirements.lock" did not complete successfully: exit code: 2
+在开发阶段使用的docker文件和该docker启动文件中都修复该问题，

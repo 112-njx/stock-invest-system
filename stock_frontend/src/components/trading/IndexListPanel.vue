@@ -15,12 +15,19 @@ const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; load
   loading: false,
 })
 
+const emit = defineEmits<{ (e: 'dblclick', symbol: SymbolInfo): void }>()
+
 const market = useMarketStore()
 
 const currentId = computed(() => market.current?.id ?? null)
 
 function onSelect(s: SymbolInfo) {
   market.setCurrent(s)
+}
+
+/** 双击打开第一层详情页（A/B/C/D 区），由父级决定是否跳转 */
+function onDblClick(s: SymbolInfo) {
+  emit('dblclick', s)
 }
 </script>
 
@@ -51,6 +58,7 @@ function onSelect(s: SymbolInfo) {
           clickable
           :active="s.id === currentId"
           @click="onSelect(s)"
+          @dblclick="onDblClick(s)"
         >
           <span class="idx-name" :title="s.name">{{ s.name }}</span>
           <span class="idx-price ta-r" :class="trendClass(market.snapshots[s.id]?.change_pct)">

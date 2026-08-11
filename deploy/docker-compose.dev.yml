@@ -1,0 +1,132 @@
+# 开发阶段容器编排（区别于 deploy/docker-compose.yml 生产版）：
+#  - 后端源码 bind mount 热挂载 + uvicorn --reload：改代码免重建镜像，不产生容器文件残留；
+#  - 前端 nginx 直接托管宿主 stock_frontend/dist：改前端在宿主 npm run build 后刷新即生效，免重建 node 镜像；
+#  - 去除监控（prometheus/grafana）等生产组件，栈更轻；
+#  - 使用前先跑一键清理：bash deploy/cleanup_dev.sh（或直接 bash deploy/start_dev.sh 一键清理+启动）。
+#
+# 用法：
+#   cp .env.docker.example .env.docker   （首次）
+#   bash deploy/cleanup_dev.sh           （一键清理残留，可选 -f 连数据卷清空）
+#   docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d --build
+#   bash deploy/start_dev.sh             （或一键：清理 + 构建 + 启动）
+#
+# 访问：
+#   后端 API   http://127.0.0.1:8000   （uvicorn --reload，改源码自动热重载）
+#   前端页面   http://127.0.0.1:8081   （nginx 托管 stock_frontend/dist）
+# 说明：
+#   - 生产版 db/redis 仅内网，本版同样不映射宿主端口（避免与本机 PostgreSQL/Redis 冲突）；
+#     如需用 DBeaver 等直连调试，取消下方 db/redis 的 ports 注释。
+#   - 与生产版共用 stock_backend/Dockerfile（已内置国内 PyPI 镜像，pip 不再超时）。
+name: stock-invest-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
+      POSTGRES_DB: stock_invest
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d stock_invest"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # 开发调试可选：直连容器内 DB（避免与本机 5432 冲突）
+    # ports: ["127.0.0.1:5433:5432"]
+    restart: unless-stopped
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    # 开发调试可选：直连容器内 Redis（避免与本机 stock-redis 6379 冲突）
+    # ports: ["127.0.0.1:6380:6379"]
+    restart: unless-stopped
+    networks: [backend]
+
+  api:
+    build:
+      context: ..
+      dockerfile: stock_backend/Dockerfile
+    image: stock-backend:dev
+    # 开发热重载：改源码免重建镜像
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment: &backend_env
+      APP_ENV: ${APP_ENV:-dev}
+      DATABASE_URL: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-123456}@db:5432/stock_invest
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MEMORY_DIR: /app/data/memory
+      CHROMA_DIR: /app/data/chroma
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    volumes:
+      # 热挂载后端源码（数据/memory 等随宿主 stock_backend/data 落盘，与本地开发一致）
+      - ../stock_backend:/app
+    ports:
+      - "${DEV_API_PORT:-127.0.0.1:8000}:8000"
+    depends_on: [db, redis]
+    # dev 为 --reload 多进程，禁用 healthcheck 避免误判重启
+    healthcheck: { disable: true }
+    restart: unless-stopped
+    networks: [backend]
+
+  worker:
+    build:
+      context: ..
+      dockerfile: stock_backend/Dockerfile
+    image: stock-backend:dev
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest,sync,ai", "--pool=solo", "--concurrency=1", "-n", "worker@%h"]
+    environment: *backend_env
+    volumes:
+      - ../stock_backend:/app
+    depends_on: [db, redis]
+    healthcheck: { disable: true }
+    restart: unless-stopped
+    networks: [backend]
+
+  beat:
+    build:
+      context: ..
+      dockerfile: stock_backend/Dockerfile
+    image: stock-backend:dev
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "beat"]
+    environment: *backend_env
+    volumes:
+      - ../stock_backend:/app
+    depends_on: [db, redis]
+    healthcheck: { disable: true }
+    restart: unless-stopped
+    networks: [backend]
+
+  frontend:
+    # 开发阶段免重建 node 镜像：nginx 直接托管宿主构建产物 dist
+    image: nginx:1.27-alpine
+    volumes:
+      - ../stock_frontend/dist:/usr/share/nginx/html:ro
+      - ../stock_frontend/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+    environment:
+      NGINX_PROXY_PASS: http://api:8000
+    depends_on: [api]
+    ports:
+      - "${DEV_NGINX_PORT:-127.0.0.1:8081}:80"
+    restart: unless-stopped
+    networks: [backend]
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  backend:
+    driver: bridge

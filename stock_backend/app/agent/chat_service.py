@@ -180,7 +180,8 @@ async def stream_chat(
         db.commit()
 
         # ---- LLM 不可用降级 ----
-        if not llm_svc.available or model is None:
+        # 仅按服务可用性判定；model 为可选注入（None 时下面用 llm_svc.provider.raw_model 兜底），不得作为降级条件
+        if not llm_svc.available:
             text = _fallback_text()
             assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, text, 0, "failed", "AI 服务不可用")
             yield {"type": "delta", "content": text}

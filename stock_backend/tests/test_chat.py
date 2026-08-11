@@ -242,6 +242,36 @@ def test_stream_chat_success_saves_messages_and_run(client: TestClient):
         _cleanup_users(uname)
 
 
+def test_stream_chat_model_none_with_available_not_fallback(client: TestClient):
+    """回归：API 实际调用不传 model（model=None）且 llm 可用时，不得因 model is None 走降级。"""
+    import asyncio
+
+    uname = _uname()
+    _sid, code = _seed_symbol()
+    try:
+        token = _register(client, uname)
+        conv = client.post("/api/v1/conversations", json={}, headers=_auth(token)).json()["data"]
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+        fake = FakeLLMService(FakeChatModel(final_text="可用模型正常分析"))
+        events: list[dict] = []
+
+        async def _collect():
+            # 不传 model → model=None，但 llm_svc.available=True → 必须走正常 Agent 流而非降级
+            async for ev in chat_service.stream_chat(
+                user_id=me["id"], conversation_id=conv["id"], symbol=code, content="测试", run_type="custom", llm_svc=fake
+            ):
+                events.append(ev)
+
+        asyncio.run(_collect())
+        deltas = [e["content"] for e in events if e["type"] == "delta"]
+        assert not any("不可用" in d for d in deltas)  # 未走降级文案
+        assert any("正常分析" in d for d in deltas)
+        assert events[-1]["type"] == "done"
+    finally:
+        _cleanup_symbol(code)
+        _cleanup_users(uname)
+
+
 def test_stream_chat_tool_call_records_steps(client: TestClient):
     uname = _uname()
     _sid, code = _seed_symbol()

@@ -1,9 +1,14 @@
 # ---------- 阶段一：builder（安装依赖，requirements.lock 层缓存） ----------
 FROM python:3.12-slim AS builder
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
+# 国内网络加速：默认清华 PyPI 镜像 + 加长超时/重试，避免 pip 连国外 PyPI 源 ReadTimeout 构建失败。
+# 需要自定义镜像源时构建传参覆盖：docker compose build --build-arg PIP_INDEX_URL=<镜像地址>
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG PIP_DEFAULT_TIMEOUT=300
+ARG PIP_RETRIES=10
 WORKDIR /build
 COPY stock_backend/requirements.lock ./requirements.lock
-RUN pip install --prefix=/install -r requirements.lock
+RUN pip install --prefix=/install --index-url "${PIP_INDEX_URL}" --timeout "${PIP_DEFAULT_TIMEOUT}" --retries "${PIP_RETRIES}" -r requirements.lock
 
 # ---------- 阶段二：runner（仅运行时产物，非 root 用户） ----------
 FROM python:3.12-slim AS runner

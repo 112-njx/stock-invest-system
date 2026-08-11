@@ -14,6 +14,8 @@
 - 启动命令：`uvicorn app.main:app`，Swagger 在 `/docs`。
 - 日志：结构化 JSON 输出到 stdout，全链路 `request-id`（响应头 `X-Request-ID` 透传）。
 - 行情源为东方财富接口（akshare），偶发反爬断连（如 17.push2 主机被节流）；已内置 curl_cffi 浏览器指纹 + 指数退避重试 + 缺数降级，观察日志 `[eastmoney] ... failed/give up` 判断，冷却后可自动恢复。
+- 行情页固定指数数据：首次启动/重置数据库后运行 `python scripts/sync_fixed_indices.py` 补齐 49 个固定指数（大盘 14 + 行业 35）日K + 实时快照（幂等可重跑）；东方财富被限流时指数K线自动降级新浪（A股大盘）/同花顺（行业板块）。
+- 指数/板块快照无成交量、成交额字段，写入 `snapshot_realtime` 时自动置 0（NOT NULL 兜底），属正常现象。
 - 阶段三 AI 聊天需在 stock_backend/.env 配置 DeepSeek API Key（DEEPSEEK_API_KEY）；未配置时 /api/v1/chat 返回降级文案而非报错。
 - 本地记忆文件在 stock_backend/data/memory/{user_id}/*.md（人类可读，M 区「记忆文件」可打开），向量库持久化在 data/chroma/，首次运行自动创建。
 - LLM 调用审计日志：结构化 JSON 输出到 stdout（`llm_call ok/failed`，含 prompt/响应/token/耗时/错误），用于排查 AI 调用问题。

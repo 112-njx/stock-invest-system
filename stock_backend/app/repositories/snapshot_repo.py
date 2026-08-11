@@ -9,6 +9,11 @@ from app.data_providers.base import RealtimeQuote
 from app.models.snapshot import EtfPremium, IndexValuation, SnapshotRealtime, StockFundamental
 
 
+def _not_null(v, default=0):
+    """NOT NULL 数值列兜底：None/空值写默认值（指数快照无成交量/额等场景）。"""
+    return v if v is not None else default
+
+
 def upsert_snapshot(db: Session, quote: RealtimeQuote) -> None:
     """按 symbol_id 幂等 upsert 实时快照（quote.extra 携带特殊字段）。"""
     if quote.price is None:
@@ -16,14 +21,14 @@ def upsert_snapshot(db: Session, quote: RealtimeQuote) -> None:
     values = {
         "symbol_id": int(quote.extra.get("symbol_id", 0)),
         "price": quote.price,
-        "change": quote.change,
-        "change_pct": quote.change_pct,
+        "change": _not_null(quote.change),
+        "change_pct": _not_null(quote.change_pct),
         "open": quote.open,
         "high": quote.high,
         "low": quote.low,
         "pre_close": quote.pre_close,
-        "volume": quote.volume,
-        "amount": quote.amount,
+        "volume": _not_null(quote.volume),
+        "amount": _not_null(quote.amount),
         "turnover": quote.turnover,
         "amplitude": quote.amplitude,
         "updated_at": quote.updated_at or datetime.now(UTC),

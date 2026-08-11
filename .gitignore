@@ -252,6 +252,8 @@ static/
 # Docker
 docker-compose.override.yml
 docker-compose.dev.yml
+# 开发阶段编排为项目交付物（deploy/docker-compose.dev.yml），纳入版本管理
+!deploy/docker-compose.dev.yml
 .docker-data/
 
 # Redis dump

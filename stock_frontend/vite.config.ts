@@ -12,6 +12,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    allowedHosts: ['2d83faea.r27.cpolar.top'],
     proxy: {
       // 开发环境代理到后端 FastAPI，生产由 Nginx 反向代理
       '/api': {
