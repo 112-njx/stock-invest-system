@@ -1,5 +1,7 @@
+import { nextTick } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { trackTiming } from '@/utils/monitor'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -45,6 +47,13 @@ router.beforeEach((to) => {
   if (to.name === 'login' && user.token) {
     return { name: 'market' }
   }
+})
+
+// 页面切换耗时埋点（5.3）：nextTick 后近似「组件渲染完成」时刻
+router.afterEach(async (to) => {
+  const start = performance.now()
+  await nextTick()
+  trackTiming('route_change', performance.now() - start, { to: to.fullPath })
 })
 
 export default router

@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.metrics import prometheus_response
+from app.core.metrics_ext import refresh_platform_metrics
 from app.core.response import ok
 from app.utils.db import engine
 from app.utils.redis_client import get_redis_client
@@ -39,4 +40,6 @@ def ready() -> JSONResponse:
 
 @router.get("/metrics")
 def metrics():
+    # 平台级指标（队列深度/缓存命中率/行情新鲜度/回测积压）每次 scrape 前刷新
+    refresh_platform_metrics()
     return prometheus_response()

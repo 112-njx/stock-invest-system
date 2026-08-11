@@ -97,6 +97,17 @@ def finish_run(db: Session, run: AgentRun, *, status: str, output: str | None = 
     db.flush()
 
 
+# ---- agent_runs 查询（5.5 补齐：GET /agent/runs 运行记录）----
+def list_runs(db: Session, user_id: int, limit: int = 50) -> list[AgentRun]:
+    return list(
+        db.scalars(select(AgentRun).where(AgentRun.user_id == user_id).order_by(AgentRun.id.desc()).limit(limit))
+    )
+
+
+def get_run(db: Session, user_id: int, run_id: int) -> AgentRun | None:
+    return db.scalar(select(AgentRun).where(AgentRun.id == run_id, AgentRun.user_id == user_id))
+
+
 # ---- agent_steps ----
 def add_step(
     db: Session,
@@ -114,6 +125,13 @@ def add_step(
 
 def list_steps(db: Session, run_id: int) -> list[AgentStep]:
     return list(db.scalars(select(AgentStep).where(AgentStep.run_id == run_id).order_by(AgentStep.id)))
+
+
+# ---- user_memory_files（5.5 补齐：GET /memory/files 记忆文件）----
+def list_memory_files(db: Session, user_id: int) -> list[UserMemoryFile]:
+    return list(
+        db.scalars(select(UserMemoryFile).where(UserMemoryFile.user_id == user_id).order_by(UserMemoryFile.id.desc()))
+    )
 
 
 # ---- memory_chunks ----

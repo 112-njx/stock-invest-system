@@ -24,6 +24,7 @@ import { fetchKLine, fetchSupportResistance, type KLineBar, type SupportResistan
 import type { SymbolInfo } from '@/api/market'
 import { useMarketStore, type Period } from '@/stores/market'
 import { useThemeStore } from '@/stores/theme'
+import { trackTiming } from '@/utils/monitor'
 
 const props = defineProps<{ symbol: SymbolInfo | null }>()
 const emit = defineEmits<{ (e: 'dblclick'): void }>()
@@ -175,6 +176,7 @@ async function loadKline() {
   if (!props.symbol) return
   loading.value = true
   error.value = ''
+  const t0 = performance.now()
   try {
     const bars = await fetchKLine({ symbol: props.symbol.id, period: market.period })
     if (!chart) initChart()
@@ -182,6 +184,12 @@ async function loadKline() {
     volumeSeries?.setData(toVolumeData(bars))
     lastBar = bars.length ? bars[bars.length - 1] : null
     chart?.timeScale().fitContent()
+    // 监控埋点（5.3）：K 线加载耗时
+    trackTiming('kline_load', performance.now() - t0, {
+      symbol: props.symbol.code,
+      period: market.period,
+      bars: bars.length,
+    })
   } catch {
     error.value = 'K 线加载失败'
   } finally {

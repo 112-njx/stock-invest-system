@@ -3,7 +3,8 @@
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
-from app.models.agent import UserAgent
+from app.models.agent import AgentRun, AgentStep, UserAgent
+from app.models.user import UserMemoryFile
 from app.repositories import agent_repo
 
 # 官方预设模板（借鉴 TradingAgents-CN 预设分析师角色；用户可从模板创建后微调）
@@ -104,3 +105,23 @@ def delete_agent(db: Session, user_id: int, agent_id: int) -> None:
     if not agent_repo.delete_agent(db, user_id, agent_id):
         raise ApiError(status_code=404, code=40430, msg="Agent 不存在")
     db.commit()
+
+
+# ---- Agent 运行记录 / 记忆文件（5.5 补齐 GET /agent/runs、/memory/files）----
+def list_runs(db: Session, user_id: int) -> list[AgentRun]:
+    return agent_repo.list_runs(db, user_id)
+
+
+def get_run(db: Session, user_id: int, run_id: int) -> AgentRun:
+    run = agent_repo.get_run(db, user_id, run_id)
+    if run is None:
+        raise ApiError(status_code=404, code=40440, msg="运行记录不存在")
+    return run
+
+
+def list_steps(db: Session, run_id: int) -> list[AgentStep]:
+    return agent_repo.list_steps(db, run_id)
+
+
+def list_memory_files(db: Session, user_id: int) -> list[UserMemoryFile]:
+    return agent_repo.list_memory_files(db, user_id)

@@ -111,3 +111,14 @@
 - 可观测：一句话
 - 可部署：一句话
 ```
+
+---
+
+写入日期：2026-08-11（阶段五：部署闭环与生产收尾）
+生产级架构考虑：
+- 可维护：多阶段 Dockerfile（依赖层缓存）+ docker-compose 一键编排 + 启动入口集中处理迁移/种子，环境变量全部经 .env.docker 配置，无硬编码。
+- 可扩展：容器内 db/redis 不映射宿主端口、宿主端口按需映射，api/worker 可独立扩缩容；Nginx 分级限流（行情/AI 分区）预留新接口扩展。
+- 可演进：补全前端已对接但缺失的 GET /agent/runs、/memory/files 编排接口（契约对齐，前端自动生效）；/api/v1 版本化 + workflow_dispatch 手动部署灰度。
+- 稳定性：容器 HEALTHCHECK（/health、/ready）+ 启动等 DB 就绪再迁移；LLM 失败熔断、回测超时兜底已接入监控；Nginx 限流防打爆。
+- 可观测：/metrics 扩展 LLM 调用（次数/耗时/token）与平台指标（celery_queue_depth/redis_cache_hit_rate/market_data_freshness_seconds/backtest_queued_tasks），Prometheus 采集 + 告警规则 + Grafana provisioning 面板（9 图）。
+- 可部署：GitHub Actions lint→test→build 全自动，部署为 workflow_dispatch 手动触发（secrets 待配）；部署文档与人工配置已补至 roadmap.md 下方。

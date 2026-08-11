@@ -14,6 +14,7 @@ import time
 from collections.abc import AsyncIterator
 
 from app.core.config import get_settings
+from app.core.metrics import LLM_CALLS, LLM_DURATION, LLM_TOKENS
 
 from .circuit_breaker import CircuitBreaker
 from .providers.base import BaseLLMProvider, LLMResult
@@ -137,7 +138,11 @@ class LLMService:
 
     @staticmethod
     def _log_call(messages, text: str, tokens: int, duration: float, error: Exception | None) -> None:
-        """LLM 审计日志：prompt 截断 / 响应截断 / token / 耗时 / 错误（结构化 JSON）。"""
+        """LLM 审计日志 + Prometheus 埋点：prompt/响应截断、token、耗时、错误。"""
+        status = "failed" if error else "ok"
+        LLM_CALLS.labels(status).inc()
+        LLM_DURATION.labels(status).observe(duration)
+        LLM_TOKENS.labels("total").inc(tokens)
         prompt = " | ".join(f"{m.get('role')}: {str(m.get('content'))[:200]}" for m in messages[-3:])
         if error:
             logger.error(

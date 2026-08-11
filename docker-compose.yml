@@ -1,0 +1,23 @@
+# 前端容器化部署（5.4）：多阶段 Dockerfile（node 构建 → nginx）托管静态资源，
+# Nginx 同时反向代理 /api 到后端 FastAPI。
+#
+# 使用：
+#   docker compose up -d --build
+#   访问 http://localhost:8080
+#
+# 后端接入说明：
+#   - Windows/macOS Docker Desktop：默认 host.docker.internal:8000 可访问宿主机上运行的后端；
+#   - Linux 或后端已容器化：将 NGINX_PROXY_PASS 改为后端服务名（如 http://stock-backend:8000），
+#     并在下方 services 增加后端服务。
+services:
+  stock-frontend:
+    build:
+      context: ./stock_frontend
+      dockerfile: Dockerfile
+    container_name: stock-frontend
+    ports:
+      - '8080:80'
+    environment:
+      # 后端 API 上游地址（Nginx envsubst 注入）
+      NGINX_PROXY_PASS: 'http://host.docker.internal:8000'
+    restart: unless-stopped

@@ -201,3 +201,12 @@ M 区增加"运行记录"标签页。
 - 关注增删仍在第一层 D 区操作，第二层 E 区只读展示、与 D 区共用同一 store 数据源；两页关注数据一致。
 - 固定指数列表为后端 is_fixed=1 的 49 条（G 大盘 14 + H 行业 35），前端按 sort_order 分组，顺序与种子数据一致；指数现价依赖 Celery 同步已入库，未同步显示 --。
 - 页面调试看浏览器 F12 Console/Network（轮询失败静默不弹 toast）；后端 JSON 日志输出到 uvicorn 控制台 stdout。
+
+### 阶段五（5.1~5.5）
+- Docker 部署：需本机 Docker Desktop 已启动；后端 FastAPI 在本机 8000 运行（或把 docker-compose.yml 的 NGINX_PROXY_PASS 改为后端容器服务名）；
+- 执行 `cd stock-invest-system && docker compose up -d --build`，访问 http://localhost:8080（Nginx 托管静态 + 反代 /api）。
+- Docker 构建需拉取 node:22-alpine / nginx:1.27-alpine（docker.io）；国内网络无法直连 Docker Hub 时，需在 Docker Desktop Settings→Docker Engine 
+- 配置镜像加速器（如 https://docker.m.daocloud.io 等）并重启 Docker Desktop，再执行 `docker compose build`（镜像已由 docker compose config 语法校验通过，网络就绪即可构建）。
+- 5.3 监控埋点无需人工配置；数据查看：dev 模式浏览器 F12 Console 输出 `[monitor]` 摘要、localStorage key `stock_invest_monitor` 存队列；
+- 上报 POST /api/v1/monitor/events 后端尚未实现，404 静默降级本地收集，后端补齐后自动补传。
+- 5.1 双向标的联动：AI 页「回测显示」跳转第一层自动携带策略回测标的（?symbol=code）切换 K 线；从行情页进入 AI 页自动带出当前标的到「选择要分析的标的」，无需人工配置。

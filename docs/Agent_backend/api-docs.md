@@ -373,3 +373,32 @@ api文档，你需要按照：
 请求 Body：无（Path：result_id；Header：Authorization: Bearer <token>）
 请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/backtest/results/5" -H "Authorization: Bearer eyJhbGciOi..."`
 成功返回示例：`{"code":0,"msg":"ok","data":{"id":5,"task_id":17,"strategy_id":1,"win_rate":0.25,"metrics_json":{...}}}`
+
+# Agent 运行记录与记忆文件 API（Agent-Ops）
+
+## 1. Agent 运行历史
+接口名称：Agent 运行历史
+请求 Method：GET
+请求 Path：/api/v1/agent/runs
+接口作用：当前用户 Agent 运行记录列表（按时间倒序，前端 AgentRunsDialog 数据源）。
+请求 Body：无（Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/agent/runs" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":[{"id":3,"agent_id":null,"conversation_id":2,"symbol_id":125,"run_type":"diagnostic","status":"success","input":"分析贵州茅台趋势","output":"结论：持有","tokens":null,"error":null,"created_at":"2026-08-11T05:00:00Z","updated_at":"2026-08-11T05:00:00Z"},...]}`
+
+## 2. Agent 运行详情
+接口名称：Agent 运行详情
+请求 Method：GET
+请求 Path：/api/v1/agent/runs/{run_id}
+接口作用：单条运行记录详情（内嵌 agent_steps 多智能体步骤输出，可观测/复盘）。
+请求 Body：无（Path：run_id；Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/agent/runs/3" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":{"id":3,"run_type":"diagnostic","status":"success","output":"结论：持有","steps":[{"id":1,"run_id":3,"step_name":"analyst","agent_role":"analyst","content":"技术面看多","meta":null,"created_at":"..."}],"created_at":"..."}}`
+
+## 3. 本地记忆文件
+接口名称：本地记忆文件列表
+请求 Method：GET
+请求 Path：/api/v1/memory/files
+接口作用：当前用户本地记忆文件列表（M 区「记忆文件」数据源；记忆本体存本地路径，接口返回索引元数据）。
+请求 Body：无（Header：Authorization: Bearer <token>）
+请求示例（curl）：`curl "http://127.0.0.1:8000/api/v1/memory/files" -H "Authorization: Bearer eyJhbGciOi..."`
+成功返回示例：`{"code":0,"msg":"ok","data":[{"path":"D:/stock-invest-system/stock_backend/data/memory/1/rule.md","content_type":"rule","updated_at":"2026-08-11T05:00:00Z"}]}`

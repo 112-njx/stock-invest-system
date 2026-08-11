@@ -6,6 +6,7 @@
  */
 import { onMounted, ref, watch } from 'vue'
 import { fetchSymbols, fetchWatchlist, searchSymbols, type SymbolInfo } from '@/api/market'
+import { useMarketStore } from '@/stores/market'
 
 const props = defineProps<{ modelValue: SymbolInfo | null }>()
 const emit = defineEmits<{ (e: 'update:modelValue', v: SymbolInfo | null): void }>()
@@ -32,6 +33,9 @@ async function loadBase() {
         map.set(w.symbol_id, { id: w.symbol_id, code: w.code, name: w.name, type: w.type })
       }
     }
+    // 双向标的联动：并入行情页当前标的，保证带出的标的下拉可选
+    const mc = useMarketStore().current
+    if (mc && !map.has(mc.id)) map.set(mc.id, mc)
     options.value = [...map.values()]
   } catch {
     options.value = []

@@ -74,3 +74,18 @@ Agent的前端编码记录,你需要按照：
 
 编码时间：2026-08-10
 编码内容（描述）：3.5 全局布局与加载——MarketView 组装 E/F/G/H/I 网格布局（左 260px 列 + F 宽幅 + 右 280px 列）；首屏并行加载固定指数→默认标的（ensureDefaultSymbol 抽为 composable 供两层复用）→4s 轮询（快照纳入固定指数）；统一骨架/加载/空态，无白屏；typecheck/lint/build 全绿，经 vite 代理后端接口冒烟通过。
+
+编码时间：2026-08-10
+编码内容（描述）：5.1 全链路联调——双向标的联动：AI 页「回测显示」跳转第一层携带 ?symbol=code，MarketDetailView 按 query 解析并 setCurrent 保证 K 线与策略回测标的一致；行情页进 AI 页未选标时带出 market.current，SymbolPicker 选项并入当前标的；各面板三态（加载/错误/空态）与降级占位已覆盖。typecheck/lint 全绿。
+
+编码时间：2026-08-10
+编码内容（描述）：5.2 主题全面落地——KDJ K/D/J 序列色主题化：新增 CSS 变量 --ind-k/--ind-d/--ind-j，dark 用黄/蓝/紫、light 加深保证浅色可读，IndicatorPanel 迷你图与文字随主题切换；其余硬编码色均为主题无关；全局滚动条/表格/Markdown 已用 CSS 变量。切换无样式错乱。
+
+编码时间：2026-08-10
+编码内容（描述）：5.3 构建优化与监控埋点——路由懒加载基础上 manualChunks 分包（vue-vendor/charts/axios，gzip 后总约145k）；新增 utils/monitor.ts 前端监控：window error/unhandledrejection/Vue errorHandler 错误上报 + app_mount/page_load/route_change/kline_load 耗时埋点；上报 POST /api/v1/monitor/events 约定接口（后端缺失 404 降级 localStorage 队列补传），dev console 可查。build 分包生效。
+
+编码时间：2026-08-10
+编码内容（描述）：5.4 容器化与部署——多阶段 Dockerfile（node:22 构建 → nginx:1.27 托管）；nginx.conf 模板经 envsubst 注入后端地址：gzip、/assets/ 长缓存、/api 反代（proxy_buffering off 透传 SSE）、SPA try_files 回退；.dockerignore；根目录 docker-compose.yml 编排前端 8080:80，默认反代 host.docker.internal:8000。
+
+编码时间：2026-08-10
+编码内容（描述）：5.5 收尾检查——对照 working_docs.md 六要素自查：可维护（组件化/CSS变量/API层/注释）、可扩展（懒加载+组件复用）、可演进（接口版本化+占位降级）、稳定性（轮询静默/错误拦截/降级兜底）、可观测（前端监控埋点+JSON日志）、可部署（Docker+Nginx 反代）；typecheck/lint/build 全绿、docker compose build 通过；roadmap.md 已补阶段五人工配置说明。

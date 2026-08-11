@@ -23,6 +23,11 @@
 - 策略代码在 RestrictedPython 沙箱执行（禁 import/网络/文件/eval），策略死循环由 Celery 任务硬超时兜底（BACKTEST_HARD_TIME_LIMIT，触发后 worker 进程被终止重启，可观察日志）。
 - 阶段四冒烟测试：`uvicorn app.main:app` + 上述 backtest worker 同时运行后执行 `python scripts/smoke_phase4.py`，可观察发起回测→任务状态→结果查询全流程（脚本自动清理测试用户）。
 - 回测费用/撮合参数可在 .env 配置（BACKTEST_INITIAL_CASH/佣金/印花税/撮合价/时间预算，见 stock_backend/.env 注释）。
+- 阶段五全栈部署：`cp .env.docker.example .env.docker && docker compose --env-file .env.docker -f deploy/docker-compose.yml up -d --build`；前端单独部署用根目录 docker-compose.yml（对接宿主后端）。
+- 容器启动入口 docker-entrypoint.sh 自动执行 Alembic 迁移 + 固定指数种子（幂等），无需手动建库；db/redis 仅容器内网不映射宿主端口（避免与本机 5432/6379 冲突）。
+- 宿主端口按需映射（见 .env.docker）：nginx 默认 127.0.0.1:8080/8443（HTTP/HTTPS），对外发布改 80/443 与 0.0.0.0；TLS 需挂载证书到 /etc/nginx/certs 并启用 nginx.conf 中 443 server 块。
+- 监控：Prometheus 127.0.0.1:9090、Grafana 127.0.0.1:3000（初始 admin/admin，可改 .env.docker）；/metrics 含 LLM 调用与平台指标（队列深度/缓存命中率/行情新鲜度/回测积压），告警规则在 deploy/prometheus/alerts.yml。
+- CI：push 触发 lint→test→build 全自动（需 PostgreSQL/Redis service 自动拉起）；部署为 GitHub Actions workflow_dispatch 手动触发，需配置 secrets（DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY）后启用。
 ---
 
 ## 后端开发实施方案（项目启动 → 第一版发布）

@@ -24,6 +24,9 @@
   --flat: #9ca3af;
   --up-soft: rgba(239, 68, 68, 0.1);
   --down-soft: rgba(34, 197, 94, 0.1);
+  --ind-k: #eab308;
+  --ind-d: #3b82f6;
+  --ind-j: #a855f7;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   color-scheme: dark;
 }
@@ -46,6 +49,9 @@
   --flat: #6b7280;
   --up-soft: rgba(220, 38, 38, 0.08);
   --down-soft: rgba(5, 150, 105, 0.08);
+  --ind-k: #ca8a04;
+  --ind-d: #2563eb;
+  --ind-j: #7c3aed;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   color-scheme: light;
 }

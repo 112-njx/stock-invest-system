@@ -1,0 +1,16 @@
+# 后端镜像构建 context 为项目根；仅 COPY 运行时所需，排除无关/大文件
+.git
+.gitignore
+.idea
+.claude
+*.md
+node_modules
+dist
+stock_frontend
+stock_backend/.venv
+stock_backend/data
+stock_backend/.env
+stock_backend/.pytest_cache
+stock_backend/.ruff_cache
+stock_backend/celerybeat-schedule*
+stock_backend/tests

@@ -64,7 +64,15 @@ async function onSaveStrategy() {
 async function onBacktest() {
   try {
     const id = await ensureSaved()
-    router.push({ path: '/market/detail', query: { strategy_id: String(id) } })
+    // 双向标的联动：携带发送时选中的标的代码，行情第一层据此切换 K 线标的
+    const sym = ai.selectedSymbol
+    router.push({
+      path: '/market/detail',
+      query: {
+        strategy_id: String(id),
+        ...(sym ? { symbol: sym.code } : {}),
+      },
+    })
   } catch {
     /* 错误已 toast */
   }

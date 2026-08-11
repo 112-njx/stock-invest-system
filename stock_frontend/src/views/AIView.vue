@@ -8,6 +8,7 @@
  */
 import { onMounted } from 'vue'
 import { useAiStore, type QuickCardType } from '@/stores/ai'
+import { useMarketStore } from '@/stores/market'
 import { streamChat } from '@/api/ai'
 import { toast } from '@/utils/toast'
 import SessionSidebar from '@/components/ai/SessionSidebar.vue'
@@ -19,6 +20,7 @@ import ChatInput from '@/components/ai/ChatInput.vue'
 import StrategyDetailPanel from '@/components/ai/StrategyDetailPanel.vue'
 
 const ai = useAiStore()
+const market = useMarketStore()
 
 /** 功能卡片 → run_type（发送时映射，create 对应后端 strategy） */
 const CARD_RUN_TYPE: Record<QuickCardType, string> = {
@@ -159,6 +161,10 @@ onMounted(() => {
   void ai.loadConversations()
   void ai.loadStrategies()
   void ai.loadAgents()
+  // 双向标的联动：从行情页进入 AI 页时，若 AI 页尚未选择标的则默认带出当前行情页标的
+  if (!ai.selectedSymbol && market.current) {
+    ai.selectSymbol(market.current)
+  }
 })
 </script>
 

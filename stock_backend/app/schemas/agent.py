@@ -40,3 +40,46 @@ class AgentOut(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class AgentRunOut(BaseModel):
+    """Agent 运行记录（GET /agent/runs，供前端 AgentRunsDialog）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    agent_id: int | None = None
+    conversation_id: int | None = None
+    symbol_id: int | None = None
+    run_type: str
+    status: str
+    input: str | None = None
+    output: str | None = None
+    tokens: int | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentStepOut(BaseModel):
+    """Agent 运行步骤（GET /agent/runs/{id} 内嵌）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_id: int
+    step_name: str
+    agent_role: str
+    content: str | None = None
+    meta: dict[str, Any] | None = None
+    created_at: datetime
+
+
+class MemoryFileOut(BaseModel):
+    """本地记忆文件（GET /memory/files，path 对应模型 file_path）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    path: str = Field(validation_alias="file_path")
+    content_type: str
+    updated_at: datetime

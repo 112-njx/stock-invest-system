@@ -1,0 +1,150 @@
+# 生产全栈一键编排：postgres / redis / api / worker / beat / nginx / prometheus / grafana
+#
+# 用法：
+#   cp .env.docker.example .env.docker && docker compose --env-file ../.env.docker -f deploy/docker-compose.yml up -d --build
+#   访问 http://127.0.0.1:8080 （前端 + /api 反代），Grafana http://127.0.0.1:3000
+#
+# 说明：
+#   - db/redis 仅容器内网互联，不映射宿主端口（避免与本机原生 PostgreSQL/Redis 冲突）；
+#   - 宿主端口按需映射，默认仅绑定 127.0.0.1（对外发布改 .env.docker 为 0.0.0.0 或 80/443）；
+#   - 与根目录 docker-compose.yml（前端单独部署，对接宿主机后端）定位不同，可并存。
+#   - 启动入口 docker-entrypoint.sh：等待 DB → Alembic 迁移 → 固定指数种子（均幂等）。
+name: stock-invest
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
+      POSTGRES_DB: stock_invest
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d stock_invest"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks: [backend]
+
+  api:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    environment: &backend_env
+      APP_ENV: ${APP_ENV:-prod}
+      DATABASE_URL: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-123456}@db:5432/stock_invest
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      MEMORY_DIR: /app/data/memory
+      CHROMA_DIR: /app/data/chroma
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    volumes:
+      - backenddata:/app/data
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
+  worker:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest,sync,ai", "--pool=solo", "--concurrency=1", "-n", "worker@%h"]
+    environment: *backend_env
+    volumes:
+      - backenddata:/app/data
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    # celery 无 HTTP 服务，禁用镜像默认 HTTP healthcheck（避免被误判 unhealthy）
+    healthcheck: { disable: true }
+    restart: unless-stopped
+    networks: [backend]
+
+  beat:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "beat"]
+    environment: *backend_env
+    volumes:
+      - backenddata:/app/data
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    # celery 无 HTTP 服务，禁用镜像默认 HTTP healthcheck
+    healthcheck: { disable: true }
+    restart: unless-stopped
+    networks: [backend]
+
+  nginx:
+    build: { context: ../stock_frontend }
+    # 生产级配置覆盖前端镜像默认模板（限流 / 安全头 / TLS 可配）
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+    environment:
+      NGINX_PROXY_PASS: http://api:8000
+    depends_on: [api]
+    ports:
+      - "${NGINX_HTTP_PORT:-127.0.0.1:8080}:80"
+      - "${NGINX_HTTPS_PORT:-127.0.0.1:8443}:443"
+    restart: unless-stopped
+    networks: [backend]
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - promdata:/prometheus
+    depends_on: [api]
+    ports:
+      - "${PROMETHEUS_PORT:-127.0.0.1:9090}:9090"
+    restart: unless-stopped
+    networks: [backend]
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on: [prometheus]
+    ports:
+      - "${GRAFANA_PORT:-127.0.0.1:3000}:3000"
+    restart: unless-stopped
+    networks: [backend]
+
+volumes:
+  pgdata:
+  redisdata:
+  backenddata:
+  promdata:
+  grafanadata:
+
+networks:
+  backend:
+    driver: bridge

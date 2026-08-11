@@ -91,3 +91,27 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-08-09
 编码内容（描述）：阶段四4.4回测API。app/api/v1/backtest.py + schemas/backtest.py：POST /backtest（异步发起，返回 task_id）、GET /backtest/tasks/{id}（状态轮询）、GET /backtest/tasks（按 strategy_id 过滤）、GET /backtest/results?strategy_id=（N 区与全景K线策略指标数据源）、GET /backtest/results/{id}（详情含 metrics_json），全部 user 隔离防越权。router.py 注册。验收：6 个 pytest（完整链路/无K线失败/越权404/鉴权/参数校验/任务列表），api-docs.md 已补，冒烟 scripts/smoke_phase4.py，全库 115 个全绿。
+
+---
+编码时间：2026-08-11
+编码内容（描述）：阶段五5.1容器化。stock_backend/Dockerfile 多阶段（builder 用 requirements.lock 装依赖缓存层，runner 仅拷 site-packages + 非 root app 用户 + HEALTHCHECK curl /health）；docker-entrypoint.sh 启动入口：等 DB 就绪→alembic upgrade head→seed_fixed_indices（均幂等）→exec 主进程；项目根 .dockerignore（排除 .venv/data/tests/frontend）。deploy/docker-compose.yml 全栈编排 postgres/redis/api/worker/beat/nginx/prometheus/grafana：db/redis 仅内网不映射宿主端口，宿主端口经 .env.docker 按需映射（默认 127.0.0.1），worker --pool=solo 三队列、beat 定时，共享 backenddata 卷持久化记忆/chroma。docker compose config 校验通过。
+
+---
+编码时间：2026-08-11
+编码内容（描述）：阶段五5.2 Nginx。deploy/nginx/nginx.conf 覆盖前端镜像默认模板（静态来自前端 build 产物）：基于前端版本增强 API 分级限流（limit_req_zone api_limit 30r/s 常规、ai_limit 5r/s 精确匹配 /api/v1/chat SSE 更严）、安全响应头（X-Frame-Options/X-Content-Type-Options/Referrer-Policy）、gzip、静态长缓存、SPA 回退、TLS 443 可选（证书挂载 /etc/nginx/certs 并注释块启用）。envsubst 只替换已定义环境变量，nginx 内置变量安全。
+
+---
+编码时间：2026-08-11
+编码内容（描述）：阶段五5.3 CI/CD。.github/workflows/ci.yml：push/PR 触发 backend-test（PostgreSQL/Redis service 容器 → pip 装 requirements.lock → ruff check+format → alembic upgrade head → seed → pytest）→ docker-build（buildx 构建后端/前端镜像）→ deploy（workflow_dispatch 手动，SSH 占位，secrets 待配）。
+
+---
+编码时间：2026-08-11
+编码内容（描述）：阶段五5.4监控告警。app/core/metrics.py 增 LLM 指标（llm_calls_total{status}/llm_request_duration_seconds{status}/llm_tokens_total{kind}），llm_service._log_call 埋点（成功/失败/token/耗时）；app/core/metrics_ext.py 平台 Gauge（celery_queue_depth/redis_cache_hit_rate/market_data_freshness_seconds/backtest_queued_tasks），/metrics 端点每次 scrape 先 refresh（Redis/DB 不可用静默跳过）；deploy/prometheus（scrape api:8000 + 告警：5xx>5%、回测队列>20、行情>5min、LLM失败率>10%）；deploy/grafana provisioning 数据源+9 图面板。验收：test_metrics_ext 3 个 pytest。
+
+---
+编码时间：2026-08-11
+编码内容（描述）：阶段五5.5测试补齐 + 补前端缺失接口。补齐 GET /api/v1/agent/runs（运行历史）、/agent/runs/{id}（内嵌 agent_steps）、/memory/files（记忆文件）三接口：agent_repo 增 list_runs/get_run/list_memory_files，schemas 增 AgentRunOut/AgentStepOut/MemoryFileOut（path=validation_alias file_path），agent_service 透传，api/v1/agent_ops.py 注册，user 隔离 404/401。新增 test_agent_ops（3 个：列表详情/越权鉴权/记忆文件）、test_metrics_ext（2 个：metrics 暴露新指标/LLM 埋点）。全库 120 个 pytest 全绿，ruff 通过。
+
+---
+编码时间：2026-08-11
+编码内容（描述）：阶段五5.6收尾检查。working_docs.md 末尾按模板补阶段五六要素自查（六项一句话结论）；api-docs.md 补 Agent 运行记录与记忆文件 API（3 接口）；roadmap.md 下方补人工配置/日志说明（docker 部署、端口、监控入口）；Agent_code.md 补 5.1~5.6 编码记录；fixed.md 补缺失接口与测试数据清理记录。

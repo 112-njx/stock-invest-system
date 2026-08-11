@@ -1,0 +1,12 @@
+# Grafana 面板 provisioning：自动加载 JSON 面板
+apiVersion: 1
+providers:
+  - name: default
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

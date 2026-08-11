@@ -1,0 +1,16 @@
+# Prometheus 抓取配置（deploy/docker-compose.yml 挂载）
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # 后端 FastAPI /metrics：API 吞吐/延迟/错误率 + LLM 调用 + 平台级指标（队列/缓存/新鲜度）
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          service: stock-backend

@@ -9,6 +9,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { searchSymbols } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
 import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
 import { useSnapshotPolling } from '@/composables/useSnapshotPolling'
@@ -41,9 +42,28 @@ function onSrChanged() {
   klineRef.value?.refreshSRLines()
 }
 
-onMounted(() => {
-  ensureDefaultSymbol()
+/**
+ * 双向标的联动：AI 页「回测显示」跳转时携带 ?symbol=code，
+ * 若与当前标的不同则解析并切换，保证 K 线区展示的策略回测标的一致。
+ */
+async function resolveSymbolParam() {
+  const q = route.query.symbol
+  if (q == null) return
+  const kw = String(q)
+  if (market.current && (String(market.current.code) === kw || String(market.current.id) === kw)) return
+  try {
+    const list = await searchSymbols(kw)
+    const found = list.find((s) => s.code === kw || String(s.id) === kw)
+    if (found) market.setCurrent(found)
+  } catch {
+    /* 解析失败保持当前标的，不阻塞页面 */
+  }
+}
+
+onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
+  await ensureDefaultSymbol()
+  await resolveSymbolParam()
   start()
 })
 onBeforeUnmount(() => {

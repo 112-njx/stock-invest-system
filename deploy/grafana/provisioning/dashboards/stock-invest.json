@@ -1,0 +1,124 @@
+{
+  "uid": "stock-invest-overview",
+  "title": "Stock Invest Overview",
+  "tags": ["stock", "backtest", "ai"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "API Requests (RPS)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(http_requests_total[1m])) by (method)", "legendFormat": "{{method}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "API Latency p95 (s)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "API 5xx Error Rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m]))",
+          "legendFormat": "5xx rate"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Celery Queue Depth",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "targets": [{ "refId": "A", "expr": "celery_queue_depth", "legendFormat": "{{queue}}" }],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Redis Cache Hit Rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "targets": [{ "refId": "A", "expr": "redis_cache_hit_rate", "legendFormat": "hit rate" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Market Data Freshness (s)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "targets": [{ "refId": "A", "expr": "market_data_freshness_seconds", "legendFormat": "age" }],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "LLM Calls (RPS)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(llm_calls_total[1m])) by (status)", "legendFormat": "{{status}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "LLM Error Rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(llm_calls_total{status=\"failed\"}[10m])) / clamp_min(sum(rate(llm_calls_total[10m])), 1)",
+          "legendFormat": "llm error rate"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Queued Backtest Tasks",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "targets": [{ "refId": "A", "expr": "backtest_queued_tasks", "legendFormat": "queued" }],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    }
+  ]
+}

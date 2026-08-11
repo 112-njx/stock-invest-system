@@ -32,6 +32,18 @@ const UP_COLOR = computed(() => (theme.mode === 'dark' ? '#ef4444' : '#dc2626'))
 const DOWN_COLOR = computed(() => (theme.mode === 'dark' ? '#22c55e' : '#059669'))
 const ACCENT = computed(() => (theme.mode === 'dark' ? '#3b82f6' : '#2563eb'))
 
+/** KDJ K/D/J 序列色：从 CSS 变量读取，随主题切换（明亮主题加深保证可读性） */
+const KDJ = computed(() => {
+  void theme.mode // 建立依赖，主题切换时重算
+  const g = getComputedStyle(document.documentElement)
+  const get = (n: string, fb: string) => g.getPropertyValue(n).trim() || fb
+  return {
+    k: get('--ind-k', '#eab308'),
+    d: get('--ind-d', '#3b82f6'),
+    j: get('--ind-j', '#a855f7'),
+  }
+})
+
 const RECENT = 24
 
 async function load() {
@@ -201,9 +213,9 @@ async function onDeleteSr(item: SupportResistanceItem) {
       <div class="ind-card">
         <div class="ind-card__title">KDJ</div>
         <div class="ind-card__spark kdj">
-          <Sparkline :values="kdjSeries.k" color="#eab308" />
-          <Sparkline :values="kdjSeries.d" color="#3b82f6" />
-          <Sparkline :values="kdjSeries.j" color="#a855f7" />
+          <Sparkline :values="kdjSeries.k" :color="KDJ.k" />
+          <Sparkline :values="kdjSeries.d" :color="KDJ.d" />
+          <Sparkline :values="kdjSeries.j" :color="KDJ.j" />
         </div>
         <div class="ind-card__latest ind-card__latest--multi">
           <span class="kdj-k">K</span> {{ formatPrice(last?.kdj_k, 2) }}
@@ -387,13 +399,13 @@ async function onDeleteSr(item: SupportResistanceItem) {
   text-overflow: ellipsis;
 }
 .kdj-k {
-  color: #eab308;
+  color: var(--ind-k);
 }
 .kdj-d {
-  color: #3b82f6;
+  color: var(--ind-d);
 }
 .kdj-j {
-  color: #a855f7;
+  color: var(--ind-j);
 }
 
 /* 弹窗 */

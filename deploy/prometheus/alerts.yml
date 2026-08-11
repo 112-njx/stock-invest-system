@@ -1,0 +1,43 @@
+# 告警规则（Grafana 面板 + Prometheus 告警）
+groups:
+  - name: stock-invest
+    rules:
+      - alert: ApiErrorRateHigh
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (path)
+            / sum(rate(http_requests_total[5m])) by (path) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "接口 5xx 错误率超过 5%"
+          description: "{{ $labels.path }} 错误率 {{ $value | humanizePercentage }}，持续 5 分钟。"
+
+      - alert: BacktestQueueBacklog
+        expr: celery_queue_depth{queue="backtest"} > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "回测队列积压"
+          description: "backtest 队列积压 {{ $value }} 个任务，持续 5 分钟，可能 worker 未启动或执行缓慢。"
+
+      - alert: MarketDataStale
+        expr: market_data_freshness_seconds > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "行情快照过期"
+          description: "snapshot_realtime 最新快照已超过 {{ $value | humanizeDuration }} 未更新，检查行情同步任务。"
+
+      - alert: LLMErrorRateHigh
+        expr: |
+          sum(rate(llm_calls_total{status="failed"}[10m]))
+            / clamp_min(sum(rate(llm_calls_total[10m])), 1) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM 调用失败率过高"
+          description: "10 分钟内 LLM 失败率 {{ $value | humanizePercentage }}，检查 DeepSeek Key / 熔断状态。"
