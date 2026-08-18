@@ -76,6 +76,10 @@ function onCardClick(card: QuickCardType) {
     ai.setInputText('请帮我创建一个交易策略，我会补充入场想法。')
     return
   }
+  // 点击其余三个卡片时自动收起策略模块（bug4-1）
+  ai.strategyMode = false
+  ai.noSymbolMode = false
+  ai.strategyRules = { entry: false, stop: false, position: false }
   const name = ai.selectedSymbol ? `${ai.selectedSymbol.name}（${ai.selectedSymbol.type}）` : '当前标的'
   ai.setInputText(cardPrompt(card, name))
 }
@@ -180,9 +184,10 @@ onMounted(() => {
     <main class="ai-main">
       <StrategyDetailPanel v-if="ai.mode === 'strategy'" @back="ai.closeStrategy()" />
       <div v-else class="ai-main__chat">
-        <WelcomeHeader />
+        <!-- K 区标题 + L 区功能卡片：仅在无消息（新会话/未发送）时显示，发送后隐藏避免遮挡聊天（bug4-2） -->
+        <WelcomeHeader v-if="!ai.messages.length && !ai.streaming" />
         <ChatMessages class="ai-main__scroll" />
-        <QuickCards @select="onCardClick" />
+        <QuickCards v-if="!ai.messages.length && !ai.streaming" @select="onCardClick" />
         <ChatInput @send="send" />
       </div>
     </main>

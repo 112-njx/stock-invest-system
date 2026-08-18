@@ -86,7 +86,8 @@ onMounted(async () => {
 }
 .market-grid {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 280px;
+  /* 左列 E/G 加宽至 300~320px，保证指数名称完整显示；右列 I 区 260~280px */
+  grid-template-columns: minmax(300px, 320px) minmax(0, 1fr) minmax(260px, 280px);
   grid-template-rows: minmax(0, 1.5fr) minmax(0, 1fr);
   gap: 8px;
   height: 100%;

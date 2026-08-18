@@ -2,6 +2,14 @@
 
 > 记录开发过程中发现并修复的问题（含测试数据事故），方便回溯。
 > 不要删除我对bug的描述，你将在每一个“bug问题描述”标题下按照格式对文档进行补充
+> 如果需要你补充bug问题描述，你将按照以下格式进行补充：
+> 日期：
+> bug问题描述：
+> 解决方案：
+> 例如： 2026-08-11
+>  bug问题描述：行情页原本的设计是进入即可以看到默认上证指数的k线，但是行情页下方的行业指数，包括左下方的大盘指数双击或所有标的都无法看到k线，
+>  包括原本设置的最新价涨跌幅，行业指数关联的ETF，均无法看到在前端显示两条横杠。同样双击后无法看到页面a b c d。
+> 解决方式：补齐固定指数数据，快照 NOT NULL 兜底.行情源降级等等。
 
 ## 2026-08-09 测试误删真实 600519（贵州茅台）
 
@@ -87,3 +95,7 @@
 **修复**：`chat_service.py` 降级条件去掉 `or model is None`，仅按 `not llm_svc.available` 判定；`model is None` 的兜底已由下方 `agent_model = model if model is not None else llm_svc.provider.raw_model` 正确处理（取 provider 默认模型）。新增回归测试 `test_stream_chat_model_none_with_available_not_fallback`：model=None 且 llm 可用时不得降级。全库 121 pytest 全绿。
 
 **教训**：测试注入参数不得混入业务降级判定；可选参数 None 的语义应与「服务不可用」区分，None 应走默认值兜底而非降级。
+
+
+## 2026-08-18
+## bug问题描述：目前后端最大的问题是行情数据获取不清晰

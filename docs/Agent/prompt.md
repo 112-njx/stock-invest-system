@@ -49,7 +49,7 @@ D:\stock-invest-system\docs\project_docs\docs.md中第一版的数据库设计�
   除该文档最上方的文字说明,直接在文字说明下方补充api格式。如果代码有需要我人工配置的地方或者需要说明日志文件的内容，按照
   D:\stock-invest-system\docs\Agent_backend\roadmap.md上方的文字要求将说明补充在该文件下方，同样不要更改文档最上方的文字说明。
   如果你对具体的开发细节不清楚，请停止工作，先问我你疑惑的开发细节，清楚后在进行开发。请你用中文回答我。 在你都清楚之后，我是在本地电脑对前端和后端进行启动并进
-  行测试发现问题的，bug问题描述：（描述问题），修复该问题， 注意你需要在D:\stock-invest-system\docs\Agent_backend\fixed.md的对应区域按照格
+  行测试发现问题的，bug问题描述我在此后会直接发，不加任何额外提示词，注意你需要在D:\stock-invest-system\docs\Agent_backend\fixed.md的对应区域按照格
   式对文档进行补充。
 
 1 行情页原本的设计是进入即可以看到默认上证指数的k线，但是行情页下方的行业指数，包括左下方的大盘指数双击或所有标的都无法看到k线，
@@ -82,6 +82,12 @@ D:\stock-invest-system\docs\project_docs\docs.md中第一版的数据库设计�
   如果你对具体的开发细节不清楚，请停止工作，先问我你疑惑的开发细节，清楚后在进行开发。请你用中文回答我。 在你都清楚之后，我是在本地电脑对前端和后端进行启动并进
   行测试发现问题的，bug问题描述：(这里是问题描述)，修复该问题， 注意你需要在D:\stock-invest-system\docs\Agent\system_bug_fixed.md的对应区域按照格
   式补充bug修复说明。
+
+项目架构工程师：
+0 你将担任该项目的架构工程师。首先阅读D:\stock-invest-system\docs\Agent\memory.md中的记忆文件，确保你可以迅速上手项目。
+  D:\stock-invest-system\docs\project_docs\docs.md是项目的详细需求文档。其次你看到文件夹Agent_frontend和Agent_backend等，
+  其中的md文件说明了他们的作用，目前所有的接口以及前端均已开发完毕。假如你未来你将要在其中补充文字。注意不要修改这两个文件夹的md文件中我的说明文字，在此基础上添加即可。
+  请你用中文回答我。 在你都清楚之后，你将帮我回复关于项目架构的若干问题。
 
 1docker容器部署报错
 （1）在开发阶段，我们不使用D:\stock-invest-system\deploy\docker-compose.yml进行在容器中的上线,如果问题较多,多次更改前端后端文件会导致大量容器文件残留,

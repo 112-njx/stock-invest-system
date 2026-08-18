@@ -134,7 +134,7 @@ onMounted(load)
     <div class="watchlist-panel__list">
       <div v-if="loading" class="watchlist-panel__empty">加载中…</div>
       <div v-else-if="!displayList.length" class="watchlist-panel__empty">
-        暂无重点关注，可在下方搜索添加
+        {{ readonly ? '暂无重点关注，可在上方菜单搜索添加' : '暂无重点关注，可在下方搜索添加' }}
       </div>
       <template v-else>
         <ListRow

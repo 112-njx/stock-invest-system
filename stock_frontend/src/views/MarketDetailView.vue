@@ -1,10 +1,9 @@
 <script setup lang="ts">
 /**
- * 行情页 · 第一层（A/B/C/D 区）：
- * - A K 线图（KLineChart，含成交量副图与周期切换）
- * - B 技术指标（IndicatorPanel，支撑/压力位设置联动 A 区横线）
- * - C 基本数据（BasicInfoPanel）
- * - D 重点关注列表（WatchlistPanel，行点击切换 A 区标的）
+ * 行情页 · 第一层（A+B/C/D 区）：
+ * - A+B 区：KLineChart（蜡烛图主图 + 技术指标多 pane，共享时间轴同步缩放）
+ * - C 区：基本数据（BasicInfoPanel）
+ * - D 区：重点关注列表（WatchlistPanel，行点击切换标的）/ 回测策略指标（StrategyMetricsPanel）
  * - 交互：Esc / 左上角按钮退出返回 /market；轮询刷新实时行情
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
@@ -14,7 +13,6 @@ import { useMarketStore } from '@/stores/market'
 import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
 import { useSnapshotPolling } from '@/composables/useSnapshotPolling'
 import KLineChart from '@/components/trading/KLineChart.vue'
-import IndicatorPanel from '@/components/trading/IndicatorPanel.vue'
 import BasicInfoPanel from '@/components/trading/BasicInfoPanel.vue'
 import WatchlistPanel from '@/components/trading/WatchlistPanel.vue'
 import StrategyMetricsPanel from '@/components/trading/StrategyMetricsPanel.vue'
@@ -35,11 +33,6 @@ function goBack() {
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') goBack()
-}
-
-/** B 区添加/删除支撑压力位后，刷新 A 区 K 线横线 */
-function onSrChanged() {
-  klineRef.value?.refreshSRLines()
 }
 
 /**
@@ -80,8 +73,13 @@ onBeforeUnmount(() => {
 
     <div class="detail-body">
       <div class="col-left">
-        <KLineChart ref="klineRef" :symbol="market.current" />
-        <IndicatorPanel @sr-changed="onSrChanged" />
+        <!-- A+B 合并：K 线 + 技术指标多 pane，共享时间轴 -->
+        <KLineChart
+          ref="klineRef"
+          :symbol="market.current"
+          :show-sr-button="true"
+          :show-indicators="true"
+        />
       </div>
       <div class="col-right">
         <BasicInfoPanel />
@@ -136,9 +134,9 @@ onBeforeUnmount(() => {
 }
 .col-left {
   min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(0, 1.7fr) minmax(0, 1fr);
-  gap: 8px;
+  min-width: 0;
+  /* A+B 合并为单个 KLineChart，占满左侧 */
+  display: block;
 }
 .col-right {
   min-height: 0;

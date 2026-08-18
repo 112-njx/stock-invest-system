@@ -27,7 +27,7 @@ defineProps<{ message: ChatMessage }>()
   padding: 8px 0;
 }
 .chat-msg--user {
-  flex-direction: row-reverse;
+  justify-content: flex-end;
 }
 .chat-msg__avatar {
   flex: none;
@@ -52,6 +52,10 @@ defineProps<{ message: ChatMessage }>()
   flex: 1;
   min-width: 0;
   max-width: 82%;
+}
+/* 用户消息 row-reverse 下 body 不拉伸，气泡靠右（bug4-3） */
+.chat-msg--user .chat-msg__body {
+  flex: none;
 }
 .chat-msg__user {
   display: inline-block;

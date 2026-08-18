@@ -27,6 +27,8 @@
   --ind-k: #eab308;
   --ind-d: #3b82f6;
   --ind-j: #a855f7;
+  --ind-dif: #3b82f6;
+  --ind-dea: #f59e0b;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   color-scheme: dark;
 }
@@ -52,6 +54,8 @@
   --ind-k: #ca8a04;
   --ind-d: #2563eb;
   --ind-j: #7c3aed;
+  --ind-dif: #2563eb;
+  --ind-dea: #d97706;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   color-scheme: light;
 }

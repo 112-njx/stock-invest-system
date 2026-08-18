@@ -118,14 +118,17 @@ function onDblClick(s: SymbolInfo) {
 .index-panel__cols > span:nth-child(1) {
   flex: 1;
   min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .index-panel__cols > span:nth-child(2) {
   flex: none;
-  width: 66px;
+  width: 58px;
 }
 .index-panel__cols > span:nth-child(3) {
   flex: none;
-  width: 60px;
+  width: 54px;
 }
 .index-panel__cols > span:nth-child(4) {
   flex: none;
@@ -133,7 +136,7 @@ function onDblClick(s: SymbolInfo) {
 }
 .index-panel__cols > span:nth-child(5) {
   flex: none;
-  width: 32px;
+  width: 30px;
 }
 .index-panel__list {
   flex: 1;
@@ -155,13 +158,17 @@ function onDblClick(s: SymbolInfo) {
 }
 .idx-price {
   flex: none;
-  width: 66px;
+  width: 58px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .idx-pct {
   flex: none;
-  width: 60px;
+  width: 54px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .idx-etf {
   flex: none;
@@ -169,12 +176,15 @@ function onDblClick(s: SymbolInfo) {
   font-size: 11px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .idx-opp {
   flex: none;
-  width: 32px;
+  width: 30px;
   font-size: 11px;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 .ta-r {
   text-align: right;
