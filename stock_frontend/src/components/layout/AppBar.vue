@@ -1,19 +1,11 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
-import { useUserStore } from '@/stores/user'
+/**
+ * 顶部导航栏：品牌 + 路由 + 主题切换。
+ * 优化1：删除顶部用户头像/用户名和退出按钮，统一收归行情页 I 区用户 Cell 下拉菜单。
+ */
 import { useThemeStore } from '@/stores/theme'
-import { toast } from '@/utils/toast'
-import BaseButton from '@/components/base/BaseButton.vue'
 
-const router = useRouter()
-const user = useUserStore()
 const theme = useThemeStore()
-
-function onLogout() {
-  user.logout()
-  toast.info('已退出登录')
-  router.push({ name: 'login' })
-}
 </script>
 
 <template>
@@ -36,13 +28,6 @@ function onLogout() {
       >
         {{ theme.mode === 'dark' ? '☀' : '🌙' }}
       </button>
-
-      <div class="user-chip" :title="user.displayName">
-        <span class="user-chip__avatar">{{ user.avatarText }}</span>
-        <span class="user-chip__name">{{ user.displayName || '未登录' }}</span>
-      </div>
-
-      <BaseButton variant="ghost" size="sm" @click="onLogout">退出</BaseButton>
     </div>
   </header>
 </template>
@@ -120,33 +105,5 @@ function onLogout() {
 .icon-btn:hover {
   background: var(--bg-hover);
   color: var(--text);
-}
-.user-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 10px 3px 3px;
-  border-radius: 16px;
-  background: var(--bg-hover);
-}
-.user-chip__avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-}
-.user-chip__name {
-  font-size: 12px;
-  color: var(--text-secondary);
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

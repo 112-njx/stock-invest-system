@@ -5,6 +5,7 @@
 """
 
 import logging
+import re
 import time
 from datetime import UTC, datetime
 
@@ -23,6 +24,11 @@ _BOARD_PERIOD = {"1d": "日k", "1w": "周k", "1mon": "月k"}
 _MIN_PERIODS = ("15m",)
 # 国内指数实时分类（覆盖固定大盘指数）
 _INDEX_CATEGORIES = ("上证系列指数", "深证系列指数", "中证系列指数", "沪深系列指数")
+# 乐咕乐股 stock_index_pe_lg 可覆盖的固定大盘指数（其余指数/海外指数无 PE 数据源，留空显示 "--"）
+_INDEX_PE_SOURCE = {"沪深300", "上证50", "中证1000"}
+# 行业板块名匹配：分类后缀（东财三级行业带罗马数字）与最低置信阈值
+_ROMAN_SUFFIX = re.compile(r"[ⅠⅡⅢⅣⅤ]+$")
+_MIN_INDUSTRY_SCORE = 75
 
 
 class EastMoneyProvider(BaseDataProvider):
@@ -266,7 +272,8 @@ class EastMoneyProvider(BaseDataProvider):
         if asset_type == "index":
             return self._fetch_index_realtime(items)
         if asset_type == "industry_index":
-            df = self._call(ak.stock_board_industry_name_em, retry_times=1)
+            # 板块实时接口偶发限流，retry 提升至 2 保证最新价/涨跌幅可获取
+            df = self._call(ak.stock_board_industry_name_em, retry_times=2)
             if df is None or df.empty:
                 return [_unavailable(s) for s in items]
             return [_map_industry_spot(df, s) for s in items]
@@ -291,10 +298,49 @@ class EastMoneyProvider(BaseDataProvider):
             quotes.append(q)
         return quotes
 
+    # ---- 指数 PE（乐咕乐股，best-effort）----
+    def fetch_index_pe(self, names: list[str]) -> dict[str, float | None]:
+        """固定大盘指数最新 PE（仅乐咕可覆盖的 A 股指数，其余返回 None 留空）。
+
+        取最新交易日"滚动市盈率"；外部源失败/无数据返回 None，不阻塞实时轮询主链路。
+        """
+        result: dict[str, float | None] = {}
+        for name in names:
+            if name not in _INDEX_PE_SOURCE:
+                result[name] = None
+                continue
+            try:
+                df = self._call(self._ak.stock_index_pe_lg, symbol=name)
+                pe: float | None = None
+                if df is not None and not df.empty:
+                    df = df.sort_values("日期", ascending=False)
+                    for _, row in df.iterrows():
+                        v = _to_float(row.get("滚动市盈率"))
+                        if v is not None:
+                            pe = v
+                            break
+                result[name] = pe
+                logger.info("index_pe %s -> %s", name, pe)
+            except Exception:  # noqa: BLE001
+                logger.warning("index_pe %s failed (best-effort skip)", name)
+                result[name] = None
+        return result
+
     # ---- 行业指数 code 回填 ----
     def resolve_index_code(self, name: str) -> str | None:
+        """行业名称 → 东财板块代码（BKxxxx）：先精确，后评分模糊匹配（与实时快照同套逻辑）。"""
         board_map = self._board_map()
-        return board_map.get(name)
+        if not board_map:
+            return None
+        if name in board_map:
+            return board_map[name]
+        best_code: str | None = None
+        best_score = _MIN_INDUSTRY_SCORE
+        for em, code in board_map.items():
+            score = _industry_score(name, em)
+            if score > best_score:
+                best_score, best_code = score, code
+        return best_code
 
     def _board_map(self) -> dict[str, str]:
         now = time.time()
@@ -441,6 +487,14 @@ def _map_spot(df: pd.DataFrame, s: RealtimeSymbol, match_by_name: bool = False) 
             available=True,
         )
         q.updated_at = _parse_quote_time(row)
+        # 特殊字段提取（个股总市值/PE、ETF 净值/溢价），供同步层写入 stock_fundamentals/etf_premiums
+        if s.asset_type == "stock":
+            q.extra["market_cap"] = _to_float(row.get("总市值")) if "总市值" in row.index else None
+            q.extra["pe"] = _to_float(row.get("市盈率-动态")) if "市盈率-动态" in row.index else None
+        elif s.asset_type == "etf":
+            q.extra["nav"] = _to_float(row.get("IOPV实时估值")) if "IOPV实时估值" in row.index else None
+            _disc = _to_float(row.get("基金折价率")) if "基金折价率" in row.index else None
+            q.extra["premium"] = -_disc if _disc is not None else None  # 溢价率 = -折价率
         return q
     except Exception:  # noqa: BLE001
         return q
@@ -449,7 +503,7 @@ def _map_spot(df: pd.DataFrame, s: RealtimeSymbol, match_by_name: bool = False) 
 def _map_industry_spot(df: pd.DataFrame, s: RealtimeSymbol) -> RealtimeQuote:
     q = _unavailable(s)
     try:
-        hit = df[df["板块名称"].astype(str).str.strip() == s.name.strip()]
+        hit = _match_industry_row(df, s)
         if hit.empty:
             return q
         row = hit.iloc[0]
@@ -465,6 +519,56 @@ def _map_industry_spot(df: pd.DataFrame, s: RealtimeSymbol) -> RealtimeQuote:
         )
     except Exception:  # noqa: BLE001
         return q
+
+
+def _industry_score(name: str, em_name: str) -> int:
+    """行业板块名相似度评分（通用模糊匹配，不硬编码具体名称，数据源可扩展）。
+
+    规则：精确相等 > 剥离罗马数字分类后缀（Ⅲ/Ⅱ）后相等 > 前后缀包含（长度差≤3，允许"加工/概念/及服务"等修饰）>
+    否定词（"非"开头，如"非白酒"）强惩罚 → 低置信度宁可不匹配（返回 None 显示 "--"）。
+    """
+    name, em_name = name.strip(), em_name.strip()
+    if not name or not em_name:
+        return 0
+    if name == em_name:
+        return 100
+    base = _ROMAN_SUFFIX.sub("", em_name)
+    if name == base:
+        return 95
+    # 2 字短词（消费/军工/汽车等）前缀匹配极易误配（消费→消费电子、汽车→汽车整车），仅允许精确/去后缀匹配
+    shorter, longer = (name, base) if len(name) <= len(base) else (base, name)
+    if longer.startswith(shorter) and len(longer) - len(shorter) <= 3 and len(shorter) >= 3:
+        score = 80  # 前后缀包含（如 煤炭开采加工↔煤炭开采、油气开采及服务↔油气开采Ⅲ）
+    elif shorter in longer or longer in shorter:
+        score = 60  # 互为子串（置信偏低，仅作为保留得分）
+    else:
+        score = 0
+    if em_name.startswith("非"):
+        score -= 40  # 否定前缀板块（非白酒/非金属）绝不匹配
+    return score
+
+
+def _match_industry_row(df: pd.DataFrame, s: RealtimeSymbol) -> pd.DataFrame:
+    """行业板块定位：板块代码（BKxxxx）精确 → 名称精确 → 评分模糊匹配（全部候选取最高分，低于阈值不匹配）。
+
+    种子行业名称与数据源板块名可能不一致（粒度/后缀差异），但不可硬编码映射（数据源可能扩展），
+    故用通用评分匹配；语义差异大且无对应板块的行业（如"创新药"）诚实返回空 → 前端显示 "--"。
+    """
+    if "板块代码" in df.columns and s.code:
+        hit = df[df["板块代码"].astype(str).str.strip() == s.code.strip()]
+        if not hit.empty:
+            return hit
+    if "板块名称" not in df.columns:
+        return df.iloc[0:0]
+    name = s.name.strip()
+    hit = df[df["板块名称"].astype(str).str.strip() == name]
+    if not hit.empty:
+        return hit
+    scores = df["板块名称"].astype(str).str.strip().map(lambda em: _industry_score(name, em))
+    best = scores.max() if not scores.empty else 0
+    if best < _MIN_INDUSTRY_SCORE:
+        return df.iloc[0:0]
+    return df[scores == best].head(1)
 
 
 def _parse_quote_time(row: pd.Series) -> datetime | None:

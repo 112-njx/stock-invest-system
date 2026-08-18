@@ -96,6 +96,77 @@
 
 **教训**：测试注入参数不得混入业务降级判定；可选参数 None 的语义应与「服务不可用」区分，None 应走默认值兜底而非降级。
 
+## 2026-08-18
+## bug问题描述：目前后端最大的问题是行情数据获取不清晰。
+## v0.1版本前端无法正常显示的数据：
+## （1）大盘指数右侧的成交量成交额，指数PE。
+## （2）行情页行业指数最新价涨跌幅
+## （3）行情详细页行业指数右方基本数据全部。
+
+**现象**：行情页大盘指数成交量/成交额、指数 PE，行业指数最新价/涨跌幅，详情页行业指数 C 区基本数据均无法显示（"--"/空）；本地库 `stock_fundamentals`/`etf_premiums`/`index_valuations` 三张特殊字段表均为 0 行。
+
+**根因**（复述）：
+1. **大盘指数成交量**：`stock_zh_index_spot_em`（国内4分类）有成交量列，但 `index_global_spot_em`（海外指数）无此字段；`_map_spot` 对缺失列返回 None，经 `snapshot_repo._not_null` 写 0，前端显示 0 而非 "--"，无法区分"真实零成交"与"数据缺失"。
+2. **指数PE**：`index_valuations` 表已建、`snapshot_repo.upsert_index_valuation` 方法已写，但 `sync_service.run_realtime_poll()` 同步流程中从未调用；同理 `stock_fundamentals`（个股总市值/PE）、`etf_premiums`（ETF净值/溢价）也未在同步中填充。
+3. **行业指数最新价涨跌幅**：`_map_industry_spot` 按名称精确匹配，种子行业名与东财板块名不一致即 available=False 被跳过；实测 35 个行业 code 全部未回填、仅 16 个名称精确命中东财板块；且实时快照 `retry_times=1`，被限流无重试。
+4. **行业指数基本数据**：`stock_board_industry_name_em` 实时接口仅返回最新价/涨跌额/涨跌幅/换手率 4 字段，无昨收/今开/最高/最低/成交量/振幅，C 区基本数据大部分为空。
+
+**修复**（实际实施）：
+1. **大盘指数成交量/成交额**：Alembic 迁移 0003 将 `snapshot_realtime.volume/amount` 改为 nullable（保留 DEFAULT 0）；`snapshot_repo.upsert_snapshot` 对 volume/amount 不再 `_not_null` 兜底，数据源缺失列保持 NULL 写入，前端 `formatAmount(NULL)` 显示 "--"（海外指数无成交量属数据源正常，非 bug）。
+2. **特殊字段纳入同步主链路**（`sync_service.run_realtime_poll`）：
+   - 个股总市值/PE：`_map_spot` 从 `stock_zh_a_spot_em` 的"总市值""市盈率-动态"列提取到 quote.extra → `upsert_fundamentals`；
+   - ETF净值/溢价：从 `fund_etf_spot_em` 的"IOPV实时估值""基金折价率"（溢价率=-折价率）提取 → `upsert_etf_premium`；
+   - 指数PE：新增 `EastMoneyProvider.fetch_index_pe`，用乐咕 `stock_index_pe_lg` 取最新"滚动市盈率" → `upsert_index_valuation`。
+3. **行业指数匹配改为通用评分模糊匹配**（不硬编码映射，数据源可扩展）：板块代码 BKxxxx 精确优先 → 名称精确 → 评分匹配（剥离罗马数字分类后缀 Ⅲ/Ⅱ、前后缀包含长度差≤3 且仅限≥3字词、否定前缀"非"强惩罚、阈值 75，全部候选取最高分）。真实东财板块列表（491 个）离线验证：35 行业 23 个正确匹配（白酒→白酒Ⅲ、游戏→游戏Ⅲ、证券→证券Ⅲ、煤炭开采加工→煤炭开采等），10 个无对应板块诚实显示 "--"（创新药/文化传媒/军工/消费/细分化工/农业种植/猪肉/港口航运/公路铁路运输/汽车整车）；并避免"白酒→非白酒""消费→消费电子"误配。`resolve_index_code` 复用评分逻辑使行业 code 可回填（BKxxxx），回填后实时/K线同步优先 code。实时接口 `retry_times` 1→2。
+4. **行业指数基本数据 K 线推导**：`run_realtime_poll` 对 industry_index 类型补充——昨收=前一根日K close，今开/最高/最低/量/额=最新根，振幅=(high-low)/pre_close×100，推导后写入 quote 再 `upsert_snapshot`。
+
+**与上方案的差异**：① `index_value_hist_funddb` 在 akshare 1.18.83 不存在，指数PE 改用 `stock_index_pe_lg`（仅覆盖 沪深300/上证50/中证1000，其余指数无 PE 数据源显示 "--"）；② 行业名称不硬编码修正种子，改为通用评分模糊匹配（对齐"不编造、数据源可扩展"原则），部分语义无对应行业诚实 "--"。
+
+**验证**：全库 133 pytest 全绿（新增 12 个：评分匹配规则、否定/过长拒绝、行业K线推导、特殊字段落库、海外指数 NULL 落库、指数PE、code 回填），ruff 通过；迁移 0003 已应用。真实端到端触发 `run_realtime_poll` 代码链路无异常，但东财实时接口当前限流（`RemoteDisconnected`，synced=0），限流冷却后重跑实时同步（beat/`realtime_poll`）即生效。
+
+**教训**：指数/行业板块与个股/ETF 数据源字段完整度本质不同，同步层须按资产类型字段补全（K线推导）或显式置空（NULL），不可用 0 兜底掩盖数据缺失；特殊字段表不能只建表写方法而不在同步主链路调用；中文行业名不可靠简单字面模糊匹配（易"白酒→非白酒"误配），须评分 + 否定惩罚 + 低置信度诚实留空，且不硬编码映射以保数据源可扩展。
+
 
 ## 2026-08-18
-## bug问题描述：目前后端最大的问题是行情数据获取不清晰
+## bug问题描述：目前后端最大的问题是行情数据获取不清晰。
+## v0.1版本前端无法正常显示的数据：
+## （1）大盘指数右侧的成交量成交额，指数PE。
+## （2）行情页行业指数最新价涨跌幅
+## （3）行情详细页行业指数右方基本数据全部。
+
+**根因**：
+1. **大盘指数成交量**：`stock_zh_index_spot_em`（国内4分类）返回成交量列，但 `index_global_spot_em`（海外指数如道琼斯/纳斯达克）无此字段；`_map_spot` 对缺失列返回 None，经 `snapshot_repo._not_null` 写 0，前端显示 0 而非 "--"，无法区分"真实零成交"与"数据缺失"。
+2. **指数PE**：`index_valuations` 表已建、`snapshot_repo.upsert_index_valuation` 方法已写，但 `sync_service.run_realtime_poll()` 同步流程中**从未调用**，指数PE数据完全缺失；同理 `stock_fundamentals`（个股总市值/PE）、`etf_premiums`（ETF净值/溢价）也未在同步中填充。
+3. **行业指数最新价涨跌幅**：`_map_industry_spot` 按 `s.name` 与"板块名称"**精确匹配**，种子 SQL 中行业名称与东方财富返回的板块名称可能不一致（如"光学光电子"vs"光学光电"、"油气开采及服务"vs"油气开采"），匹配失败即 `available=False` 被跳过；且实时快照调用 `retry_times=1`，行业板块接口被限流后无重试机会。
+4. **行业指数基本数据**：`stock_board_industry_name_em` 实时接口仅返回最新价/涨跌额/涨跌幅/换手率4个字段，**无昨收/今开/最高/最低/成交量/振幅**，`_map_industry_spot` 未对缺失字段做任何补全，导致 C 区基本数据大部分为空。
+
+**修复**：
+1. **大盘指数成交量**：`_map_spot` 中对指数类标 volume 缺失时保持 None（不经过 `_not_null` 写 0），`snapshot_realtime` 表对应列允许 NULL，前端 `formatAmount(None)` 显示 "--"；海外指数无成交量属数据源正常现象。
+2. **指数PE及特殊字段**：同步流程新增特殊字段填充——指数PE用 akshare `index_value_hist_funddb` / `stock_index_pe_lg` 取最新估值调 `upsert_index_valuation`；个股总市值/PE 从 `stock_zh_a_spot_em` 返回列（"总市值""市盈率-动态"）提取放入 `quote.extra` 后调 `upsert_fundamentals`；ETF净值/溢价从 `fund_etf_spot_em` 返回列提取调 `upsert_etf_premium`。
+3. **行业指数最新价涨跌幅**：`_map_industry_spot` 增加子串模糊匹配兜底（精确匹配失败后用名称前2-3字 `str.contains` 匹配，与指数 `_map_spot` 的 match_by_name 逻辑对齐）；行业指数实时接口 `retry_times` 从 1 改为 2~3；首次部署时运行 `stock_board_industry_name_em` 输出真实板块名称，与种子 SQL 中35个行业名称逐一比对修正。
+4. **行业指数基本数据**：在 `sync_service.run_realtime_poll` 中对 `industry_index` 类型补充 K 线推导——取该标的最新一根日K填充：昨收=前一根 close，今开/最高/最低=最新根 open/high/low，成交量=最新根 volume，振幅=(high-low)/pre_close×100；推导字段写入 `quote` 后再 `upsert_snapshot`，保证 C 区基本数据完整。
+
+**教训**：指数/行业板块与个股/ETF 的数据源字段完整度本质不同，同步层须按资产类型做字段补全（K线推导）或显式置空（NULL），不可用 0 兜底掩盖数据缺失；特殊字段表（PE/市值/溢价）不能只建表写方法而不在同步流程中调用，须纳入 `run_realtime_poll` 主链路。
+---
+
+## 2026-08-18
+## bug问题描述：技术指标 Redis 缓存 key 包含动态 start/end 时间，导致缓存命中率几乎为 0，每次进入详情页都要重新查 K 线 + pandas 计算，前端等待明显。
+
+**现象**：前端进入行情详情页后，技术指标区域每次都要等待数百毫秒到 1 秒才显示；即使同一标的同一周期短时间内反复进入，也无法命中 Redis 缓存，始终走全量计算流程。
+
+**根因**：pp/services/indicator_service.py 的 _cache_key 将 start.isoformat() 和 end.isoformat() 纳入缓存 key，而 compute_indicators 中 end 默认取 datetime.now(UTC)、start 默认取 end - 365天，每次请求这两个值都不同 → 缓存 key 每次都不同 → 即使 K 线最新 ts 未变、指标结果完全一致，也无法命中之前的缓存。Redis TTL=300 秒形同虚设。
+
+**修复**：_cache_key 移除 start 和 end 两段，key 仅保留 symbol_id + period + names_sorted + params_hash + limit + latest_ts。指标结果由 K 线数据决定，查询窗口不影响结果（limit 已在 key 中），latest_ts 已能保证新数据到达时自动失效。修改后同一标的同一周期在 K 线未更新时可稳定命中缓存，第二次访问毫秒级返回。
+
+**教训**：缓存 key 只应包含影响结果的变量，动态时间戳（now）不得直接纳入 key，否则缓存永远不命中；时间窗口应通过 latest_ts 等数据版本标记间接体现。
+
+## 2026-08-18
+## 优化方案：技术指标加载性能优化（后端侧）
+
+**背景**：v0.1 前端反馈进入详情页后技术指标等待时间长。除上述缓存 key 缺陷外，后端侧还有以下可优化点：
+
+1. **指标预热（Celery 定时任务）**：对用户关注列表（watchlist）中的标的，在 
+ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户首次访问即可命中缓存。实现方式：sync_service 在 K 线增量同步成功后调用 indicator_service.compute_indicators（静默预热，失败不阻塞主链路），或新增独立 beat 任务每 5 分钟对热门标的预热。
+2. **计算结果增量更新**：当前每次缓存失效都重算全部历史指标。可改为仅对最新一根 K 线增量计算 MACD/KDJ（指标递推公式），历史结果复用缓存，降低计算量。
+3. **批量指标接口**：当前前端每次只查一个标的，可新增 POST /api/v1/indicators/batch 支持一次查多个标的，减少首页 F 区切换标的时的请求次数。
+

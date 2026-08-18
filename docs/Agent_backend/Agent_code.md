@@ -115,3 +115,7 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-08-11
 编码内容（描述）：阶段五5.6收尾检查。working_docs.md 末尾按模板补阶段五六要素自查（六项一句话结论）；api-docs.md 补 Agent 运行记录与记忆文件 API（3 接口）；roadmap.md 下方补人工配置/日志说明（docker 部署、端口、监控入口）；Agent_code.md 补 5.1~5.6 编码记录；fixed.md 补缺失接口与测试数据清理记录。
+
+---
+编码时间：2026-08-18
+编码内容（描述）：行情数据获取修复（测试工程师）。① Alembic 0003 迁移 snapshot_realtime.volume/amount 改 nullable（海外指数无成交量存 NULL、前端显示"--"，区分"缺失"与"真实零"），upsert_snapshot 不再 _not_null 兜底 volume/amount；② 特殊字段纳入 run_realtime_poll 主链路：个股总市值/PE 取自 stock_zh_a_spot_em、ETF净值/溢价取自 fund_etf_spot_em（溢价=-折价率）、指数PE 新增 provider.fetch_index_pe（乐咕 stock_index_pe_lg 覆盖沪深300/上证50/中证1000），落 stock_fundamentals/etf_premiums/index_valuations；③ 行业指数匹配改通用评分模糊匹配（BK code优先→名称精确→剥离罗马后缀→前后缀差≤3且仅≥3字词→否定词惩罚，阈值75，不硬编码映射），35行业23个正确匹配、10个无对应板块诚实"--"；④ 行业指数基本数据用日K推导补全（昨收=前根close/OHLC/量/额/振幅）。全库 133 pytest 全绿，ruff 通过。

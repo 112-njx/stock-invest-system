@@ -40,14 +40,15 @@ class MockAk:
 
     @staticmethod
     def stock_board_industry_name_em():
+        # "油气开采" 模拟种子名"油气开采及服务"与东财板块名不完全一致的场景
         return pd.DataFrame(
             {
-                "板块代码": ["BK0447", "BK1036"],
-                "板块名称": ["半导体", "通信设备"],
-                "最新价": [2000.0, 1500.0],
-                "涨跌额": [20.0, -10.0],
-                "涨跌幅": [1.01, -0.66],
-                "换手率": [1.5, 0.8],
+                "板块代码": ["BK0447", "BK1036", "BK0426"],
+                "板块名称": ["半导体", "通信设备", "油气开采"],
+                "最新价": [2000.0, 1500.0, 3000.0],
+                "涨跌额": [20.0, -10.0, 5.0],
+                "涨跌幅": [1.01, -0.66, 0.17],
+                "换手率": [1.5, 0.8, 0.9],
             }
         )
 
@@ -68,6 +69,38 @@ class MockAk:
                 "成交额": [7.2e9, 1.1e9],
                 "换手率": [0.8, 0.5],
                 "振幅": [1.5, 3.2],
+                "总市值": [1.7e12, 2.4e11],
+                "市盈率-动态": [25.3, 5.2],
+            }
+        )
+
+    @staticmethod
+    def fund_etf_spot_em():
+        return pd.DataFrame(
+            {
+                "代码": ["510300", "159915"],
+                "名称": ["沪深300ETF", "创业板ETF"],
+                "最新价": [4.2, 2.6],
+                "IOPV实时估值": [4.19, 2.61],
+                "基金折价率": [-0.24, 0.38],  # 负=溢价，正=折价
+                "涨跌额": [0.01, 0.02],
+                "涨跌幅": [0.24, 0.78],
+                "成交量": [5000000, 3000000],
+                "成交额": [2.1e7, 7.8e6],
+            }
+        )
+
+    @staticmethod
+    def stock_index_pe_lg(symbol="沪深300"):
+        return pd.DataFrame(
+            {
+                "日期": ["2026-08-17", "2026-08-14"],
+                "指数": [symbol, symbol],
+                "等权静态市盈率": [11.2, 11.0],
+                "静态市盈率": [10.8, 10.6],
+                "等权滚动市盈率": [13.1, 12.9],
+                "滚动市盈率": [12.5, 12.3],
+                "滚动市盈率中位数": [12.8, 12.7],
             }
         )
 
@@ -163,4 +196,91 @@ def test_fetch_realtime_industry_index():
 def test_resolve_index_code_by_name():
     p = _provider()
     assert p.resolve_index_code("半导体") == "BK0447"
+    assert p.resolve_index_code("油气开采及服务") == "BK0426"  # 评分模糊匹配回填 code
     assert p.resolve_index_code("不存在") is None
+
+
+def test_fetch_realtime_stock_extracts_fundamentals():
+    p = _provider()
+    quotes = p.fetch_realtime([RealtimeSymbol(code="600519", name="贵州茅台", asset_type="stock")])
+    assert quotes[0].extra["market_cap"] == 1.7e12
+    assert quotes[0].extra["pe"] == 25.3
+
+
+def test_fetch_realtime_etf_extracts_premium():
+    p = _provider()
+    quotes = p.fetch_realtime([RealtimeSymbol(code="510300", name="沪深300ETF", asset_type="etf")])
+    assert quotes[0].extra["nav"] == 4.19
+    assert quotes[0].extra["premium"] == 0.24  # 基金折价率 -0.24 → 溢价率 +0.24
+
+
+def test_fetch_realtime_overseas_index_volume_none():
+    p = _provider()
+    # 海外指数 index_global_spot_em 无"成交量/额"列，volume/amount 应为 None（而非 0）
+    quotes = p.fetch_realtime([RealtimeSymbol(code="DJI", name="道琼斯指数", asset_type="index")])
+    assert quotes[0].available is True
+    assert quotes[0].volume is None
+    assert quotes[0].amount is None
+
+
+def test_fetch_realtime_industry_fuzzy_match():
+    p = _provider()
+    # 种子名"油气开采及服务"与东财板块名"油气开采"不一致，用名称前3字子串兜底匹配
+    quotes = p.fetch_realtime([RealtimeSymbol(code="", name="油气开采及服务", asset_type="industry_index")])
+    assert quotes[0].available is True
+    assert quotes[0].price == 3000.0
+
+
+def test_fetch_realtime_industry_code_match():
+    p = _provider()
+    # 板块 code 已回填（BKxxxx）时优先按板块代码精确匹配，名称不一致也能命中
+    quotes = p.fetch_realtime([RealtimeSymbol(code="BK1036", name="通信设备(名称不一致)", asset_type="industry_index")])
+    assert quotes[0].available is True
+    assert quotes[0].price == 1500.0
+
+
+def test_fetch_index_pe_covered_and_uncovered():
+    p = _provider()
+    result = p.fetch_index_pe(["沪深300", "上证50", "道琼斯指数", "现货黄金"])
+    assert result["沪深300"] == 12.5  # 取最新日期"滚动市盈率"
+    assert result["上证50"] == 12.5
+    assert result["道琼斯指数"] is None  # 不在乐咕覆盖范围
+    assert result["现货黄金"] is None
+
+
+def test_industry_score_rules():
+    """通用评分模糊匹配：正确匹配分类后缀/前后缀差异，拒绝否定词与过长扩展。"""
+    from app.data_providers.eastmoney import _industry_score
+
+    # 正确匹配（≥阈值 75）
+    assert _industry_score("通信设备", "通信设备") == 100
+    assert _industry_score("游戏", "游戏Ⅲ") >= 75      # 剥离罗马后缀
+    assert _industry_score("证券", "证券Ⅱ") >= 75
+    assert _industry_score("煤炭开采加工", "煤炭开采") >= 75   # seed 是板块名前缀扩展
+    assert _industry_score("油气开采及服务", "油气开采") >= 75
+    # 拒绝误匹配（< 阈值）
+    assert _industry_score("白酒", "非白酒") < 75          # 否定前缀
+    assert _industry_score("消费", "消费电子零部件及组装") < 75  # 扩展过长
+    assert _industry_score("消费", "消费电子") < 75         # 2字短词前缀误配（消费≠消费电子）
+    assert _industry_score("军工", "军工电子") < 75         # 2字短词前缀误配
+    assert _industry_score("创新药", "化学制药") < 75       # 无语义/字面关联
+
+
+def test_map_industry_rejects_bad_name_match():
+    """板块名与种子行业语义不符（否定/过长扩展）时不得匹配，诚实返回不可用。"""
+    from app.data_providers.eastmoney import _map_industry_spot
+
+    df = pd.DataFrame(
+        {
+            "板块代码": ["BK1001", "BK1002"],
+            "板块名称": ["非白酒", "消费电子零部件及组装"],
+            "最新价": [1000.0, 2000.0],
+            "涨跌额": [1.0, 2.0],
+            "涨跌幅": [0.1, 0.2],
+            "换手率": [0.5, 0.6],
+        }
+    )
+    q1 = _map_industry_spot(df, RealtimeSymbol(name="白酒", asset_type="industry_index"))
+    assert q1.available is False
+    q2 = _map_industry_spot(df, RealtimeSymbol(name="消费", asset_type="industry_index"))
+    assert q2.available is False

@@ -12,7 +12,6 @@ import { useMarketStore } from '@/stores/market'
 import { streamChat } from '@/api/ai'
 import { toast } from '@/utils/toast'
 import SessionSidebar from '@/components/ai/SessionSidebar.vue'
-import MStrategyPanel from '@/components/ai/MStrategyPanel.vue'
 import WelcomeHeader from '@/components/ai/WelcomeHeader.vue'
 import ChatMessages from '@/components/ai/ChatMessages.vue'
 import QuickCards from '@/components/ai/QuickCards.vue'
@@ -174,10 +173,9 @@ onMounted(() => {
 
 <template>
   <div class="ai-shell">
-    <!-- 左侧固定侧边栏：J（会话/策略列表）+ M（策略与记忆） -->
+    <!-- 左侧固定侧边栏：J（tabs+菜单）+ M（列表区），优化5 合并到 SessionSidebar -->
     <aside class="ai-side">
       <SessionSidebar />
-      <MStrategyPanel />
     </aside>
 
     <!-- 右侧主区：K+L（默认）与 N 区互斥切换 -->

@@ -92,7 +92,6 @@ const enabledList = computed(() => INDICATORS.filter((i) => enabled.value.has(i.
 
 const UP_COLOR = computed(() => (theme.mode === 'dark' ? '#ef4444' : '#dc2626'))
 const DOWN_COLOR = computed(() => (theme.mode === 'dark' ? '#22c55e' : '#059669'))
-const ACCENT = computed(() => (theme.mode === 'dark' ? '#3b82f6' : '#2563eb'))
 
 /** KDJ K/D/J 序列色 */
 const KDJ = computed(() => {

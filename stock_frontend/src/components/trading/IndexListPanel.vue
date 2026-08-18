@@ -3,13 +3,13 @@
  * G/H 区 · 固定指数列表（可复用，第二层市场页）：
  * - props.list：固定指数（marketStore.fixedIndices 分组后传入，按 sort_order 排序）
  * - 每行：名称/最新价/涨跌幅/关联ETF/机会指标（本版置空）
- * - 行点击 → marketStore.setCurrent 联动 F 区 K 线；实时价取快照缓存随轮询刷新
+ * - 优化2：表头与数据行统一 grid 布局，数字列间距唯一、整体靠右、居中对齐
+ * - 行点击 → marketStore.setCurrent 联动 F 区 K 线；双击打开第一层详情页
  */
 import { computed } from 'vue'
 import type { SymbolInfo } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
 import { formatPct, formatPrice, trendClass } from '@/utils/color'
-import ListRow from '@/components/base/ListRow.vue'
 
 const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; loading?: boolean }>(), {
   loading: false,
@@ -25,7 +25,6 @@ function onSelect(s: SymbolInfo) {
   market.setCurrent(s)
 }
 
-/** 双击打开第一层详情页（A/B/C/D 区），由父级决定是否跳转 */
 function onDblClick(s: SymbolInfo) {
   emit('dblclick', s)
 }
@@ -38,12 +37,13 @@ function onDblClick(s: SymbolInfo) {
       <span class="index-panel__count">{{ list.length }}</span>
     </header>
 
+    <!-- 表头：grid 布局，与数据行列宽完全一致 -->
     <div class="index-panel__cols">
-      <span>名称</span>
-      <span class="ta-r">最新价</span>
-      <span class="ta-r">涨跌幅</span>
-      <span class="ta-c">ETF</span>
-      <span class="ta-c">机会</span>
+      <span class="col-name">名称</span>
+      <span class="col-num">最新价</span>
+      <span class="col-num">涨跌幅</span>
+      <span class="col-num">ETF</span>
+      <span class="col-num">机会</span>
     </div>
 
     <div class="index-panel__list">
@@ -52,24 +52,24 @@ function onDblClick(s: SymbolInfo) {
       </div>
       <div v-else-if="!list.length" class="index-panel__empty">暂无固定指数</div>
       <template v-else>
-        <ListRow
+        <div
           v-for="s in list"
           :key="s.id"
-          clickable
-          :active="s.id === currentId"
+          class="idx-row"
+          :class="{ 'is-active': s.id === currentId }"
           @click="onSelect(s)"
           @dblclick="onDblClick(s)"
         >
-          <span class="idx-name" :title="s.name">{{ s.name }}</span>
-          <span class="idx-price ta-r" :class="trendClass(market.snapshots[s.id]?.change_pct)">
+          <span class="col-name" :title="s.name">{{ s.name }}</span>
+          <span class="col-num" :class="trendClass(market.snapshots[s.id]?.change_pct)">
             {{ formatPrice(market.snapshots[s.id]?.price) }}
           </span>
-          <span class="idx-pct ta-r" :class="trendClass(market.snapshots[s.id]?.change_pct)">
+          <span class="col-num" :class="trendClass(market.snapshots[s.id]?.change_pct)">
             {{ formatPct(market.snapshots[s.id]?.change_pct) }}
           </span>
-          <span class="idx-etf ta-c">{{ s.etf_linked || '--' }}</span>
-          <span class="idx-opp ta-c">--</span>
-        </ListRow>
+          <span class="col-num col-etf">{{ s.etf_linked || '--' }}</span>
+          <span class="col-num col-opp">--</span>
+        </div>
       </template>
     </div>
   </div>
@@ -105,39 +105,45 @@ function onDblClick(s: SymbolInfo) {
   padding: 0 6px;
   border-radius: 8px;
 }
-.index-panel__cols {
-  display: flex;
+
+/* 优化2：grid 统一列宽，表头与数据行完全对齐；数字列整体靠右，间距唯一 */
+.index-panel__cols,
+.idx-row {
+  display: grid;
+  /* 名称自适应，四列数字按内容长度分配固定宽，整体靠右 */
+  grid-template-columns: 1fr 62px 58px 48px 36px;
+  column-gap: 6px;
   align-items: center;
-  gap: 8px;
+}
+.index-panel__cols {
   flex: none;
   padding: 4px 10px;
   font-size: 11px;
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
 }
-.index-panel__cols > span:nth-child(1) {
-  flex: 1;
+.col-name {
   min-width: 0;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
 }
-.index-panel__cols > span:nth-child(2) {
-  flex: none;
-  width: 58px;
+.col-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-align: right; /* 数字列统一右对齐，间距唯一 */
 }
-.index-panel__cols > span:nth-child(3) {
-  flex: none;
-  width: 54px;
+.col-etf {
+  font-size: 11px;
+  color: var(--text-muted);
 }
-.index-panel__cols > span:nth-child(4) {
-  flex: none;
-  width: 40px;
+.col-opp {
+  font-size: 11px;
+  color: var(--text-muted);
 }
-.index-panel__cols > span:nth-child(5) {
-  flex: none;
-  width: 30px;
-}
+
 .index-panel__list {
   flex: 1;
   min-height: 0;
@@ -149,48 +155,23 @@ function onDblClick(s: SymbolInfo) {
   font-size: 12px;
   color: var(--text-muted);
 }
-.idx-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+/* 数据行：替代 ListRow，保持 clickable/active/hover 交互 */
+.idx-row {
+  padding: 7px 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background-color 0.12s;
 }
-.idx-price {
-  flex: none;
-  width: 58px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
+.idx-row:last-child {
+  border-bottom: none;
 }
-.idx-pct {
-  flex: none;
-  width: 54px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
+.idx-row:hover {
+  background: var(--bg-hover);
 }
-.idx-etf {
-  flex: none;
-  width: 40px;
-  font-size: 11px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.idx-opp {
-  flex: none;
-  width: 30px;
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-.ta-r {
-  text-align: right;
-}
-.ta-c {
-  text-align: center;
+.idx-row.is-active {
+  background: var(--bg-active);
 }
 
 /* ---------- 骨架加载态 ---------- */

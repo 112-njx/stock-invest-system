@@ -27,8 +27,9 @@ def upsert_snapshot(db: Session, quote: RealtimeQuote) -> None:
         "high": quote.high,
         "low": quote.low,
         "pre_close": quote.pre_close,
-        "volume": _not_null(quote.volume),
-        "amount": _not_null(quote.amount),
+        # volume/amount 保持 None 写 NULL：区分"数据源无此字段"（如海外指数）与"真实零成交"
+        "volume": quote.volume,
+        "amount": quote.amount,
         "turnover": quote.turnover,
         "amplitude": quote.amplitude,
         "updated_at": quote.updated_at or datetime.now(UTC),

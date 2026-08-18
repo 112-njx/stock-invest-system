@@ -30,6 +30,10 @@
 - 宿主端口按需映射（见 .env.docker）：nginx 默认 127.0.0.1:8080/8443（HTTP/HTTPS），对外发布改 80/443 与 0.0.0.0；TLS 需挂载证书到 /etc/nginx/certs 并启用 nginx.conf 中 443 server 块。
 - 监控：Prometheus 127.0.0.1:9090、Grafana 127.0.0.1:3000（初始 admin/admin，可改 .env.docker）；/metrics 含 LLM 调用与平台指标（队列深度/缓存命中率/行情新鲜度/回测积压），告警规则在 deploy/prometheus/alerts.yml。
 - CI：push 触发 lint→test→build 全自动（需 PostgreSQL/Redis service 自动拉起）；部署为 GitHub Actions workflow_dispatch 手动触发，需配置 secrets（DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY）后启用。
+- 行情数据修复（2026-08-18）后需重跑实时同步生效（beat `realtime_poll` 或 `scripts/sync_fixed_indices.py`）；东财实时接口偶发限流（`RemoteDisconnected`，日志 `[eastmoney] ... give up`），冷却后自动恢复。
+- 行业指数实时匹配：35 个固定行业 23 个可匹配东财板块（白酒→白酒Ⅲ、游戏→游戏Ⅲ、证券→证券Ⅲ 等），10 个（创新药/文化传媒/军工/消费/细分化工/农业种植/猪肉/港口航运/公路铁路运输/汽车整车）东财无对应板块，最新价/涨跌幅显示 "--" 属数据源无对应而非 bug，接入更多数据源可补全。
+- 指数成交量/成交额：海外指数（道琼斯/纳斯达克等）数据源无成交量字段，快照 volume/amount 存 NULL 前端显示 "--" 属正常；国内指数/行业指数重同步后有真实成交量。
+- 指数PE/个股市值/ETF溢价：实时轮询 best-effort 填充；指数PE 仅 沪深300/上证50/中证1000 可取自乐咕 `stock_index_pe_lg`，其余指数无 PE 数据源；乐咕/东财限流时该轮跳过，不阻塞轮询。
 ---
 
 ## 后端开发实施方案（项目启动 → 第一版发布）

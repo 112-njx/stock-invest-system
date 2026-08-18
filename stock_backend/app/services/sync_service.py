@@ -104,7 +104,7 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
 
 # ---- 实时快照 ----
 def run_realtime_poll(symbol_id: int | None = None) -> dict:
-    """实时快照轮询：拉取 → 写 snapshot_realtime → 写 Redis 缓存（TTL）。"""
+    """实时快照轮询：拉取 → 特殊字段补全（行业K线推导/指数PE/市值/溢价） → 写快照与特殊表 → Redis 缓存。"""
     db = get_session()
     try:
         provider = get_provider()
@@ -115,12 +115,40 @@ def run_realtime_poll(symbol_id: int | None = None) -> dict:
         ops_repo.upsert_sync_task(db, "realtime", symbol_id, "running", datetime.now(UTC))
         req = [RealtimeSymbol(code=sym.code, name=sym.name, asset_type=_provider_params(sym)[1]) for sym in symbols]
         quotes = provider.fetch_realtime(req)
+
+        # 指数 PE：乐咕 best-effort（仅覆盖可取 A 股指数，其余 None 留空），失败不阻塞主链路
+        index_names = [
+            sym.name for sym, q in zip(symbols, quotes, strict=True) if _provider_params(sym)[1] == "index" and q.available
+        ]
+        index_pe: dict[str, float | None] = {}
+        if index_names:
+            try:
+                index_pe = provider.fetch_index_pe(index_names) or {}
+            except Exception:  # noqa: BLE001
+                logger.warning("fetch_index_pe failed, skip index PE this round")
+
         synced = 0
         for sym, quote in zip(symbols, quotes, strict=True):
             if not quote.available or quote.price is None:
                 continue
+            atype = _provider_params(sym)[1]
             quote.extra["symbol_id"] = sym.id
+            if atype == "industry_index":
+                _fill_industry_quote_from_kline(db, sym, quote)
+            elif atype == "index":
+                quote.extra["pe"] = index_pe.get(sym.name)
             snapshot_repo.upsert_snapshot(db, quote)
+            # 特殊字段表：个股总市值/PE、ETF净值/溢价、指数PE（best-effort，任一字段非 None 才写避免覆盖旧值）
+            if atype == "stock" and (
+                quote.extra.get("market_cap") is not None or quote.extra.get("pe") is not None
+            ):
+                snapshot_repo.upsert_fundamentals(db, sym.id, quote.extra.get("market_cap"), quote.extra.get("pe"))
+            elif atype == "etf" and (
+                quote.extra.get("nav") is not None or quote.extra.get("premium") is not None
+            ):
+                snapshot_repo.upsert_etf_premium(db, sym.id, quote.extra.get("nav"), quote.extra.get("premium"))
+            elif atype == "index" and quote.extra.get("pe") is not None:
+                snapshot_repo.upsert_index_valuation(db, sym.id, quote.extra.get("pe"))
             _cache_snapshot(sym.id, quote)
             synced += 1
         ops_repo.upsert_sync_task(
@@ -135,6 +163,37 @@ def run_realtime_poll(symbol_id: int | None = None) -> dict:
         return {"synced": synced}
     finally:
         db.close()
+
+
+def _fill_industry_quote_from_kline(db, sym: Symbol, quote) -> None:
+    """行业指数基本数据补全：板块实时接口仅最新价/涨跌额/涨跌幅/换手率，缺昨收/今开/高低/量/额/振幅，用日K推导。
+
+    昨收=前一根日K close，今开/最高/最低/量/额=最新根对应值，振幅=(high-low)/pre_close×100。
+    """
+    try:
+        end = datetime.now(UTC)
+        start = end - timedelta(days=30)
+        bars = kline_repo.get_bars(db, "1d", sym.id, start, end, limit=2)
+        if not bars:
+            return
+        latest = bars[-1]
+        prev = bars[-2] if len(bars) >= 2 else None
+        if quote.open is None:
+            quote.open = float(latest.open)
+        if quote.high is None:
+            quote.high = float(latest.high)
+        if quote.low is None:
+            quote.low = float(latest.low)
+        if quote.volume is None:
+            quote.volume = int(latest.volume)
+        if quote.amount is None:
+            quote.amount = float(latest.amount)
+        if quote.pre_close is None:
+            quote.pre_close = float(prev.close) if prev else float(latest.close)
+        if quote.amplitude is None and quote.high and quote.low and quote.pre_close:
+            quote.amplitude = (quote.high - quote.low) / quote.pre_close * 100 if quote.pre_close else None
+    except Exception:  # noqa: BLE001 K线推导失败不影响该行其余字段
+        logger.warning("industry kline fill failed: symbol_id=%s", sym.id, exc_info=True)
 
 
 def _cache_snapshot(symbol_id: int, quote) -> None:

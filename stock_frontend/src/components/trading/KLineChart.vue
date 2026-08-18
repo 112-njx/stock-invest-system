@@ -80,9 +80,35 @@ let candleSeries: ISeriesApi<'Candlestick'> | null = null
 let srLines: IPriceLine[] = []
 let lastBar: KLineBar | null = null
 
+/** 优化4/优化7：最大缩放限制——放大最多显示15条K线，可无限缩小 */
+const MAX_VISIBLE_BARS = 15
+let lastZoomToast = 0
+
+/**
+ * 拦截滚轮事件：在 window capture 阶段（事件传播第一站）监听，
+ * 已达最大放大（可见≤15条）时阻止继续放大（deltaY<0=向上滚=放大），
+ * 缩小不受限制。window capture 确保先于 chart 内部 wheel 处理器执行。
+ */
+function onWheel(e: WheelEvent) {
+  if (!chart || !container.value?.contains(e.target as Node)) return
+  if (e.deltaY >= 0) return // 只拦截放大方向（向上滚 deltaY<0）
+  const range = chart.timeScale().getVisibleLogicalRange()
+  if (!range) return
+  const visibleCount = range.to - range.from + 1
+  if (visibleCount <= MAX_VISIBLE_BARS) {
+    e.preventDefault()
+    e.stopPropagation() // 阻止事件到达 chart 内部元素
+    const now = Date.now()
+    if (now - lastZoomToast > 60000) { // 1分钟防抖
+      lastZoomToast = now
+      toast.info('不能再放大了喵!')
+    }
+  }
+}
+
 /** 指标 pane 和 series 引用 */
 interface IndicatorPaneRef {
-  pane: IPaneApi
+  pane: IPaneApi<any>
   series: ISeriesApi<any>[]
 }
 const indicatorPanes = new Map<IndicatorKey, IndicatorPaneRef>()
@@ -208,6 +234,9 @@ function initChart() {
     wickDownColor: c.down,
     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
   })
+
+  // 优化7：window capture 阶段拦截 wheel，达到最大放大（≤15条）时阻止继续放大，可无限缩小
+  window.addEventListener('wheel', onWheel, { capture: true, passive: false })
 
   // 主图 stretch factor 较大
   chart.panes()[0].setStretchFactor(2)
@@ -368,7 +397,12 @@ async function loadKline() {
     candleSeries?.setData(toCandleData(bars))
     lastBar = bars.length ? bars[bars.length - 1] : null
 
-    // 并行加载指标数据
+    // K线数据设置后再创建指标 pane，确保 chart 尺寸稳定、pane 可见（修复 bug5）
+    if (props.showIndicators) {
+      rebuildIndicatorPanes()
+    }
+
+    // 加载指标数据
     if (props.showIndicators && enabledList.value.length) {
       try {
         indicatorRows.value = await fetchIndicators({
@@ -458,9 +492,9 @@ watch(() => props.symbol, () => {
     candleSeries?.setData([])
     clearSRLines()
     indicatorRows.value = []
+    if (props.showIndicators) removeAllIndicatorPanes()
     return
   }
-  if (props.showIndicators) rebuildIndicatorPanes()
   loadKline()
   loadSRLines()
 })
@@ -472,7 +506,6 @@ onMounted(() => {
   loadVisibility()
   if (props.symbol) {
     initChart()
-    if (props.showIndicators) rebuildIndicatorPanes()
     loadKline()
     loadSRLines()
   }
@@ -480,6 +513,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   container.value?.removeEventListener('dblclick', onDblClick)
+  window.removeEventListener('wheel', onWheel, true)
   closeSrDialog()
   closeIndicatorPicker()
   chart?.remove()

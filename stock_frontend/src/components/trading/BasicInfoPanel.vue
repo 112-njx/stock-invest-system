@@ -29,7 +29,8 @@ onMounted(ensureSnapshot)
 const fields = computed(() => {
   const s = snapshot.value
   if (!s) return []
-  return [
+  const isIndex = s.type === 'index'
+  const list = [
     { label: '名称', value: s.name, cls: '' },
     { label: '代码', value: s.code, cls: '' },
     { label: '现价', value: formatPrice(s.price), cls: trendClass(s.change), big: true },
@@ -40,11 +41,15 @@ const fields = computed(() => {
     { label: '最高', value: formatPrice(s.high), cls: 't-up' },
     { label: '最低', value: formatPrice(s.low), cls: 't-down' },
     { label: '成交量', value: formatAmount(s.volume) },
-    { label: '成交额', value: formatAmount(s.amount) },
-    { label: '换手率', value: formatPct(s.turnover) },
-    { label: '振幅', value: formatPct(s.amplitude) },
-    { label: '更新时间', value: s.updated_at ? s.updated_at.slice(11, 19) : '--' },
   ]
+  // 指数通常无成交额、换手率数据，隐藏（bug6）
+  if (!isIndex) {
+    list.push({ label: '成交额', value: formatAmount(s.amount) })
+    list.push({ label: '换手率', value: formatPct(s.turnover) })
+  }
+  list.push({ label: '振幅', value: formatPct(s.amplitude) })
+  list.push({ label: '更新时间', value: s.updated_at ? s.updated_at.slice(11, 19) : '--' })
+  return list
 })
 
 /** 按标的类型渲染特殊字段（快照 extra） */

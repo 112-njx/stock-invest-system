@@ -116,3 +116,127 @@ def test_realtime_poll_writes_snapshot_and_redis_cache():
 
 def test_is_market_open_weekend_false():
     assert sync_service.is_market_open(datetime(2026, 8, 8, 10, 0, tzinfo=UTC)) is False  # 周六
+
+
+def _realtime_mock(**kwargs) -> MagicMock:
+    """构造 run_realtime_poll 用的 provider mock（fetch_index_pe 默认空）。"""
+    p = MagicMock()
+    p.fetch_realtime.return_value = [kwargs["quote"]]
+    p.fetch_index_pe.return_value = kwargs.get("index_pe", {})
+    return p
+
+
+def test_realtime_poll_industry_fills_from_kline():
+    """行业指数基本数据补全：实时接口缺 OHLC/量/额/振幅，用日K推导。"""
+    db = get_session()
+    sym = Symbol(code="BK0426", name="测试油气开采", type="index", market="SSE", is_fixed_index=True)
+    db.add(sym)
+    db.commit()
+    db.refresh(sym)
+    now = datetime.now(UTC)
+    db.add_all(
+        [
+            Kline1d(
+                symbol_id=sym.id, ts=now - timedelta(days=2),
+                open=2900, high=2950, low=2880, close=2920, volume=1000, amount=1e6,
+            ),
+            Kline1d(
+                symbol_id=sym.id, ts=now - timedelta(days=1),
+                open=2950, high=3050, low=2930, close=3000, volume=1200, amount=1.2e6,
+            ),
+        ]
+    )
+    db.commit()
+    db.close()
+
+    quote = RealtimeQuote(
+        code="BK0426", name="测试油气开采", asset_type="industry_index",
+        price=3000.0, change=5.0, change_pct=0.17, turnover=0.9,
+        open=None, high=None, low=None, pre_close=None, volume=None, amount=None, amplitude=None,
+        available=True,
+    )
+    with patch("app.services.sync_service.get_provider", return_value=_realtime_mock(quote=quote)):
+        result = sync_service.run_realtime_poll(symbol_id=sym.id)
+    assert result["synced"] == 1
+    db = get_session()
+    snap = db.get(SnapshotRealtime, sym.id)
+    assert snap is not None
+    assert float(snap.pre_close) == 2920.0  # 前一根 close
+    assert float(snap.open) == 2950.0
+    assert float(snap.high) == 3050.0
+    assert float(snap.low) == 2930.0
+    assert snap.volume == 1200
+    assert snap.amplitude is not None and abs(float(snap.amplitude) - (3050 - 2930) / 2920 * 100) < 0.01
+    db.close()
+
+
+def test_realtime_poll_stock_upserts_fundamentals():
+    """个股快照同步时落 stock_fundamentals（总市值/PE）。"""
+    sym = _make_symbol()
+    quote = RealtimeQuote(
+        code="600519", name="测试贵州茅台", asset_type="stock",
+        price=102.0, change=1.0, change_pct=0.99, volume=1200, amount=1.2e6,
+        available=True, extra={"market_cap": 1.7e12, "pe": 25.3},
+    )
+    with patch("app.services.sync_service.get_provider", return_value=_realtime_mock(quote=quote)):
+        result = sync_service.run_realtime_poll(symbol_id=sym.id)
+    assert result["synced"] == 1
+    from app.models.snapshot import StockFundamental
+
+    db = get_session()
+    fund = db.get(StockFundamental, sym.id)
+    assert fund is not None and float(fund.market_cap) == 1.7e12 and float(fund.pe) == 25.3
+    db.close()
+
+
+def test_realtime_poll_index_upserts_valuation():
+    """大盘指数快照同步时落 index_valuations（指数 PE）。"""
+    db = get_session()
+    sym = Symbol(code="000300", name="测试沪深300", type="index", market="CSI", is_fixed_index=True)
+    db.add(sym)
+    db.commit()
+    db.refresh(sym)
+    db.close()
+    quote = RealtimeQuote(
+        code="000300", name="测试沪深300", asset_type="index",
+        price=4200.0, change=20.0, change_pct=0.48, available=True,
+    )
+    with patch(
+        "app.services.sync_service.get_provider",
+        return_value=_realtime_mock(quote=quote, index_pe={"测试沪深300": 12.5}),
+    ):
+        result = sync_service.run_realtime_poll(symbol_id=sym.id)
+    assert result["synced"] == 1
+    from app.models.snapshot import IndexValuation
+
+    db = get_session()
+    val = db.get(IndexValuation, sym.id)
+    assert val is not None and float(val.pe) == 12.5
+    db.close()
+
+
+def test_realtime_poll_index_volume_none_stored_null():
+    """海外指数无成交量/额字段：volume/amount 保持 NULL 而非写 0。"""
+    db = get_session()
+    sym = Symbol(code="DJI", name="测试道琼斯", type="index", market="US", is_fixed_index=True)
+    db.add(sym)
+    db.commit()
+    db.refresh(sym)
+    db.close()
+    quote = RealtimeQuote(
+        code="DJI", name="测试道琼斯", asset_type="index",
+        price=40000.0, change=100.0, change_pct=0.25,
+        volume=None, amount=None, available=True,
+    )
+    with patch(
+        "app.services.sync_service.get_provider",
+        return_value=_realtime_mock(quote=quote, index_pe={"测试道琼斯": None}),
+    ):
+        result = sync_service.run_realtime_poll(symbol_id=sym.id)
+    assert result["synced"] == 1
+    db = get_session()
+    snap = db.get(SnapshotRealtime, sym.id)
+    assert snap is not None
+    assert snap.volume is None
+    assert snap.amount is None
+    db.close()

@@ -119,8 +119,8 @@ CREATE TABLE snapshot_realtime (
     high       NUMERIC(12,3),
     low        NUMERIC(12,3),
     pre_close  NUMERIC(12,3),                -- 昨收
-    volume     BIGINT        NOT NULL DEFAULT 0,
-    amount     NUMERIC(20,2) NOT NULL DEFAULT 0,
+    volume     BIGINT        DEFAULT 0,      -- NULL=数据源无成交量（如海外指数），0=真实零成交
+    amount     NUMERIC(20,2) DEFAULT 0,      -- NULL=数据源无成交额
     turnover   NUMERIC(8,4),                 -- 换手率
     amplitude  NUMERIC(8,4),                 -- 振幅
     updated_at TIMESTAMP     NOT NULL DEFAULT now()

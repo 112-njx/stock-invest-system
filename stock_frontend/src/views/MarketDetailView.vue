@@ -6,7 +6,7 @@
  * - D 区：重点关注列表（WatchlistPanel，行点击切换标的）/ 回测策略指标（StrategyMetricsPanel）
  * - 交互：Esc / 左上角按钮退出返回 /market；轮询刷新实时行情
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchSymbols } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
@@ -23,7 +23,6 @@ const market = useMarketStore()
 
 /** 回测显示跳转：带 strategy_id 时 D 区替换为策略指标面板（4.5） */
 const strategyId = computed(() => (route.query.strategy_id ? Number(route.query.strategy_id) : null))
-const klineRef = ref<InstanceType<typeof KLineChart> | null>(null)
 
 const { start } = useSnapshotPolling(4000)
 
@@ -75,7 +74,6 @@ onBeforeUnmount(() => {
       <div class="col-left">
         <!-- A+B 合并：K 线 + 技术指标多 pane，共享时间轴 -->
         <KLineChart
-          ref="klineRef"
           :symbol="market.current"
           :show-sr-button="true"
           :show-indicators="true"
