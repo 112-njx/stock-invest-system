@@ -280,3 +280,10 @@ desc:空心轮廓云
 ## 弹回15条的方案（猛滑鼠标时有一瞬间放大再弹回的闪烁）；② 移除错误的 minBarSpacing 方案（minBarSpacing 限制的是缩小方向，会导致最小15条、可无限放大，与需求相反）；
 ## ③ 正确方案：window capture 阶段拦截 wheel 事件（事件传播第一站，确保先于 chart 内部处理器执行——chart 在 createChart 时即注册 wheel 监听器，容器级 capture 无法拦截先注册的同元素监听器），判断 event.target 在图表容器内、可见条数≤15且 deltaY<0（向上滚=放大）时 e.preventDefault()+e.stopPropagation() 阻止事件到达 chart，达到上限后不可继续放大但可无限缩小，
 ## 无任何视觉弹回；④ toast 提示防抖1分钟；⑤ onBeforeUnmount 从 window 移除 wheel 监听（capture:true）。F区和A区共用 KLineChart 同步生效。需重启 dev 或重新 build 生效。
+
+---
+优化8：在AI策略区中，点击聊天页的任一聊天记录后点击策略页或者点击策略页的任一聊天记录后点击聊天页，右边应该回到默认页面（K L N区域）
+而非保持原来的页面，优化用户体验。
+
+## 时间：2026-08-19
+## 修复bug内容（描述）：v0.1 优化8 实现——AI策略页聊天/策略 tab 切换时右侧重置为默认页面：① ai store 新增 resetPanel() action，重置 mode='chat'、activeStrategy=null、messages=[]、activeConversationId=null、流式状态清空，使右侧回到 K+L 区（WelcomeHeader+QuickCards+ChatInput 默认欢迎页）；② SessionSidebar 新增 switchTab() 函数，切换 tab 时若目标不同则调用 ai.resetPanel()，模板中两个 tab 按钮从直接赋值 tab='chat'/'strategy' 改为 @click="switchTab(...)"；③ 策略模式下「返回聊天」菜单也走 switchTab('chat') 确保重置；④ 原 tab 仅为组件本地 ref，切换只改左侧列表不影响右侧，导致打开聊天记录/策略详情后切 tab 右侧保持原页面，现已修复。需重启 dev 或重新 build 生效。

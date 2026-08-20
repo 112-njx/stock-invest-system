@@ -105,6 +105,16 @@ export const useAiStore = defineStore('ai', {
       this.activeStrategy = null
       this.mode = 'chat'
     },
+    /** 切换聊天/策略 tab 时重置右侧为默认页面（K+L区：空会话+欢迎页+功能卡片） */
+    resetPanel() {
+      this.mode = 'chat'
+      this.activeStrategy = null
+      this.messages = []
+      this.activeConversationId = null
+      this.streamingContent = ''
+      this.streamingSteps = []
+      this.strategyOutput = null
+    },
 
     /* ---------- Agent ---------- */
     async loadAgents() {

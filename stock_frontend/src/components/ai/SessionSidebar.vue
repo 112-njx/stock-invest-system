@@ -22,11 +22,18 @@ const showMemory = ref(false)
 const showAgents = ref(false)
 const showRuns = ref(false)
 
+/** 切换聊天/策略 tab：右侧重置为默认页面（K+L区），不保持原来的聊天/策略内容 */
+function switchTab(newTab: JTab) {
+  if (tab.value === newTab) return
+  tab.value = newTab
+  ai.resetPanel()
+}
+
 function onNewOrBack() {
   if (tab.value === 'chat') {
     void ai.createConversation()
   } else {
-    tab.value = 'chat'
+    switchTab('chat')
   }
 }
 
@@ -51,14 +58,14 @@ function formatTime(iso?: string): string {
   <div class="j-sidebar">
     <!-- 顶部 tabs：聊天 / 策略（图标+文字居中） -->
     <div class="j-tabs">
-      <button class="j-tab" :class="{ active: tab === 'chat' }" @click="tab = 'chat'">
+      <button class="j-tab" :class="{ active: tab === 'chat' }" @click="switchTab('chat')">
         <!-- 聊天：线性轮廓云图标 -->
         <svg class="j-tab__icon" viewBox="0 0 88 72" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round">
           <path d="M16 42 A20 20 0 0 1 40 20 A24 24 0 0 1 70 40 L70 60 L12 60 Z" />
         </svg>
         <span>聊天</span>
       </button>
-      <button class="j-tab" :class="{ active: tab === 'strategy' }" @click="tab = 'strategy'">
+      <button class="j-tab" :class="{ active: tab === 'strategy' }" @click="switchTab('strategy')">
         <!-- 策略：6 箭头汇聚圆心（实心） -->
         <svg class="j-tab__icon" viewBox="0 0 96 96" fill="currentColor">
           <path d="M48 12 L56 24 L40 24 Z M84 48 L72 56 L72 40 Z M48 84 L40 72 L56 72 Z M12 48 L24 40 L24 56 Z M70 26 L62 38 L74 44 Z M26 26 L34 38 L22 44 Z" />

@@ -36,7 +36,7 @@
 - 指数PE/个股市值/ETF溢价：实时轮询 best-effort 填充；指数PE 仅 沪深300/上证50/中证1000 可取自乐咕 `stock_index_pe_lg`，其余指数无 PE 数据源；乐咕/东财限流时该轮跳过，不阻塞轮询。
 ---
 
-## 后端开发实施方案（项目启动 → 第一版发布）
+## 后端开发实施方案（项目启动 → v0.1）
 
 > 目标：按 docs.md 需求 + working_docs.md 六要素，自下而上（数据层→用户/指标层→AI 层→回测层→部署）交付生产级最小原型机。
 > 约束：前端不计算复杂指标；回测/AI/同步走 Celery 不阻塞主线程；记忆本地存储（LangChain 本地向量库）；行情走 DataProvider 抽象（默认东方财富/Akshare）。
@@ -200,3 +200,233 @@
 - 按 working_docs.md 六要素模板逐项自查（可维护/扩展/演进/稳定/可观测/可部署），每项一句话结论。
 - 补全 docs/Agent_backend/Agent_code.md 编码记录、api-docs.md API 文档、fixed.md 修复记录。
 - 验收：六要素每条有结论、三文档完整。
+
+#### 项目v0.2用户体验升级
+** 该阶段仅为现有功能进行生产实际可用级架构补充。
+
+> 升级目标：将行情数据体系与AI对话两大核心功能从"Demo可用"升级为"用户实际可用"。
+> 行情数据解决：进入软件空白、行情延迟高、搜索范围窄、关注后无数据、缓存几乎无效。
+> AI对话解决：流式中断无续传、记忆检索质量差、多智能体黑盒、降级体验差、长会话超限、策略生成失败率高。
+> 约束：不新增功能模块，技术栈不变（FastAPI+PostgreSQL+Redis+Celery+LangChain+LangGraph），缓存层仅Redis+PostgreSQL。
+
+---
+
+## 阶段一：行情数据缓存体系
+
+**1.1 启动预同步与缓存预热**
+- 架构设计：`docker-entrypoint.sh` 增加预同步步骤——检查49条固定指数最新K线时间（`SELECT symbol_id, MAX(ts) FROM kline_1d GROUP BY symbol_id`），超过1天或无数据则向Celery发送 `kline_init` 任务（固定指数范围，不阻塞API启动）。
+- 新增 `sync_status` 表：`(id, scope VARCHAR, target_id INT, status VARCHAR, progress INT, total INT, message TEXT, started_at, finished_at)`，记录固定指数/关注标的同步状态，供前端轮询展示进度。
+- FastAPI startup 事件增加缓存预热：将固定指数最近500根日K批量写入Redis（`kline:{symbol_id}:1d:500`），最新快照写入Redis（`snapshot:{symbol_id}`），预热失败不阻断启动。
+- `sync_fixed_indices.py` 保留为手动运维脚本，日常启动由entrypoint自动完成。
+- 验收：清空Redis+重置库后 `docker compose up`，固定指数K线自动同步，前端进入时显示"数据同步中（X/49）"而非空白。
+
+**1.2 K线Redis缓存落地**
+- 架构设计：`kline_repo.get_kline()` 查询前先查Redis，缓存键 `kline:{symbol_id}:{period}:{limit}`（按最近N根，不含完整日期范围，提升命中率），TTL=`KLINE_CACHE_TTL=300`秒。
+- 缓存值为JSON序列化的K线列表（ts/open/high/low/close/volume/amount），命中后直接返回，未命中查PostgreSQL分区表并回写Redis。
+- 失效策略：`realtime_poll` 写入新K线后，`DEL kline:{symbol_id}:{period}:*`（按pattern删除该标的所有周期缓存）；`kline_incremental` 完成后同样清除。
+- 缓存击穿保护：热点key过期时用Redis `SET kline_lock:{symbol_id}:{period} NX EX 5` 分布式锁，仅一个请求回源PG，其余等待2s后读缓存；Redis不可用时降级直查PG（已有逻辑）。
+- 验收：连续请求同一标的K线，第二次起Redis命中（日志 `[kline-cache] hit`），响应时间从百毫秒级降到毫秒级；新K线写入后缓存自动失效。
+
+**1.3 实时快照缓存增强**
+- `SNAPSHOT_CACHE_TTL` 从5秒延长至300秒；缓存值从仅 `{price, updated_at}` 扩展为完整快照字段（price/open/high/low/pre_close/volume/amount/change_pct/turnover/amplitude等14项）。
+- `market_service.get_snapshots()` 查询顺序改为：Redis批量 `MGET snapshot:{id}` → 未命中的查PostgreSQL `snapshot_realtime` → 回写Redis。
+- `realtime_poll` 每次写入快照后 `SETEX snapshot:{id} 300` 覆盖缓存（已有逻辑，扩展字段即可）。
+- 非交易时段：快照缓存命中时正常返回，附带 `data_age_seconds` 字段（当前时间 - updated_at），前端据此标注"数据时间"而非显示"--"。
+- 验收：非交易时段进入软件，固定指数显示最近收盘价并标注更新时间；交易时段价格5分钟内从Redis读取。
+
+**1.4 技术指标缓存优化**（可能已经优化过了，你看一眼）
+- 当前缓存键含完整start/end/limit参数，命中率低；改为按"最新N根"缓存，键 `indicator:{symbol_id}:{period}:{names_hash}:{latest_ts}`（latest_ts为K线最新时间戳，新K线到达自动失效，已有此设计但需确认start/end不影响键生成）。
+- 指标计算前先查Redis，命中直接返回；未命中从PG取K线→计算→回写Redis（TTL=300秒）。
+- 验收：切换标的后5分钟内重复请求指标，Redis命中；新K线写入后指标自动重算。
+
+---
+
+## 阶段二：实时行情WebSocket推送
+
+**2.1 WebSocket连接管理**
+- 新增 `app/api/ws.py`，路由 `WS /api/v1/ws/market`，依赖JWT认证（query参数传token或首条消息鉴权）。
+- `ConnectionManager` 单例：维护 `Dict[user_id, Set[WebSocket]]`（支持多标签页），提供 connect/disconnect/broadcast/subscribe 接口。
+- 心跳机制：服务端每15秒发送 `{"type":"ping"}`，客户端需回 `{"type":"pong"}`，30秒无pong断开连接。
+- 验收：前端建立WS连接，心跳正常；断开后服务端清理连接资源。
+
+**2.2 订阅模型与增量推送**
+- 客户端连接后发送订阅消息 `{"action":"subscribe","symbol_ids":[1,2,3]}`，服务端记录该连接的订阅集合；切换标的/关注列表变化时发送 `subscribe`/`unsubscribe` 更新。
+- `realtime_poll` 每轮拉取并写入快照后，遍历所有活跃连接，仅推送该连接订阅范围内有更新的标的（对比 `updated_at` 变化），消息格式 `{"type":"snapshot","data":{symbol_id:{price,change_pct,...}}}`。
+- 新K线写入时推送 `{"type":"kline","symbol_id":...,"period":"15m","bar":{...}}`，前端更新K线末根。
+- 验收：交易时段打开页面，K线末根价格随WS推送实时跳动（延迟≤5s），无需HTTP轮询。
+
+**2.3 断线重连与增量补拉**
+- 客户端断线重连后，发送 `{"action":"sync","since":"2026-08-20T10:30:00"}`（最后收到消息的时间戳），服务端查询该时间之后更新的快照批量返回，补齐断线期间数据。
+- 重连失败指数退避（1s/2s/4s/8s，最大30s），重连期间降级为HTTP轮询（7s），恢复后切回WS。
+- 验收：断网10秒后恢复，WS自动重连，断线期间价格变化补齐，无数据缺口。
+
+---
+
+## 阶段三：标的目录与搜索关注增强
+
+**3.1 全量标的目录预同步**
+- `symbols` 表新增 `is_catalog BOOLEAN DEFAULT FALSE`（TRUE表示在目录中但未同步K线），加索引 `(is_catalog, type)`。
+- 新增Celery任务 `catalog_sync`：每日凌晨3:00通过akshare `stock_info_a_code_name()` 拉取全A股约5000条（代码+名称），`fund_etf_spot_em()` 拉取ETF列表，幂等upsert到symbols表（`is_catalog=TRUE`，已同步K线的标的保持FALSE）。
+- 启动时检查 `symbols WHERE is_catalog=TRUE AND type='stock'` 数量，<4000则触发一次catalog_sync。
+- 失败重试：Celery任务配置 `autoretry_for=(Exception,), retry_backoff=3, retry_kwargs={'max_retries':3}`，凌晨抓取异常时自动重试3次（退避3s/9s/27s）；3次仍失败标记 `sync_status.status='failed'`，下次启动时补抓。
+- 数据校验：同步完成后校验A股数量≥4800、ETF数量≥500，不达标标记 `status='partial'`，1小时后自动重试一次。
+- 手动触发接口：新增 `POST /api/v1/admin/catalog/sync`（管理员权限），随时手动触发全量目录同步，返回 `{"task_id":..., "status":"queued"}`；本地开发或凌晨任务失败后可直接调用，无需等待定时或重启。
+- 验收：启动后symbols表含全A股+ETF目录，搜索任意A股代码/名称均可命中；凌晨任务失败后自动重试；管理员接口可手动触发同步。
+
+**3.2 搜索接口增强**
+- `GET /api/v1/symbols/search?keyword=xxx&type=stock` 改为三层逻辑：
+  1. 精确代码匹配（6位数字完全相等）→ 排最前
+  2. 目录表模糊搜索：`code LIKE 'kw%' OR name LIKE '%kw%'`
+  3. 排序：精确匹配 > `is_catalog=FALSE`（已同步K线） > `is_catalog=TRUE`（仅目录），再按code排序
+- 外部回退：本地目录无结果时，A股调akshare `stock_info_a_code_name()` 实时过滤，结果写入symbols表（is_catalog=TRUE）+ 缓存。
+- 搜索结果缓存：`search:{type}:{keyword}` → Redis，TTL=3600秒；catalog_sync完成后批量删除 `search:*`。
+- 返回字段增加 `is_catalog` 和 `has_kline`（布尔），前端据此标注"已同步/未同步"。
+- 验收：输入"6005"联想出贵州茅台等；输入"茅台"按名称命中；搜索结果标注同步状态。
+
+**3.3 关注列表添加自动同步**
+- `POST /api/v1/watchlist` 流程改为：校验标的存在（symbols表中存在，含is_catalog=TRUE）→ 幂等写入user_watchlist → 异步发送 `kline_init` 任务（仅该标的）→ 立即返回。
+- `user_watchlist` 表新增 `sync_status VARCHAR DEFAULT 'pending'`（pending/syncing/done/failed）、`last_synced_at TIMESTAMP`。
+- `kline_init` 任务开始时更新 `sync_status='syncing'`，完成更新 `done`+`last_synced_at`，失败更新 `failed`（可重试3次）。
+- 关注列表查询返回sync_status，前端展示"同步中/已同步/失败"。
+- 验收：搜索添加一只新股，关注列表立即出现并显示"同步中"，约10秒后K线同步完成自动变为"已同步"。
+
+**3.4 关注列表Redis缓存**
+- `GET /api/v1/watchlist` 查询顺序：Redis `watchlist:{user_id}` → PostgreSQL → 回写Redis（TTL=300秒）。
+- 缓存值为关注列表完整数据（含symbol信息+最新快照合并），添加/删除关注时 `DEL watchlist:{user_id}`。
+- 批量快照查询 `GET /api/v1/snapshot?symbols=` 结果也按用户关注集合缓存 `watchlist_snap:{user_id}`，TTL=10秒（交易时段）/300秒（非交易时段）。
+- 验收：关注列表第二次请求Redis命中；增删后缓存自动失效。
+
+---
+
+## 阶段四：DataProvider可插拔升级
+
+**4.1 独立Provider拆分**
+- 将 `EastMoneyProvider` 中的新浪降级（`_fetch_sina_index_daily`）、同花顺降级（`_fetch_ths_industry_daily`）抽为独立类 `SinaProvider`、`THSProvider`，均实现 `BaseDataProvider` 接口。
+- `EastMoneyProvider` 只保留东方财富主路径逻辑，降级逻辑移出。
+- 验收：三个Provider独立可测，EastMoneyProvider不再包含sina/ths字样。
+
+**4.2 DataProviderFactory优先级链**
+- 新增 `DataProviderFactory`：维护有序Provider列表 `[EastMoneyProvider, SinaProvider, THSProvider]`，`fetch_kline`/`fetch_realtime` 按顺序尝试，第一个成功返回即停止，全部失败返回None。
+- 每个Provider独立维护熔断状态（连续失败N次熔断M秒，半开探测），互不影响。
+- 配置项 `DATA_PROVIDER_PRIORITY`（环境变量，逗号分隔，默认 `eastmoney,sina,ths`），可调整顺序或禁用某Provider。
+- 验收：东方财富被限流时自动切新浪，日志记录 `[provider] eastmoney failed, fallback to sina`；新浪也失败切同花顺。
+
+**4.3 Provider健康检查**
+- 新增 `/api/v1/admin/providers/health`（管理员）返回各Provider状态：可用/熔断中/失败次数/最近成功时间。
+- 后台每60秒对熔断中的Provider发一次探测请求（取一个固定标的的1根K线），成功则恢复。
+- 验收：管理接口可查看Provider健康状态；熔断Provider自动恢复。
+
+---
+
+## 阶段五：AI流式稳定性与错误降级
+
+**5.1 SSE心跳与超时保护**
+- SSE流式接口每15秒发送注释行 `:keepalive\n\n`，防止Nginx `proxy_read_timeout`（默认60s）断开空闲连接。
+- 三级超时：首字超时30秒（LLM未返回首个token）、单delta间隔超时15秒、总流式超时120秒；超时返回已生成内容+ `{"type":"done","truncated":true,"reason":"timeout"}`。
+- 验收：LLM响应慢时连接不被Nginx断开；超时后前端收到部分内容而非空白。
+
+**5.2 delta序号与断点续传**
+- 每个SSE delta事件携带递增 `seq` 序号（`{"type":"delta","seq":42,"content":"..."}`）。
+- 后端Redis缓存最近100条delta：`chat_delta:{conversation_id}`（List结构，TTL=600秒），新消息开始时清空旧缓存。
+- 前端断线重连时带 `Last-Event-ID` 或 query `?last_seq=42`，后端从Redis读取seq>42的delta补发；缓存已过期则返回 `{"type":"resync","message_id":...}` 提示前端重新加载完整消息。
+- 验收：流式输出中断网5秒，恢复后从断点继续，不重复不丢失。
+
+**5.3 错误帧标准化**
+- SSE错误事件统一格式 `{"type":"error","code":"RATE_LIMITED","message":"请求过于频繁，请30秒后重试","retryable":true,"retry_after":30}`。
+- 错误码枚举：`NETWORK_ERROR`（网络错误，可重试）、`RATE_LIMITED`（限流，带retry_after）、`TOKEN_INVALID`（用户token无效）、`TOKEN_QUOTA`（余额不足）、`CONTENT_FILTERED`（内容违规，不可重试）、`PROVIDER_UNAVAILABLE`（服务端LLM不可用）、`TIMEOUT`（超时）。
+- 验收：各类错误场景返回对应code和retryable，前端可区分处理。
+
+**5.4 错误分级降级**
+- LLM熔断时（`llm_service` circuit open）：不返回固定文案，而是返回"AI服务暂时不可用，已切换基础分析模式"+基于规则的技术指标状态描述（调用indicator_service取MACD/KDJ状态，生成"MACD金叉、KDJ超买，短期趋势偏多"等规则文案）。
+- 用户token无效/余额不足：返回明确提示"您的DeepSeek API Key无效或余额不足，请检查配置"，不降级为服务端token（避免混淆费用归属）。
+- 工具调用失败（行情/指标接口异常）：Agent继续执行，在输出中标注"行情数据暂时不可用，以下分析基于历史数据"。
+- 验收：服务端LLM关闭时，AI对话仍返回基础技术分析；token错误有明确引导。
+
+---
+
+## 阶段六：AI记忆系统升级
+
+**6.1 Embedding升级为ONNX MiniLM（int8量化版）**
+- 替换 `HashEmbedding` 为 `MiniLMEmbedding`：加载 `all-MiniLM-L6-v2` ONNX **int8量化版**模型（约40MB，首次启动自动下载到本地models目录），384维语义向量，本地CPU推理（单条<5ms），无需外部API，保持记忆本地存储约束。
+- 量化方案：ONNX Runtime int8动态量化，精度损失<1%（语义检索召回率几乎无差异），推理速度提升约40%，运行时内存占用约100-150MB（fp32版约200-300MB）。
+- ChromaDB collection重建：新增迁移脚本，用新Embedding重新编码已有记忆（HashEmbedding的向量与MiniLM不兼容，需重建；记忆原文在 `memory_facts` 表保留，可重新向量化）。
+- 配置项 `EMBEDDING_MODEL=minilm`（可选hash回退），`EMBEDDING_MODEL_PATH` 指定本地模型路径，`EMBEDDING_QUANTIZATION=int8`（默认int8，可选fp32完整版，机器性能够时切换）。
+- 验收：记忆检索从字符匹配变为语义匹配（搜"左侧交易"能召回"逢低买入"相关记忆），检索延迟<30ms；模型文件≤50MB，启动后内存增量≤150MB。
+
+**6.2 记忆分层与重要性**
+- 短期记忆：最近10轮对话直接注入system prompt（不向量化），由 `chat_service` 从 `chat_messages` 取最近10轮。
+- 长期记忆：ChromaDB向量检索TopK=5，注入system prompt。
+- 记忆抽取时LLM返回重要性评分1-10（prompt中要求），存入 `memory_facts.importance`；检索排序按 `相似度×0.7 + 重要性×0.3` 加权。
+- 记忆清理：重要性<3的记忆30天后自动删除（Celery定时任务，每日凌晨执行）；重要性≥3的永久保留。
+- 验收：对话中AI能引用相关长期记忆；低重要性记忆自动过期。
+
+**6.3 记忆去重合并**
+- 新记忆写入前，与同用户已有记忆计算余弦相似度，>0.85时合并（更新已有记忆内容为较新表述，importance取最大值，不新增）。
+- 验收：重复表达同一事实不产生多条记忆。
+
+**6.4 记忆管理API**
+- `GET /api/v1/memory/facts`：分页返回用户记忆列表（内容摘要、重要性、来源对话ID、创建时间），支持按重要性筛选。
+- `DELETE /api/v1/memory/facts/{id}`：删除单条记忆（同步删ChromaDB向量+PG记录）。
+- `DELETE /api/v1/memory/facts`：清空全部记忆（重建ChromaDB collection）。
+- 验收：M区"记忆文件"可查看、删除记忆，删除后AI不再召回。
+
+---
+
+## 阶段七：多智能体可观测性增强
+
+**7.1 节点输出实时SSE推送**
+- LangGraph深度模式运行时，每个节点完成后通过SSE推送 `{"type":"agent_step","node":"technical","status":"done","summary":"MACD金叉...","duration_ms":2100}`。
+- 节点开始时推送 `{"type":"agent_step","node":"bull_researcher","status":"running"}`。
+- `agent_steps` 表已有，补充 `summary`（VARCHAR 500，节点输出摘要）和 `duration_ms` 字段（Alembic迁移）。
+- 验收：深度分析时前端实时看到5个节点依次完成。
+
+**7.2 节点失败降级**
+- LangGraph各节点用try/except包裹，单节点失败不中断图：记录 `status='failed'`+错误信息到agent_steps，使用默认中性观点替代（如技术分析失败用"技术分析暂不可用，默认中性"），最终结论标注"部分节点异常，结论仅供参考"。
+- 验收：模拟某节点抛异常，图仍能完成并返回结论，前端标注异常节点。
+
+**7.3 运行历史API完善**
+- `GET /api/v1/agent/runs?conversation_id=&page=&size=`：返回运行列表（id/conversation_id/symbol_id/final_decision/total_duration/created_at）。
+- `GET /api/v1/agent/runs/{id}/steps`：返回某次运行的完整5节点输出（node/status/summary/content/duration_ms）。
+- 验收：M区"运行记录"可列表、可查看详情。
+
+---
+
+## 阶段八：长会话上下文与策略生成可靠性
+
+**8.1 滑动窗口与摘要压缩**
+- `chat_service` 构建消息历史时：最近10轮完整取（user+assistant），第11轮起的早期对话用会话摘要替代。
+- `conversations` 表新增 `summary TEXT` 字段；每满10轮，异步调用LLM生成/更新摘要（≤200字），存入 `conversations.summary`。
+- 新会话加载时：有summary则注入 `{"role":"system","content":"之前对话摘要：..."}` + 最近10轮。
+- 验收：50轮长对话token用量稳定（不随轮数线性增长），AI仍能记住早期关键信息。
+
+**8.2 Token预算控制**
+- 发送LLM前计算总token（system prompt + 工具描述 + 历史 + 当前问题），超过模型上限80%（DeepSeek-chat 64K×80%≈51K）时，自动减少完整轮数（10→8→6）并改用更多摘要，直到预算内。
+- 响应头返回 `x-token-usage: {"prompt":...,"completion":...,"total":...}`，前端可展示。
+- 验收：超长对话不触发LLM token limit错误。
+
+**8.3 策略生成三级校验**
+- 第一级：`ast.parse` 语法校验（已有）。
+- 第二级：接口校验——检查 `initialize` 和 `on_bar` 函数存在、`on_bar` 参数签名为 `(ctx, bar)`、无顶层import。
+- 第三级：沙箱dry-run——用1根模拟K线（构造OHLCV字典）在RestrictedPython沙箱中执行 `initialize()`+`on_bar()`，捕获运行时异常（NameError/IndexError/ZeroDivisionError等）。
+- 校验结果返回前端：`{"valid":true}` 或 `{"valid":false,"errors":[{"line":12,"message":"name 'xxx' is not defined"}]}`。
+- 验收：生成的策略代码100%通过语法和执行校验后才可保存/回测。
+
+**8.4 生成失败自动重试**
+- 校验失败时，将错误信息（行号+错误类型+消息）拼入prompt，要求LLM修复后重新生成，最多重试2次。
+- 重试仍失败则返回用户："策略生成遇到问题，请尝试调整描述或基于模板创建"，并展示模板库入口。
+- 验收：故意生成有语法错误的策略，系统自动修复并通过校验。
+
+**8.5 策略模板库**
+- 内置5个经过验证的策略模板（双均线交叉、MACD金叉死叉、KDJ超买超卖、布林带突破、成交量异动），模板代码存在数据库 `strategy_templates` 表（id/name/description/code/params_schema）。
+- `GET /api/v1/strategy-templates` 返回模板列表；用户可"基于模板创建"，前端加载模板代码到编辑器，用户可修改参数后保存为自己的策略。
+- 验收：5个模板均可直接回测通过；用户可基于模板修改保存。
+
+**8.6 生成→回测一键流程**
+- 策略生成并通过校验后，SSE流末尾推送 `{"type":"strategy_ready","strategy_id":...,"auto_backtest":true}`。
+- 前端收到后自动调用 `POST /api/v1/backtest/tasks`（默认标的=当前选中标的，周期=1d，范围=近1年），轮询结果。
+- 回测完成后在对话气泡下方内嵌展示结果卡片（胜率/盈亏比/最大回撤/年化收益+资金曲线缩略图）。
+- 验收：描述策略想法→AI生成→自动回测→结果内嵌展示，全程无需手动切换页面。
+
+**8.7 会话标题自动生成**
+- 会话创建后第一条用户消息，异步调用LLM生成简短标题（≤15字），更新 `conversations.title`，通过SSE推送 `{"type":"title","title":"..."}` 通知前端。
+- 验收：发送第一条消息后J区会话列表标题自动更新。
