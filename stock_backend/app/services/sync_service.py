@@ -11,7 +11,8 @@ from app.data_providers.base import RealtimeSymbol
 from app.data_providers.factory import get_provider
 from app.models.kline import KLINE_MODELS
 from app.models.symbol import Symbol
-from app.repositories import kline_repo, ops_repo, snapshot_repo, symbol_repo
+from app.repositories import kline_repo, ops_repo, snapshot_repo, symbol_repo, user_repo
+from app.utils import market_cache
 from app.utils.db import get_session
 from app.utils.kline_partition import ensure_current_partitions
 
@@ -36,6 +37,191 @@ def _provider_params(sym: Symbol) -> tuple[str, str]:
             return sym.name, "industry_index"
         return sym.code, "index"
     return sym.code, sym.type
+
+
+def _write_bars(db, period: str, symbol_id: int, bars) -> int:
+    """幂等写 K 线 + 失效缓存 + 推送最新末根（WS 增量）。"""
+    added = kline_repo.upsert_bars(db, period, symbol_id, bars)
+    if added:
+        market_cache.invalidate_kline_cache(symbol_id, period)
+        if bars:
+            from app.ws import publisher
+
+            publisher.publish_kline(symbol_id, period, market_cache.kline_bar_to_dict(bars[-1]))
+    return added
+
+
+def _mark_watchlist_synced(db, symbol_id: int, status: str) -> None:
+    """同步结果回写关注列表 sync_status（best-effort，不影响主链路）。"""
+    try:
+        user_repo.update_watchlist_sync_status(db, symbol_id, status)
+    except Exception:  # noqa: BLE001
+        logger.warning("watchlist sync status update failed: symbol_id=%s", symbol_id, exc_info=True)
+
+
+# ---- V0.2 1.1 启动预同步 / 缓存预热 ----
+def stale_fixed_index_count(db) -> tuple[int, int]:
+    """固定指数最新日K超过1天或无数据的数量，返回 (stale, total)。"""
+    symbols = symbol_repo.list_fixed_indices(db)
+    threshold = datetime.now(UTC) - timedelta(days=1)
+    stale = 0
+    for sym in symbols:
+        ts = market_cache.as_utc(kline_repo.latest_ts(db, "1d", sym.id))  # DB naive → UTC
+        if ts is None or ts < threshold:
+            stale += 1
+    return stale, len(symbols)
+
+
+def maybe_presync_fixed_indices() -> dict:
+    """检查固定指数K线新鲜度，过期则触发 kline_init_fixed_indices 任务（不阻塞 API 启动）。"""
+    db = get_session()
+    try:
+        stale, total = stale_fixed_index_count(db)
+        if stale == 0:
+            return {"triggered": False, "stale": 0, "total": total}
+        from app.worker.tasks.sync_tasks import kline_init_fixed_indices
+
+        task = kline_init_fixed_indices.delay()
+        ops_repo.upsert_sync_status(
+            db,
+            "fixed_indices",
+            "queued",
+            0,
+            total,
+            f"检测到 {stale}/{total} 个固定指数无/过期数据，已触发预同步",
+            started_at=datetime.now(UTC),
+        )
+        db.commit()
+        logger.info("fixed indices presync triggered: task=%s stale=%d/%d", task.id, stale, total)
+        return {"triggered": True, "task_id": task.id, "stale": stale, "total": total}
+    finally:
+        db.close()
+
+
+def run_fixed_indices_sync() -> dict:
+    """固定指数预同步：49 条固定大盘/行业指数全周期K线，进度写 sync_status（X/49）。"""
+    db = get_session()
+    try:
+        provider = get_provider()
+        symbols = symbol_repo.list_fixed_indices(db)
+        total = len(symbols)
+        if total == 0:
+            return {"synced": 0}
+        end = datetime.now(UTC)
+        start = end - timedelta(days=settings.KLINE_INIT_DAYS)
+        ensure_current_partitions(db)
+        ops_repo.upsert_sync_status(
+            db, "fixed_indices", "running", 0, total, "固定指数预同步开始", started_at=datetime.now(UTC)
+        )
+        db.commit()
+        results: dict = {}
+        for i, sym in enumerate(symbols, 1):
+            if sym.type == "index" and not sym.code:  # 行业指数 code 回填
+                code = provider.resolve_index_code(sym.name)
+                if code:
+                    symbol_repo.update_code(db, sym.id, code)
+            counts: dict = {}
+            for period in ALL_PERIODS:
+                symbol_param, asset_type = _provider_params(sym)
+                bars = provider.fetch_kline(symbol_param, period, start, end, asset_type)
+                counts[period] = _write_bars(db, period, sym.id, bars)
+            ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
+            _mark_watchlist_synced(db, sym.id, "done")
+            progress = int(i / total * 100)
+            ops_repo.upsert_sync_status(
+                db, "fixed_indices", "running", progress, total, f"已同步 {i}/{total}"
+            )
+            db.commit()
+            results[sym.code or sym.name] = counts
+        ops_repo.upsert_sync_status(
+            db, "fixed_indices", "done", 100, total, "固定指数预同步完成", finished_at=datetime.now(UTC)
+        )
+        db.commit()
+        return results
+    finally:
+        db.close()
+
+
+# ---- V0.2 3.1 全量标的目录预同步 ----
+def run_catalog_sync() -> dict:
+    """全A股 + ETF 目录预同步：akshare 拉取 → 幂等 upsert symbols（is_catalog=True）。
+
+    数量校验：A股≥4800、ETF≥500，不达标返回 partial（调用方调度 1h 后重试）。
+    """
+    db = get_session()
+    try:
+        provider = get_provider()
+        ops_repo.upsert_sync_status(db, "catalog", "running", 0, 0, "全量目录同步开始", started_at=datetime.now(UTC))
+        catalog = provider.fetch_catalog()
+        stocks, etfs = catalog.get("stocks") or [], catalog.get("etfs") or []
+        added_stocks = symbol_repo.upsert_catalog_symbols(db, [(c, n, "stock", "SSE") for c, n in stocks])
+        added_etfs = symbol_repo.upsert_catalog_symbols(db, [(c, n, "etf", "SSE") for c, n in etfs])
+        db.commit()
+        # 搜索缓存失效：目录已更新
+        market_cache.invalidate_search_cache()
+        stock_count = symbol_repo.count_type(db, "stock")
+        etf_count = symbol_repo.count_type(db, "etf")
+        partial = stock_count < 4800 or etf_count < 500
+        status = "partial" if partial else "done"
+        message = (
+            f"A股 {stock_count} 只 / ETF {etf_count} 只，本次新增 stock={added_stocks} etf={added_etfs}"
+            + ("，未达标待 1h 后重试" if partial else "")
+        )
+        ops_repo.upsert_sync_status(
+            db, "catalog", status, 100, stock_count + etf_count, message, finished_at=datetime.now(UTC)
+        )
+        db.commit()
+        logger.info("catalog sync: %s", message)
+        return {
+            "stock_count": stock_count,
+            "etf_count": etf_count,
+            "added_stocks": added_stocks,
+            "added_etfs": added_etfs,
+            "status": status,
+        }
+    finally:
+        db.close()
+
+
+def maybe_catalog_sync() -> dict:
+    """启动检查：目录内 A 股 <4000 则触发 catalog_sync 任务（不阻塞启动）。"""
+    db = get_session()
+    try:
+        count = symbol_repo.count_catalog_stocks(db)
+        if count >= 4000:
+            return {"triggered": False, "count": count}
+        from app.worker.tasks.sync_tasks import catalog_sync
+
+        task = catalog_sync.delay()
+        logger.info("catalog sync triggered on startup: count=%d task=%s", count, task.id)
+        return {"triggered": True, "task_id": task.id, "count": count}
+    finally:
+        db.close()
+
+
+def warmup_fixed_indices_cache() -> dict:
+    """固定指数最近500根日K + 最新快照写 Redis（best-effort，失败不阻断启动）。"""
+    db = get_session()
+    try:
+        symbols = symbol_repo.list_fixed_indices(db)
+        kline_warmed, snap_warmed = 0, 0
+        for sym in symbols:
+            bars = kline_repo.latest_bars(db, "1d", sym.id, 500)
+            if bars:
+                market_cache.set_kline_cache(
+                    sym.id, "1d", 500, [market_cache.kline_bar_to_dict(b) for b in bars]
+                )
+                kline_warmed += 1
+            snap = snapshot_repo.get_snapshot(db, sym.id)
+            if snap:
+                market_cache.set_snapshot_cache(sym.id, market_cache.snapshot_to_cache_dict(snap))
+                snap_warmed += 1
+        return {"kline_warmed": kline_warmed, "snapshot_warmed": snap_warmed, "total": len(symbols)}
+    except Exception:  # noqa: BLE001 预热失败不阻断启动
+        logger.warning("fixed indices cache warmup failed", exc_info=True)
+        return {"warmup_error": True}
+    finally:
+        db.close()
 
 
 # ---- K线 ----
@@ -63,10 +249,11 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dic
             for period in ALL_PERIODS:
                 symbol_param, asset_type = _provider_params(sym)
                 bars = provider.fetch_kline(symbol_param, period, start, end, asset_type)
-                added = kline_repo.upsert_bars(db, period, sym.id, bars)
+                added = _write_bars(db, period, sym.id, bars)
                 counts[period] = added
                 logger.info("kline_init %s %s added=%d", sym.name, period, added)
             ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
+            _mark_watchlist_synced(db, sym.id, "done")
             db.commit()
             results[sym.code or sym.name] = counts
         return results
@@ -92,7 +279,7 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
             for period in ALL_PERIODS:
                 symbol_param, asset_type = _provider_params(sym)
                 bars = provider.fetch_kline(symbol_param, period, start, end, asset_type)
-                added = kline_repo.upsert_bars(db, period, sym.id, bars)
+                added = _write_bars(db, period, sym.id, bars)
                 counts[period] = added
             ops_repo.upsert_sync_task(db, "kline_incremental", sym.id, "success", datetime.now(UTC))
             db.commit()
@@ -138,6 +325,10 @@ def run_realtime_poll(symbol_id: int | None = None) -> dict:
             elif atype == "index":
                 quote.extra["pe"] = index_pe.get(sym.name)
             snapshot_repo.upsert_snapshot(db, quote)
+            _cache_snapshot(sym.id, quote)
+            from app.ws import publisher
+
+            publisher.publish_snapshot(sym.id, market_cache.snapshot_to_cache_dict(quote))
             # 特殊字段表：个股总市值/PE、ETF净值/溢价、指数PE（best-effort，任一字段非 None 才写避免覆盖旧值）
             if atype == "stock" and (
                 quote.extra.get("market_cap") is not None or quote.extra.get("pe") is not None
@@ -149,7 +340,6 @@ def run_realtime_poll(symbol_id: int | None = None) -> dict:
                 snapshot_repo.upsert_etf_premium(db, sym.id, quote.extra.get("nav"), quote.extra.get("premium"))
             elif atype == "index" and quote.extra.get("pe") is not None:
                 snapshot_repo.upsert_index_valuation(db, sym.id, quote.extra.get("pe"))
-            _cache_snapshot(sym.id, quote)
             synced += 1
         ops_repo.upsert_sync_task(
             db,
@@ -197,17 +387,5 @@ def _fill_industry_quote_from_kline(db, sym: Symbol, quote) -> None:
 
 
 def _cache_snapshot(symbol_id: int, quote) -> None:
-    """快照写 Redis（TTL 走配置），供行情 API 快速返回。"""
-    try:
-        import json
-
-        from app.utils.redis_client import get_redis_client
-
-        key = f"snapshot:{symbol_id}"
-        get_redis_client().set(
-            key,
-            json.dumps({"price": quote.price, "updated_at": quote.updated_at and quote.updated_at.isoformat()}),
-            ex=settings.SNAPSHOT_CACHE_TTL,
-        )
-    except Exception:  # noqa: BLE001 Redis 不可用不影响主链路
-        logger.warning("snapshot redis cache failed: symbol_id=%s", symbol_id)
+    """快照写 Redis（完整 14 项字段，TTL 走配置），供行情 API 快速返回。"""
+    market_cache.set_snapshot_cache(symbol_id, market_cache.snapshot_to_cache_dict(quote))

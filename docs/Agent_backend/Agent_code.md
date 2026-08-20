@@ -119,3 +119,59 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-08-18
 编码内容（描述）：行情数据获取修复（测试工程师）。① Alembic 0003 迁移 snapshot_realtime.volume/amount 改 nullable（海外指数无成交量存 NULL、前端显示"--"，区分"缺失"与"真实零"），upsert_snapshot 不再 _not_null 兜底 volume/amount；② 特殊字段纳入 run_realtime_poll 主链路：个股总市值/PE 取自 stock_zh_a_spot_em、ETF净值/溢价取自 fund_etf_spot_em（溢价=-折价率）、指数PE 新增 provider.fetch_index_pe（乐咕 stock_index_pe_lg 覆盖沪深300/上证50/中证1000），落 stock_fundamentals/etf_premiums/index_valuations；③ 行业指数匹配改通用评分模糊匹配（BK code优先→名称精确→剥离罗马后缀→前后缀差≤3且仅≥3字词→否定词惩罚，阈值75，不硬编码映射），35行业23个正确匹配、10个无对应板块诚实"--"；④ 行业指数基本数据用日K推导补全（昨收=前根close/OHLC/量/额/振幅）。全库 133 pytest 全绿，ruff 通过。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段四 4.1 独立Provider拆分。新浪/同花顺降级逻辑从 EastMoneyProvider 抽为独立 SinaProvider（A股指数日K stock_zh_index_daily）、THSProvider（行业板块日K stock_board_industry_index_ths），均实现 BaseDataProvider（can_fetch_kline 范围判定 + 探针标的）；EastMoneyProvider 移除 sina/ths 字样与降级分支。base.py 统一 _call 重试封装（raise_on_giveup 抛 ProviderError 供熔断识别）、to_float/unavailable_quote 共享 helper。验收：三 Provider 独立可测（6 单测），EastMoney 无 sina/ths 引用。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段四 4.2 DataProviderFactory 优先级链+熔断。重写 factory.py：有序链 [eastmoney,sina,ths]（DATA_PROVIDER_PRIORITY 配置，可调序/禁用），每 Provider 独立 ProviderCircuit（连续失败N次熔断M秒、半开探测），scope 过滤跳过不适用 Provider；fetch_realtime 全失败返回对齐 unavailable 快照保 zip 契约；resolve_index_code/fetch_index_pe/fetch_catalog/search_ak_stock best-effort 委托。get_provider() 返回工厂单例，业务调用方式不变。验收：优先级/降级/熔断/半开恢复/健康 13 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段四 4.3 Provider 健康检查。Alembic 0004 users.is_admin；deps.get_current_admin 403 鉴权；GET /api/v1/admin/providers/health 返回各 Provider 状态/失败数/最近成功/冷却剩余；beat provider_probe 每60s 探测熔断 Provider（固定标的1根日K）成功恢复；ADMIN_USERNAMES 启动自动置 is_admin。验收：管理端点鉴权+状态返回 3 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段一 1.1 启动预同步+预热。Alembic 0004 新增 sync_status 表（scope/target_id/status/progress/total/message/started_at/finished_at）；docker-entrypoint 增加 presync_fixed_indices.py（检查49固定指数最新日K>1天或无→发 kline_init_fixed_indices 任务，进度写 sync_status X/49）；FastAPI lifespan 预热固定指数最近500根日K+最新快照写 Redis（APP_ENV=test 跳过）；sync_fixed_indices.py 保留手动脚本。验收：预同步触发/跳过、sync_status 落库、预热写缓存 6 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段一 1.2 K线Redis缓存。market_service.get_kline 默认区间（未显式 start/end/offset）走"最近N根"缓存 key=kline:{symbol_id}:{period}:{limit}（TTL 300），未命中查 PG 回写；缓存击穿 SET kline_lock NX EX 5 分布式锁（未获锁等待2s读缓存）；sync_service._write_bars 新K线写入后 scan 失效该标的所有周期缓存并推送末根；kline_repo.latest_bars 取最近N根升序。验收：二次命中/显式区间绕过/失效/锁互斥 4 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段一 1.3 快照缓存增强。SNAPSHOT_CACHE_TTL 5→300；market_cache.snapshot_to_cache_dict 缓存完整14字段；get_snapshots 改 Redis MGET→PG 兜底→回写，附带 data_age_seconds（naive DB 时间戳 as_utc 归一）；realtime_poll 写快照后 SETEX 300 覆盖 + 发布 WS。验收：全字段缓存/数据龄/二次命中 3 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段一 1.4 指标缓存优化。原缓存键含默认 start/end（按 now 计算致命中率≈0），改为默认区间键 indicator:{symbol_id}:{period}:{names}:{params_hash}:{latest_ts}（latest_ts 新K线自动失效），显式区间追加区间参数防串键。验收：默认键稳定/显式含区间/重复计算一致 3 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段三 3.1 全量标的目录预同步。Alembic 0004 symbols.is_catalog+(is_catalog,type)索引；EastMoneyProvider.fetch_catalog（stock_info_a_code_name 全A股 + fund_etf_spot_em ETF），symbol_repo.upsert_catalog_symbols 幂等（新 is_catalog=True、已存在保留）；catalog_sync Celery 任务（autoretry 3次退避，数量校验 A股≥4800/ETF≥500 不达标 partial 1h 后重试），beat 每日凌晨3:00；启动 maybe_catalog_sync <4000 触发；POST /api/v1/admin/catalog/sync 手动触发；完成后失效 search:*。验收：upsert/幂等/启动触发/管理端点 5 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段三 3.2 搜索三层增强。search_symbols 三层：精确代码→目录模糊（code LIKE q% / name LIKE %q%，按 is_catalog+code 排序 已同步优先）→外部回退（akshare 实时过滤入库+重查）；结果缓存 search:{type}:{keyword} TTL 3600；返回 is_catalog/has_kline（SymbolSearchOut，kline_1d 存在判定）；端点加 type/limit 参数。验收：精确优先/已同步优先/缓存/外部回退 5 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段三 3.3 关注添加自动同步。POST /watchlist 新增记录且标的无K线→置 sync_status=pending + 异步 kline_init（仅该标的）立即返回；已有K线置 done+last_synced_at；kline_init 任务内 _mark_watchlist_synced 回写 done/failed（user_repo.update_watchlist_sync_status）；WatchlistOut 增 sync_status/last_synced_at。验收：新股触发任务/已同步直接 done 2 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段三 3.4 关注列表Redis缓存。list_watchlist Redis watchlist:{user_id}→PG→回写（TTL 300，批量快照一次查询免 N+1），增删 DEL；/snapshot 带有效 token 且请求集⊆关注集时按 watchlist_snap:{user_id} 缓存（交易时段10s/非交易300s，get_current_user_optional 可选鉴权）。验收：二次命中/删除失效/关注集快照缓存 3 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段二 2.1 WS连接管理。app/ws/manager.py ConnectionManager 单例（user_id→多连接列表支持多标签页，subscribe 集合，broadcast_snapshots/kline 按订阅过滤）；app/api/v1/ws_market.py WS /api/v1/ws/market query token 鉴权（无效 4001 拒绝）；心跳每15s ping，30s 无消息（含pong）断开。验收：鉴权拒绝/心跳/订阅记录/管理器过滤 6 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段二 2.2 订阅模型与增量推送。realtime_poll 写快照后 app/ws/publisher.publish_snapshot 发 Redis pub/sub market:updates；_write_bars 新K线发布 publish_kline 末根；API 进程 lifespan 启动市场监听线程订阅转发到订阅连接（broadcast_snapshots 对比订阅集，仅推有更新的标的）；消息格式 {"type":"snapshot","data":{symbol_id:{price,change_pct,...}}} / {"type":"kline",...}。验收：广播过滤/末根推送 2 单测。
+
+---
+编码时间：2026-08-20
+编码内容（描述）：V0.2 阶段二 2.3 断线重连与增量补拉。客户端重连后发 {"action":"sync","since":"ISO"}，snapshot_repo.get_updated_after 查该时间后更新的快照（naive UTC 归一）批量返回订阅范围内标的，补齐断线缺口；重连退避与 HTTP 轮询降级为前端行为，后端提供 sync 动作即可。验收：补拉批量返回 1 单测。

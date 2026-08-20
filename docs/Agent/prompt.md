@@ -132,6 +132,7 @@ V0.2开发提示词
 3. 需要人工配置或说明日志：按 roadmap.md 上方的文字要求，将说明补充在该文件下方，不要更改文档最上方的文字说明。
 4. 每完成一个细分任务（如1.1）：在 D:\stock-invest-system\docs\Agent_backend\Agent_code.md 中按文件要求补充编码记录，不要更改文档最上方的文字说明。
 5. 数据库变更：使用 Alembic 迁移（不要手写SQL改表结构），迁移脚本放在 stock_backend/alembic/versions/ 下；种子数据等辅助SQL放在 D:\stock-invest-system\docs\sql\ 中新增文件，不要修改原有 sql 文件。
+6. 在开发完成后，对D:\stock-invest-system\docs\Agent\memory.md 记忆文件进行补充。
 
 【开发原则】
 1. 如果对开发需求或具体细节不清楚，停止工作，先问我疑惑的地方，清楚后再开发，不要盲目写代码。

@@ -38,6 +38,20 @@ def kline_init(self, symbol_id: int | None = None, days: int | None = None) -> d
         raise
 
 
+@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_init_fixed_indices")
+def kline_init_fixed_indices(self) -> dict:
+    """固定指数预同步（V0.2 1.1）：49 条固定大盘/行业指数全周期K线，进度写 sync_status。"""
+    _log("kline_init", self.request.id, "running", "fixed indices presync start")
+    try:
+        result = sync_service.run_fixed_indices_sync()
+        _log("kline_init", self.request.id, "success", f"fixed indices presync done: {result}")
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("kline_init_fixed_indices failed")
+        _log("kline_init", self.request.id, "failed", str(exc))
+        raise
+
+
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_incremental")
 def kline_incremental(self, symbol_id: int | None = None) -> dict:
     """每日收盘后增量同步。"""
@@ -66,3 +80,41 @@ def realtime_poll(self, symbol_id: int | None = None, force: bool = False) -> di
         logger.exception("realtime_poll failed")
         _log("realtime", self.request.id, "failed", str(exc))
         raise
+
+
+@celery_app.task(
+    bind=True,
+    name="app.worker.tasks.sync_tasks.catalog_sync",
+    autoretry_for=(Exception,),
+    retry_backoff=3,
+    retry_kwargs={"max_retries": 3},
+)
+def catalog_sync(self) -> dict:
+    """全量标的目录同步（每日凌晨 + 启动/手动触发）。外部源异常自动重试 3 次（3s/9s/27s）。"""
+    _log("catalog_sync", self.request.id, "running", "start")
+    try:
+        result = sync_service.run_catalog_sync()
+        _log("catalog_sync", self.request.id, "success", f"done: {result}")
+        if result.get("status") == "partial":
+            # 数量不达标：1 小时后自动补一次
+            self.retry(countdown=3600, max_retries=1)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("catalog_sync failed")
+        _log("catalog_sync", self.request.id, "failed", str(exc))
+        raise
+
+
+@celery_app.task(name="app.worker.tasks.sync_tasks.provider_probe")
+def provider_probe() -> dict:
+    """探测熔断中的行情 Provider（固定标的 1 根日K），成功即自动恢复。"""
+    from app.data_providers.factory import get_provider
+
+    try:
+        results = get_provider().probe()
+        if results:
+            logger.info("[provider] probe results: %s", results)
+        return {"probed": results}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("provider_probe failed: %s", exc)
+        return {"probed": [], "error": str(exc)[:120]}

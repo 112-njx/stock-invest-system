@@ -16,4 +16,12 @@ def build_beat_schedule() -> dict:
             "task": "app.worker.tasks.sync_tasks.realtime_poll",
             "schedule": settings.REALTIME_POLL_INTERVAL,  # 秒
         },
+        "provider-probe": {
+            "task": "app.worker.tasks.sync_tasks.provider_probe",
+            "schedule": settings.PROVIDER_PROBE_INTERVAL,  # 秒：探测熔断中 Provider
+        },
+        "catalog-sync-daily": {
+            "task": "app.worker.tasks.sync_tasks.catalog_sync",
+            "schedule": crontab(hour=3, minute=0),  # 每日凌晨 3:00 全量目录同步
+        },
     }

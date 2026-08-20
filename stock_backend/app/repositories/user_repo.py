@@ -14,6 +14,14 @@ def get_by_username(db: Session, username: str) -> User | None:
     return db.scalar(select(User).where(User.username == username))
 
 
+def set_admin_by_username(db: Session, username: str) -> None:
+    """按用户名置管理员（幂等，不存在跳过）。"""
+    user = get_by_username(db, username)
+    if user and not user.is_admin:
+        user.is_admin = True
+        db.flush()
+
+
 def get_by_id(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
 
@@ -47,6 +55,11 @@ def get_watchlist_entry(db: Session, user_id: int, symbol_id: int) -> UserWatchl
     )
 
 
+def list_watchlist_symbol_ids(db: Session, user_id: int) -> list[int]:
+    """当前用户关注标的 id 集合（快照按关注集缓存判定用）。"""
+    return [r[0] for r in db.execute(select(UserWatchlist.symbol_id).where(UserWatchlist.user_id == user_id))]
+
+
 def add_watchlist(db: Session, user_id: int, symbol_id: int) -> UserWatchlist:
     """幂等添加：UNIQUE(user_id, symbol_id)，重复添加直接返回已存在记录。"""
     row = get_watchlist_entry(db, user_id, symbol_id)
@@ -65,6 +78,18 @@ def delete_watchlist(db: Session, user_id: int, watchlist_id: int) -> bool:
     db.delete(row)
     db.flush()
     return True
+
+
+def update_watchlist_sync_status(db: Session, symbol_id: int, status: str) -> None:
+    """按标的更新所有用户关注记录的同步状态（best-effort，供 kline_init 回写）。"""
+    from datetime import UTC, datetime
+
+    rows = list(db.scalars(select(UserWatchlist).where(UserWatchlist.symbol_id == symbol_id)))
+    for row in rows:
+        row.sync_status = status
+        if status == "done":
+            row.last_synced_at = datetime.now(UTC)
+    db.flush()
 
 
 # ---- support_resistance ----

@@ -23,25 +23,24 @@ from pathlib import Path
 # 保证可从仓库根或 stock_backend 目录运行
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import select  # noqa: E402
-
 from app.core.config import get_settings  # noqa: E402
-from app.data_providers.eastmoney import _to_sina_index  # noqa: E402
 from app.data_providers.factory import get_provider  # noqa: E402
+from app.data_providers.sina import SinaProvider, to_sina_index  # noqa: E402
 from app.models.symbol import Symbol  # noqa: E402
 from app.repositories import kline_repo, symbol_repo  # noqa: E402
 from app.services import sync_service  # noqa: E402
 from app.utils.db import get_session  # noqa: E402
+from sqlalchemy import select  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("sync_fixed_indices")
 
 
 def fetch_daily_bars(provider, sym: Symbol, start: datetime, end: datetime):
-    """取单个固定指数日K：A股大盘指数优先新浪（快），其余走 provider 重试/降级。"""
-    sina = _to_sina_index(sym.code) if sym.type == "index" and sym.code else None
-    if sina:
-        bars = provider._fetch_sina_index_daily(sym.code, start, end)
+    """取单个固定指数日K：A股大盘指数优先新浪（快），其余走 provider 优先级链（eastmoney→sina→ths）。"""
+    if sym.type == "index" and sym.code and to_sina_index(sym.code):
+        sina = SinaProvider()
+        bars = sina.fetch_kline(sym.code, "1d", start, end, "index")
         if bars:
             return bars
     sym_param, asset_type = sync_service._provider_params(sym)

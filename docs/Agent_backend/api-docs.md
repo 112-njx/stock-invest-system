@@ -857,3 +857,76 @@ curl "http://127.0.0.1:8000/api/v1/memory/files" -H "Authorization: Bearer eyJhb
 ```json
 {"code":0,"msg":"ok","data":[{"path":"D:/stock-invest-system/stock_backend/data/memory/1/rule.md","content_type":"rule","updated_at":"2026-08-11T05:00:00Z"}]}
 ```
+
+# 管理员 API（Admin）
+
+## 1. Provider 健康检查
+
+- **接口名称**：行情 Provider 健康状态
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/admin/providers/health
+- **接口作用**：返回各行情 Provider（eastmoney/sina/ths）可用状态/熔断中/失败次数/最近成功时间（is_admin 鉴权）。
+- **请求 Body**：无（Header：Authorization: Bearer <token>，需 is_admin）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/admin/providers/health" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":[{"name":"eastmoney","state":"closed","failures":0,"last_success_at":"2026-08-20T10:00:00Z","cooldown_remaining":0},...]}
+```
+
+## 2. 全量目录同步（手动触发）
+
+- **接口名称**：触发标的目录同步
+- **请求 Method**：POST
+- **请求 Path**：/api/v1/admin/catalog/sync
+- **接口作用**：手动触发全量A股+ETF目录同步（akshare），异步执行，返回任务 ID（is_admin 鉴权）。
+- **请求 Body**：无（Header：Authorization: Bearer <token>，需 is_admin）
+
+**请求示例（curl）**
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/admin/catalog/sync" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"目录同步已提交","data":{"task_id":"e2a1...","status":"queued"}}
+```
+
+# 实时行情 WebSocket API（WS）
+
+## 1. 实时行情推送
+
+- **接口名称**：实时行情 WebSocket
+- **请求 Method**：WS
+- **请求 Path**：/api/v1/ws/market
+- **接口作用**：实时快照/K线增量推送。query 传 token 鉴权；订阅消息 `{"action":"subscribe","symbol_ids":[1,2]}`；服务端每 15s 发 `{"type":"ping"}`，30s 无 pong 断开；断线补拉 `{"action":"sync","since":"ISO时间"}`。
+- **请求 Body**：无（Query：token=JWT）
+
+**请求示例（JS 伪代码）**
+
+```js
+const ws = new WebSocket(`ws://127.0.0.1:8000/api/v1/ws/market?token=${token}`);
+ws.onopen = () => ws.send(JSON.stringify({action:"subscribe", symbol_ids:[125,70]}));
+ws.onmessage = e => console.log(e.data); // {"type":"ping"} / {"type":"snapshot","data":{...}} / {"type":"kline",...}
+```
+
+**成功返回示例（推送消息）**
+
+```json
+{"type":"snapshot","data":{"125":{"price":1309.22,"change":4.57,"change_pct":0.35,"updated_at":"2026-08-20T10:00:00Z"}}}
+```
+
+# V0.2 现有端点增强说明
+
+- `GET /api/v1/symbols/search`：新增 Query `type`（stock/etf/index 过滤）与 `limit`；返回字段新增 `is_catalog`（TRUE=仅目录未同步K线）、`has_kline`（是否已有K线），前端据此标注"已同步/未同步"。
+- `GET /api/v1/snapshot`：返回字段新增 `data_age_seconds`（快照数据龄，当前时间-updated_at），前端据此标注"数据时间"而非"--"；请求带有效登录 token 且 symbol 集合 ⊆ 该用户关注列表时，结果按 `watchlist_snap:{user_id}` 缓存（交易时段 10s / 非交易 300s）。
+- `GET /api/v1/watchlist`：返回字段新增 `sync_status`（pending/syncing/done/failed）与 `last_synced_at`，前端展示"同步中/已同步/失败"。
+- `GET /api/v1/kline`：默认区间（未传 start/end）走 Redis "最近N根"缓存，连续请求毫秒级返回；显式区间仍直查 PG。

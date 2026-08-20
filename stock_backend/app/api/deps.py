@@ -44,3 +44,23 @@ def get_current_user(
     if user is None:
         raise ApiError(status_code=401, code=40100, msg="用户不存在")
     return user
+
+
+def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """可选鉴权：token 缺失/无效返回 None 而非 401（如 /snapshot 按关注集缓存的场景）。"""
+    if credentials is None:
+        return None
+    user_id = decode_access_token(credentials.credentials)
+    if user_id is None:
+        return None
+    return user_repo.get_by_id(db, user_id)
+
+
+def get_current_admin(current: User = Depends(get_current_user)) -> User:
+    """管理员依赖：非 is_admin 用户抛 403（管理端点：Provider 健康、目录同步等）。"""
+    if not current.is_admin:
+        raise ApiError(status_code=403, code=40300, msg="需要管理员权限")
+    return current

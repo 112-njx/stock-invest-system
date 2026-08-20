@@ -49,6 +49,7 @@ def compute_indicators(
     symbol_id = market_service.resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
+    explicit_range = start is not None or end is not None
     if end is None:
         end = datetime.now(UTC)
     if start is None:
@@ -59,7 +60,7 @@ def compute_indicators(
         return []
 
     latest_ts = bars[-1].ts
-    key = _cache_key(symbol_id, period, names, params, start, end, limit, latest_ts)
+    key = _cache_key(symbol_id, period, names, params, latest_ts, explicit_range, start, end, limit)
     cached = _get_cache(key)
     if cached is not None:
         return cached
@@ -77,17 +78,22 @@ def _cache_key(
     period: str,
     names: list[str],
     params: dict | None,
+    latest_ts: datetime,
+    explicit_range: bool,
     start: datetime,
     end: datetime,
     limit: int,
-    latest_ts: datetime,
 ) -> str:
+    """默认区间（未显式指定 start/end）按"最新N根"缓存：键只含 latest_ts，新K线到达自动失效。
+
+    显式区间请求追加区间参数，避免不同范围结果串键（命中率主要优化默认场景）。
+    """
     params_hash = hashlib.md5(json.dumps(params or {}, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
     names_sorted = ",".join(sorted(names))
-    return (
-        f"indicator:{symbol_id}:{period}:{names_sorted}:{params_hash}:"
-        f"{start.isoformat()}:{end.isoformat()}:{limit}:{latest_ts.isoformat()}"
-    )
+    key = f"indicator:{symbol_id}:{period}:{names_sorted}:{params_hash}:{latest_ts.isoformat()}"
+    if explicit_range:
+        key += f":{start.isoformat()}:{end.isoformat()}:{limit}"
+    return key
 
 
 def _get_cache(key: str) -> list[dict] | None:

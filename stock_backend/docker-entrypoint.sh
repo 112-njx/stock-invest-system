@@ -30,5 +30,8 @@ alembic upgrade head
 echo "[entrypoint] seeding fixed indices..."
 python scripts/seed_fixed_indices.py
 
+echo "[entrypoint] checking fixed indices presync..."
+python scripts/presync_fixed_indices.py || echo "[entrypoint] presync check failed (skip, worker will sync on schedule)"
+
 echo "[entrypoint] starting: $*"
 exec "$@"

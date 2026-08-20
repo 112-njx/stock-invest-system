@@ -45,7 +45,7 @@ class WatchlistAddIn(BaseModel):
 
 
 class WatchlistOut(BaseModel):
-    """关注列表行：合并实时快照（代码/名称/最新价/涨跌幅）。"""
+    """关注列表行：合并实时快照（代码/名称/最新价/涨跌幅）+ 同步状态。"""
 
     id: int
     symbol_id: int
@@ -56,6 +56,8 @@ class WatchlistOut(BaseModel):
     change: float | None = None
     change_pct: float | None = None
     updated_at: datetime | None = None
+    sync_status: str = "pending"  # pending/syncing/done/failed
+    last_synced_at: datetime | None = None
     created_at: datetime
 
 

@@ -430,3 +430,16 @@
 **8.7 会话标题自动生成**
 - 会话创建后第一条用户消息，异步调用LLM生成简短标题（≤15字），更新 `conversations.title`，通过SSE推送 `{"type":"title","title":"..."}` 通知前端。
 - 验收：发送第一条消息后J区会话列表标题自动更新。
+
+---
+
+## 人工配置 / 日志说明（V0.2 第一波追加）
+
+- 管理员：在 stock_backend/.env 配置 `ADMIN_USERNAMES=用户名1,用户名2`（逗号分隔），启动时自动置 is_admin=true；未配置时 /api/v1/admin/* 无管理员可用返回 403。
+- WebSocket 实时推送：前端连 `ws://.../api/v1/ws/market?token=<JWT>`，交易时段价格由 realtime_poll 经 Redis pub/sub 推送（延迟≤5s）；Redis 未启动则 WS 仅心跳可用、行情走 HTTP 轮询。
+- 全量目录同步：首次启动/重置库后由 entrypoint 自动触发（目录A股<4000）；也可 `POST /api/v1/admin/catalog/sync` 手动触发，或等每日凌晨3:00 beat（catalog_sync）。
+- 关注添加自动同步：新增关注且无K线标的约10秒内由 kline_init 补齐K线，列表 sync_status 展示"同步中/已同步"（kline_init 失败标 failed 可重试）。
+- Provider 熔断/健康：东方财富被限流自动切新浪/同花顺（日志 `[provider] eastmoney failed, fallback to ...`）；`GET /api/v1/admin/providers/health` 查看各源状态，beat 每60s 探测熔断源自动恢复。
+- 缓存体系：K线/快照/搜索/关注列表均走 Redis（TTL 见 .env），Redis 不可用时自动降级直查 PostgreSQL；快照 data_age_seconds 供前端标注"数据时间"。
+- 预同步脚本：`python scripts/presync_fixed_indices.py` 可手动触发固定指数/目录检查（幂等可重跑），容器启动已自动执行。
+

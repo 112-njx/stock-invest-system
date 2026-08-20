@@ -61,6 +61,20 @@ def get_bars(
     return list(db.scalars(stmt))
 
 
+def latest_bars(db: Session, period: str, symbol_id: int, limit: int = 1000) -> list:
+    """最近 N 根 K 线（返回按 ts 升序），供"最新N根"缓存与默认查询。"""
+    model = _model(period)
+    stmt = (
+        select(model)
+        .where(model.symbol_id == symbol_id)
+        .order_by(model.ts.desc())
+        .limit(limit)
+    )
+    rows = list(db.scalars(stmt))
+    rows.reverse()
+    return rows
+
+
 def latest_ts(db: Session, period: str, symbol_id: int) -> datetime | None:
     model = _model(period)
     return db.scalar(select(model.ts).where(model.symbol_id == symbol_id).order_by(model.ts.desc()).limit(1))

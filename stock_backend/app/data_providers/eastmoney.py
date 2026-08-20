@@ -13,7 +13,15 @@ import pandas as pd
 
 from app.core.config import get_settings
 
-from .base import BaseDataProvider, KlineBar, RealtimeQuote, RealtimeSymbol
+from .base import (
+    BaseDataProvider,
+    KlineBar,
+    ProviderError,
+    RealtimeQuote,
+    RealtimeSymbol,
+    _to_float,
+    unavailable_quote,
+)
 from .em_utils import install_requests_patch
 
 logger = logging.getLogger(__name__)
@@ -35,41 +43,13 @@ class EastMoneyProvider(BaseDataProvider):
     name = "eastmoney"
 
     def __init__(self) -> None:
+        super().__init__()
         install_requests_patch()
         import akshare as ak
 
         self._ak = ak
-        settings = get_settings()
-        self.timeout = settings.SYNC_TIMEOUT
-        self.retry_times = settings.SYNC_RETRY_TIMES
-        self.retry_backoff = settings.SYNC_RETRY_BACKOFF
         self._board_map_cache: tuple[float, dict[str, str]] | None = None  # (ts, {名称: 板块代码})
         self._board_map_ttl = 3600  # 秒
-
-    # ---- 通用调用封装 ----
-    def _call(self, fn, retry_times: int | None = None, **kwargs):
-        """带指数退避重试的外部调用；彻底失败返回 None（调用方降级）。
-
-        retry_times 覆盖全局配置：实时快照类短暂数据用 1 次，避免占用 worker。
-        """
-        retries = self.retry_times if retry_times is None else retry_times
-        last_exc = None
-        for attempt in range(retries):
-            try:
-                return fn(**kwargs)
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                wait = self.retry_backoff * (2**attempt)
-                logger.warning(
-                    "[eastmoney] %s failed (attempt %d): %s, retry in %.1fs",
-                    getattr(fn, "__name__", fn),
-                    attempt + 1,
-                    str(exc)[:120],
-                    wait,
-                )
-                time.sleep(wait)
-        logger.error("[eastmoney] %s give up: %s", getattr(fn, "__name__", fn), last_exc)
-        return None
 
     # ---- K线 ----
     def fetch_kline(
@@ -82,97 +62,20 @@ class EastMoneyProvider(BaseDataProvider):
     ) -> list[KlineBar]:
         if period in _MIN_PERIODS:
             return self._fetch_min_kline(symbol, start, end, asset_type)
-        bars = self._fetch_daily_kline(symbol, period, start, end, asset_type)
-        # 东方财富指数接口反爬限流时降级新浪（仅 A 股指数日K），保证默认大盘指数行情可用
-        if not bars and asset_type == "index" and period == "1d":
-            bars = self._fetch_sina_index_daily(symbol, start, end)
-        return bars
+        return self._fetch_daily_kline(symbol, period, start, end, asset_type)
 
     def _fetch_daily_kline(self, symbol, period, start, end, asset_type) -> list[KlineBar]:
         bars: list[KlineBar] = []
         args = self._daily_args(asset_type, symbol, period, start, end)
         if args is None:
             return bars
-        df = self._call(args.pop("fn"), **args)
+        df = self._call(args.pop("fn"), raise_on_giveup=True, **args)
         if df is None or df.empty:
-            # 东方财富行业板块接口被限流时，降级同花顺板块指数（仅 industry_index 日K）
-            if asset_type == "industry_index" and period == "1d":
-                return self._fetch_ths_board_daily(symbol, start, end)
             return bars
         for _, row in df.iterrows():
             bar = _row_to_daily_bar(row)
             if bar is not None:
                 bars.append(bar)
-        return bars
-
-    def _fetch_ths_board_daily(self, board_name, start, end) -> list[KlineBar]:
-        """同花顺板块指数日K降级兜底（stock_board_industry_index_ths，仅 industry_index 1d）。"""
-        df = self._call(
-            self._ak.stock_board_industry_index_ths,
-            symbol=board_name,
-            start_date=start.strftime("%Y%m%d"),
-            end_date=end.strftime("%Y%m%d"),
-        )
-        if df is None or df.empty:
-            return []
-        bars: list[KlineBar] = []
-        for _, row in df.iterrows():
-            try:
-                ts = pd.to_datetime(row["日期"]).to_pydatetime().replace(tzinfo=UTC)
-            except Exception:  # noqa: BLE001
-                continue
-            o = _to_float(row.get("开盘价"))
-            h = _to_float(row.get("最高价"))
-            low = _to_float(row.get("最低价"))
-            c = _to_float(row.get("收盘价"))
-            if o is None or c is None or h is None or low is None or h < low:
-                continue
-            bars.append(
-                KlineBar(
-                    ts=ts,
-                    open=o,
-                    high=h,
-                    low=low,
-                    close=c,
-                    volume=int(_to_float(row.get("成交量")) or 0),
-                    amount=_to_float(row.get("成交额")) or 0.0,
-                )
-            )
-        return bars
-
-    def _fetch_sina_index_daily(self, symbol, start, end) -> list[KlineBar]:
-        """新浪指数日K降级兜底（stock_zh_index_daily 仅 A 股指数，1d）。"""
-        sina_symbol = _to_sina_index(symbol)
-        if not sina_symbol:
-            return []
-        df = self._call(self._ak.stock_zh_index_daily, symbol=sina_symbol)
-        if df is None or df.empty:
-            return []
-        bars: list[KlineBar] = []
-        for _, row in df.iterrows():
-            try:
-                ts = pd.to_datetime(row["date"]).to_pydatetime().replace(tzinfo=UTC)
-            except Exception:  # noqa: BLE001
-                continue
-            if not (start <= ts <= end):
-                continue
-            o = _to_float(row.get("open"))
-            h = _to_float(row.get("high"))
-            low = _to_float(row.get("low"))
-            c = _to_float(row.get("close"))
-            if o is None or c is None or h is None or low is None or h < low:
-                continue
-            bars.append(
-                KlineBar(
-                    ts=ts,
-                    open=o,
-                    high=h,
-                    low=low,
-                    close=c,
-                    volume=int(_to_float(row.get("volume")) or 0),
-                    amount=0.0,  # 新浪指数日K无成交额，置 0
-                )
-            )
         return bars
 
     def _daily_args(self, asset_type, symbol, period, start, end) -> dict | None:
@@ -238,7 +141,7 @@ class EastMoneyProvider(BaseDataProvider):
         else:
             logger.warning("[eastmoney] unknown asset_type=%s", asset_type)
             return bars
-        df = self._call(fn, **args)
+        df = self._call(fn, raise_on_giveup=True, **args)
         if df is None or df.empty:
             return bars
         for _, row in df.iterrows():
@@ -260,24 +163,24 @@ class EastMoneyProvider(BaseDataProvider):
     def _fetch_realtime_type(self, asset_type, items: list[RealtimeSymbol]) -> list[RealtimeQuote]:
         ak = self._ak
         if asset_type == "stock":
-            df = self._call(ak.stock_zh_a_spot_em, retry_times=1)
+            df = self._call(ak.stock_zh_a_spot_em, retry_times=1, raise_on_giveup=True)
             if df is None or df.empty:
-                return [_unavailable(s) for s in items]
+                return [unavailable_quote(s) for s in items]
             return [_map_spot(df, s) for s in items]
         if asset_type == "etf":
-            df = self._call(ak.fund_etf_spot_em, retry_times=1)
+            df = self._call(ak.fund_etf_spot_em, retry_times=1, raise_on_giveup=True)
             if df is None or df.empty:
-                return [_unavailable(s) for s in items]
+                return [unavailable_quote(s) for s in items]
             return [_map_spot(df, s) for s in items]
         if asset_type == "index":
             return self._fetch_index_realtime(items)
         if asset_type == "industry_index":
             # 板块实时接口偶发限流，retry 提升至 2 保证最新价/涨跌幅可获取
-            df = self._call(ak.stock_board_industry_name_em, retry_times=2)
+            df = self._call(ak.stock_board_industry_name_em, retry_times=2, raise_on_giveup=True)
             if df is None or df.empty:
-                return [_unavailable(s) for s in items]
+                return [unavailable_quote(s) for s in items]
             return [_map_industry_spot(df, s) for s in items]
-        return [_unavailable(s) for s in items]
+        return [unavailable_quote(s) for s in items]
 
     def _fetch_index_realtime(self, items: list[RealtimeSymbol]) -> list[RealtimeQuote]:
         ak = self._ak
@@ -290,7 +193,8 @@ class EastMoneyProvider(BaseDataProvider):
         if global_df is not None and not global_df.empty:
             frames.append(global_df)
         if not frames:
-            return [_unavailable(s) for s in items]
+            # 全部分类失败视为 Provider 级故障（供工厂熔断识别），而非单纯"无数据"
+            raise ProviderError("index realtime all categories failed")
         merged = pd.concat(frames, ignore_index=True)
         quotes: list[RealtimeQuote] = []
         for s in items:
@@ -326,6 +230,31 @@ class EastMoneyProvider(BaseDataProvider):
                 result[name] = None
         return result
 
+    # ---- 全量目录 / 外部搜索（V0.2 阶段三）----
+    def fetch_catalog(self) -> dict:
+        """全A股代码名称 + ETF 列表（akshare），供目录预同步。"""
+        stocks: list[tuple[str, str]] = []
+        df = self._call(self._ak.stock_info_a_code_name, raise_on_giveup=True)
+        if df is not None and not df.empty and "代码" in df.columns:
+            for _, row in df.iterrows():
+                stocks.append((str(row["代码"]).strip(), str(row["名称"]).strip()))
+        etfs: list[tuple[str, str]] = []
+        df2 = self._call(self._ak.fund_etf_spot_em, raise_on_giveup=True)
+        if df2 is not None and not df2.empty and "代码" in df2.columns:
+            for _, row in df2.iterrows():
+                etfs.append((str(row["代码"]).strip(), str(row["名称"]).strip()))
+        return {"stocks": stocks, "etfs": etfs}
+
+    def search_ak_stock(self, keyword: str, limit: int = 10) -> list[tuple[str, str]]:
+        """外部回退：akshare 全A股实时过滤代码/名称，命中返回 (code, name)。"""
+        df = self._call(self._ak.stock_info_a_code_name, raise_on_giveup=True)
+        if df is None or df.empty or "代码" not in df.columns:
+            return []
+        mask = df["代码"].astype(str).str.contains(keyword, regex=False) | df["名称"].astype(str).str.contains(
+            keyword, regex=False
+        )
+        return [(str(r["代码"]).strip(), str(r["名称"]).strip()) for _, r in df[mask].head(limit).iterrows()]
+
     # ---- 行业指数 code 回填 ----
     def resolve_index_code(self, name: str) -> str | None:
         """行业名称 → 东财板块代码（BKxxxx）：先精确，后评分模糊匹配（与实时快照同套逻辑）。"""
@@ -357,15 +286,6 @@ class EastMoneyProvider(BaseDataProvider):
 
 
 # ---- 数据清洗 / 转换 ----
-def _to_sina_index(code: str) -> str | None:
-    """东方财富指数代码 → 新浪指数代码（sh/sz 前缀），非 A 股指数返回 None。"""
-    if code.startswith(("399", "932")):
-        return f"sz{code}"
-    if code.startswith(("000", "6")):
-        return f"sh{code}"
-    return None
-
-
 def _row_to_daily_bar(row: pd.Series) -> KlineBar | None:
     try:
         ts = pd.to_datetime(row["日期"])
@@ -423,22 +343,9 @@ def _clean_ohlc(row: pd.Series) -> tuple[float | None, float, float, float]:
     return o, h, low, c
 
 
-def _to_float(v) -> float | None:
-    if v is None or pd.isna(v):
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def _unavailable(s: RealtimeSymbol) -> RealtimeQuote:
-    return RealtimeQuote(code=s.code, name=s.name, asset_type=s.asset_type, available=False)
-
-
 def _map_spot(df: pd.DataFrame, s: RealtimeSymbol, match_by_name: bool = False) -> RealtimeQuote:
     """在实时表中按代码/名称定位标的并映射字段。"""
-    q = _unavailable(s)
+    q = unavailable_quote(s)
     try:
         if "代码" in df.columns:
             hit = df[df["代码"].astype(str).str.strip() == s.code.strip()]
@@ -501,7 +408,7 @@ def _map_spot(df: pd.DataFrame, s: RealtimeSymbol, match_by_name: bool = False) 
 
 
 def _map_industry_spot(df: pd.DataFrame, s: RealtimeSymbol) -> RealtimeQuote:
-    q = _unavailable(s)
+    q = unavailable_quote(s)
     try:
         hit = _match_industry_row(df, s)
         if hit.empty:

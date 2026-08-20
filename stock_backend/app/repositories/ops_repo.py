@@ -1,11 +1,11 @@
-"""运维域：sync_tasks 状态 + task_logs 全链路日志。"""
+"""运维域：sync_tasks 状态 + sync_status 进度 + task_logs 全链路日志。"""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.ops import SyncTask, TaskLog
+from app.models.ops import SyncStatus, SyncTask, TaskLog
 
 
 def upsert_sync_task(
@@ -54,3 +54,55 @@ def latest_sync_task(db: Session, task_type: str, symbol_id: int | None = None) 
     if symbol_id is not None:
         stmt = stmt.where(SyncTask.symbol_id == symbol_id)
     return db.scalar(stmt.order_by(SyncTask.last_run_at.desc()))
+
+
+# ---- sync_status（V0.2 同步进度，供前端轮询）----
+def upsert_sync_status(
+    db: Session,
+    scope: str,
+    status: str,
+    progress: int,
+    total: int,
+    message: str | None = None,
+    target_id: int | None = None,
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+) -> None:
+    """按 (scope, target_id) 幂等 upsert 同步进度记录。"""
+    stmt = select(SyncStatus).where(
+        SyncStatus.scope == scope,
+        SyncStatus.target_id.is_(None) if target_id is None else SyncStatus.target_id == target_id,
+    )
+    row = db.scalar(stmt)
+    now = datetime.now(UTC)
+    if row:
+        row.status = status
+        row.progress = progress
+        row.total = total
+        row.message = message
+        if started_at is not None:
+            row.started_at = started_at
+        if finished_at is not None:
+            row.finished_at = finished_at
+        row.updated_at = now
+    else:
+        db.add(
+            SyncStatus(
+                scope=scope,
+                target_id=target_id,
+                status=status,
+                progress=progress,
+                total=total,
+                message=message,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+        )
+    db.flush()
+
+
+def list_sync_status(db: Session, scope: str | None = None) -> list[SyncStatus]:
+    stmt = select(SyncStatus).order_by(SyncStatus.id)
+    if scope:
+        stmt = stmt.where(SyncStatus.scope == scope)
+    return list(db.scalars(stmt))

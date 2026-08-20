@@ -5,11 +5,14 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_user_optional, get_db
 from app.core.exceptions import ApiError
 from app.core.response import ok
-from app.schemas.market import KlineBarOut, SnapshotOut, SymbolOut
-from app.services import market_service
+from app.models.user import User
+from app.repositories import user_repo
+from app.schemas.market import KlineBarOut, SnapshotOut, SymbolOut, SymbolSearchOut
+from app.services import market_service, sync_service
+from app.utils import market_cache
 
 router = APIRouter(prefix="/api/v1", tags=["market"])
 
@@ -30,10 +33,12 @@ def list_symbols(
 @router.get("/symbols/search")
 def search_symbols(
     q: str = Query(..., min_length=1, max_length=64, description="6位代码或名称"),
+    type: str | None = Query(None, description="stock/etf/index 过滤"),
+    limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ) -> dict:
-    symbols = market_service.search_symbols(db, q)
-    return ok(data=[SymbolOut.model_validate(s).model_dump() for s in symbols])
+    symbols = market_service.search_symbols(db, q, type_=type, limit=limit)
+    return ok(data=[SymbolSearchOut(**s).model_dump(mode="json") for s in symbols])
 
 
 @router.get("/kline")
@@ -50,18 +55,7 @@ def get_kline(
         bars = market_service.get_kline(db, symbol, period, start, end, limit=limit, offset=offset)
     except ValueError as exc:
         raise ApiError(status_code=400, msg=str(exc)) from exc
-    data = [
-        KlineBarOut(
-            ts=b.ts,
-            open=float(b.open),
-            high=float(b.high),
-            low=float(b.low),
-            close=float(b.close),
-            volume=b.volume,
-            amount=float(b.amount),
-        ).model_dump(mode="json")
-        for b in bars
-    ]
+    data = [KlineBarOut(**b).model_dump(mode="json") for b in bars]
     return ok(data=data)
 
 
@@ -69,10 +63,21 @@ def get_kline(
 def get_snapshot(
     symbols: str = Query(..., description="逗号分隔的 symbol_id 列表"),
     db: Session = Depends(get_db),
+    current: User | None = Depends(get_current_user_optional),
 ) -> dict:
     try:
         ids = [int(x) for x in symbols.split(",") if x.strip()]
     except ValueError as exc:
         raise ApiError(status_code=400, msg="symbols 必须为逗号分隔的数字 ID") from exc
+    if current is not None:
+        watch_ids = set(user_repo.list_watchlist_symbol_ids(db, current.id))
+        if watch_ids and set(ids) <= watch_ids:
+            cached = market_cache.get_watchlist_snap_cache(current.id)
+            if cached is not None:
+                return ok(data=[SnapshotOut(**s).model_dump(mode="json") for s in cached])
+            snapshots = market_service.get_snapshots(db, ids)
+            ttl = 10 if sync_service.is_market_open() else 300  # 交易时段 10s / 非交易 300s
+            market_cache.set_watchlist_snap_cache(current.id, snapshots, ttl)
+            return ok(data=[SnapshotOut(**s).model_dump(mode="json") for s in snapshots])
     snapshots = market_service.get_snapshots(db, ids)
     return ok(data=[SnapshotOut(**s).model_dump(mode="json") for s in snapshots])

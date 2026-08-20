@@ -20,5 +20,6 @@ class Symbol(Base):
     industry: Mapped[str | None] = mapped_column(String(64))
     etf_linked: Mapped[str | None] = mapped_column(String(16))
     is_fixed_index: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_catalog: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 全量目录（未同步K线）
     sort_order: Mapped[int | None] = mapped_column(Integer)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")

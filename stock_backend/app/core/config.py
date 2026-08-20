@@ -30,14 +30,19 @@ class Settings(BaseSettings):
 
     # ---- Redis（缓存 + Celery 队列）----
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
-    SNAPSHOT_CACHE_TTL: int = 5  # 实时快照缓存秒数
+    SNAPSHOT_CACHE_TTL: int = 300  # 实时快照缓存秒数（V0.2 从 5s 延长至 300s，交易时段由 realtime_poll 覆盖刷新）
     KLINE_CACHE_TTL: int = 300  # K线缓存秒数
+    SEARCH_CACHE_TTL: int = 3600  # 搜索联想缓存秒数（catalog_sync 完成后批量删除）
+    WATCHLIST_CACHE_TTL: int = 300  # 关注列表缓存秒数
 
     CELERY_BROKER_URL: str = "redis://127.0.0.1:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://127.0.0.1:6379/2"
 
     # ---- 行情同步 ----
-    DATA_PROVIDER: str = "eastmoney"  # 行情源：eastmoney（可插拔扩展）
+    DATA_PROVIDER_PRIORITY: str = "eastmoney,sina,ths"  # Provider 优先级链（逗号分隔，可调整顺序/禁用）
+    PROVIDER_CIRCUIT_FAILURE_THRESHOLD: int = 3  # Provider 连续失败 N 次熔断
+    PROVIDER_CIRCUIT_COOLDOWN: int = 60  # Provider 熔断冷却（秒），冷却后半开探测
+    PROVIDER_PROBE_INTERVAL: int = 60  # 熔断中 Provider 后台探测间隔（秒）
     KLINE_INIT_DAYS: int = 730  # 首次全量拉取天数（约2年）
     REALTIME_POLL_INTERVAL: int = 5  # 实时轮询间隔（秒）
     SYNC_INCREMENTAL_HOUR: int = 16  # 每日增量同步时刻（本地时区小时）
@@ -51,6 +56,7 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "dev-secret-change-in-production-0123456789abcdef"  # ≥32字节，生产必须覆盖为强随机值
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # token 有效期 7 天
+    ADMIN_USERNAMES: str = ""  # 管理员用户名（逗号分隔），启动时自动置 is_admin=true
 
     # ---- 技术指标 ----
     INDICATOR_CACHE_TTL: int = 300  # 指标缓存秒数（key 含 K 线最新 ts，新数据到达自动失效）

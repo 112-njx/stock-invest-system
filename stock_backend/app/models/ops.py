@@ -19,6 +19,23 @@ class SyncTask(Base):
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class SyncStatus(Base):
+    """V0.2 同步状态：供前端轮询展示固定指数/关注/目录等同步进度。"""
+
+    __tablename__ = "sync_status"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)  # fixed_indices / catalog / watchlist
+    target_id: Mapped[int | None] = mapped_column(BigInteger)  # 关联业务 ID（symbol_id 等，可为空表示整类）
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")  # pending/running/done/partial/failed
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0-100
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
 class TaskLog(Base):
     __tablename__ = "task_logs"
 

@@ -8,7 +8,6 @@
 
 import json
 import sys
-import time
 import uuid
 
 import httpx
@@ -28,7 +27,6 @@ def _req(method: str, path: str, token: str | None = None, **kw):
 
 def main() -> int:
     uname = f"{_PREFIX}{uuid.uuid4().hex[:8]}"
-    code = f"9{uuid.uuid4().hex[:5]}"
     print(f"== 阶段三冒烟：用户 {uname} ==")
 
     # 1) 注册

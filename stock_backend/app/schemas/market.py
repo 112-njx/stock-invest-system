@@ -20,6 +20,13 @@ class SymbolOut(BaseModel):
     sort_order: int | None = None
 
 
+class SymbolSearchOut(SymbolOut):
+    """搜索联想结果：额外标注目录/同步状态（前端展示"已同步/未同步"）。"""
+
+    is_catalog: bool = False  # TRUE=仅在目录（未同步K线）
+    has_kline: bool = False  # 是否已有K线数据
+
+
 class KlineBarOut(BaseModel):
     ts: datetime
     open: float
@@ -49,4 +56,5 @@ class SnapshotOut(BaseModel):
     turnover: float | None = None
     amplitude: float | None = None
     updated_at: datetime | None = None
+    data_age_seconds: int | None = None  # 快照数据龄（当前时间 - updated_at），前端标注"数据时间"
     extra: dict[str, Any] = {}  # stock: {market_cap, pe} / etf: {nav, premium} / index: {pe}
