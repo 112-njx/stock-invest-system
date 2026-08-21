@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "dev-secret-change-in-production-0123456789abcdef"  # ≥32字节，生产必须覆盖为强随机值
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # token 有效期 7 天
-    ADMIN_USERNAMES: str = ""  # 管理员用户名（逗号分隔），启动时自动置 is_admin=true
+    ADMIN_USERNAMES: str = "root"  # 管理员用户名（逗号分隔），启动时自动置 is_admin=true
 
     # ---- 技术指标 ----
     INDICATOR_CACHE_TTL: int = 300  # 指标缓存秒数（key 含 K 线最新 ts，新数据到达自动失效）

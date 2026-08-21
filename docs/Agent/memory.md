@@ -2,21 +2,57 @@
 
 > 每次开启 Agent 先阅读最新记忆内容，快速重新上手。
 
-保存时间：2026-08-09
+保存时间：2026-08-21（V0.2 第一波完成后更新）
 记忆内容：
+
 1. 项目定位：量化交易软件——选股买卖决策 + DeepSeek Agent 辅助（主观交易经验转量化因子/回测），Agent 记忆本地存储。
-2. 技术栈：Python(FastAPI) + PostgreSQL + Vue3 + Redis + Celery + Nginx + DeepSeek + langchain/LangGraph。
-3. 硬约束：前端不计算复杂指标；回测不阻塞主线程（走 Celery）；Agent 记忆本地存储（LangChain 本地向量库 ChromaDB）；行情数据源走 DataProvider 抽象（默认 Akshare/东方财富）。
-4. 架构文档：docs/project_docs/docs.md（需求 + 第二部分数据流 + 第三部分数据库设计 + v0.0.2 扩展方向）；docs/project_docs/working_docs.md（生产级六要素架构说明，开发后收尾检查按其中模板写）；docs/sql/（01_schema.sql 建表、02_seed_fixed_indices.sql 固定指数种子、03_agent_extensions.sql Agent 扩展表、sql.md 各表系统作用说明）。
-5. 已注册 skill：quant-prod-arch（生产级架构审查与开发规范），开发时自动应用。
-6. 当前进度：需求文档/架构/SQL 已定稿；AI 定制 Agent 已改为 LangChain/LangGraph 方案（借鉴 TradingAgents-CN），docs.md 数据流/数据库设计与 working_docs.md 架构已同步更新并新增 03_agent_extensions.sql（user_agents/agent_runs/agent_steps/memory_chunks）；docs.md 底部已补 v0.0.2 扩展方向（多智能体/机会雷达增强/财报因子/工具化数据/定制Agent/风控辩论/LLM可插拔/记忆升级/复盘闭环/多市场）；后端实施规划已写入 docs/Agent_backend/roadmap.md（五阶段，阶段三为 LangChain Agent），前端实施规划已写入 docs/Agent_frontend/roadmap.md（五阶段），前端页面设计已写入 docs/Agent_frontend/PageDesign.md；代码目录（stock_backend、stock_frontend、stock_invest_backend）均为空，尚未开始编码，下一步应从后端数据层（DataProvider + 行情同步）起步。
-13. 后端阶段一（1.1~1.7）已完成：stock_backend 建 FastAPI 分层工程（api/services/repositories/schemas/models/core/data_providers/worker/utils），pydantic-settings 配置、统一响应/异常、JSON 日志+request-id、/health /ready /metrics；Alembic 迁移对齐全部 24 表（含 K线按月分区、680 分区子表）；DataProvider 抽象 + EastMoneyProvider（akshare + curl_cffi 反爬，借鉴 TradingAgents-CN）；Celery 三队列（sync/backtest/ai）+ beat 调度，kline_init/incremental/realtime_poll 任务跑通（贵州茅台 15m/1d/1w/1mon 真实入库）；49 条固定指数种子；四个行情 API（/api/v1/symbols、/symbols/search、/kline、/snapshot）。25 个 pytest 全绿，api-docs.md/Agent_code.md 已补。
-14. 后端开发环境：Python 3.14（D:\Pycharm\python），venv 在 stock_backend/.venv；PostgreSQL 本机 5432（postgres/123456，库 stock_invest）；Redis 用 Docker 容器 stock-redis（redis:7-alpine，端口 6379，需先启动 Docker Desktop）；行情源东方财富接口偶发反爬节流，已内置重试/降级。
-15. 后端阶段二（2.1~2.4）已完成：2.1 用户鉴权（bcrypt+JWT，/auth/register、/auth/login、/users/me GET+PUT，deps.get_current_user 依赖）；2.2 重点关注股票（/watchlist 增删查，UNIQUE(user,symbol) 幂等，列表合并实时价）；2.3 支撑/压力位（/support-resistance 增删查，type=support|pressure）；2.4 技术指标服务（BaseIndicator 抽象 + MACD/KDJ/成交量/成交额，借鉴 TradingAgents-CN indicators，/api/v1/indicators 服务端计算，Redis 缓存 key 含 K 线最新 ts 自动失效）。阶段二新增 29 个 pytest，全库 54 个全绿；api-docs.md/Agent_code.md/roadmap.md 已补；JWT_SECRET_KEY 需在 .env 配置；冒烟测试 scripts/smoke_phase2.py。
-16. 后端阶段三（3.1~3.8）已完成：3.1 会话/消息（/conversations CRUD + /{id}/messages，user 隔离）；3.2 LangChain LLM 封装（app/services/llm/：DeepSeek 走 ChatOpenAI+base_url（langchain-openai 1.x 无 ChatDeepSeek），惰性构造（无 Key 不报错）；超时/指数退避重试/熔断(半开探测)/令牌桶限流/token统计/审计日志）；3.3 工具集+上下文（app/agent/tools/{market,indicator}.py @tool、prompts.py 系统提示+四卡片模板、context.py 组装+日志；chat_service 流式 SSE + ReAct create_agent + LLM 不可用降级）；3.4 本地记忆（app/agent/memory/：ChromaDB 本地持久化 + 离线 HashEmbedding（无需下载模型）+ 人类可读记忆文件 data/memory/{user_id}/*.md + memory_chunks/user_memory_files 索引 + TopK 检索注入，对话后 LLM 抽取事实入库）；3.5 策略生成（with_structured_output 生成代码+JSON 参数，ast.parse 校验，POST /strategies/generate）；3.6 策略 CRUD（/strategies）；3.7 定制 Agent（/agents CRUD + 三套预设模板，会话按 agent_id 选用）；3.8 多智能体编排（app/agent/research_graph.py LangGraph 技术分析→多空辩论→风控→决策，diagnose/plan/radar 深度模式走图，agent_steps 落各节点输出）。全库 94 个 pytest 全绿；api-docs.md/Agent_code.md/roadmap.md/fixed.md 已补；依赖增 langchain/langgraph/chromadb 等；DeepSeek API Key 需在 .env 配置；冒烟测试 scripts/smoke_phase3.py。
-17. 后端阶段四（4.1~4.4）已完成：4.1 回测引擎（app/backtest/：sandbox.py RestrictedPython 沙箱禁 import/危险内置 open/eval/exec/__import__、守卫拦截 _ 属性；engine.py 撮合引擎 initialize/on_bar 接口、T+1、自动止损止盈(触发价)、佣金万分之三+印花税、close/open 撮合价、逐 bar 时间预算）；4.2 指标（metrics.py FIFO 配对胜率/盈亏比、夏普、累计买卖、年化、最大回撤 + metrics_json 扩展）；4.3 任务流（Alembic 0002 给 backtest_tasks 加 period/start_ts/end_ts/fill_on；backtest_service create_backtest/execute_backtest，结果+success 同事务，结果 best-effort 转本地记忆，业务错误 BacktestFatalError 不重试、运行时错误指数退避重试，task_logs 记录）；4.4 API（POST /backtest、GET /backtest/tasks/{id}、/backtest/tasks、/backtest/results?strategy_id=、/backtest/results/{id}，user 隔离）。全库 115 个 pytest 全绿；依赖新增 RestrictedPython；api-docs.md/Agent_code.md/roadmap.md/docs.md/01_schema.sql 已同步；冒烟 scripts/smoke_phase4.py（真实端到端：发起回测→queued→worker→success→结果，双均线策略在贵州茅台日K跑出交易）。回测需先同步标的 K 线，需启动 backtest worker。
-7. 参考开源项目（须借鉴避免造轮子）：TradingAgents-CN-main（C:\Users\112\Desktop\TradingAgents-CN-main\TradingAgents-CN-main）；QuantDinger（C:\Users\112\Desktop\QuantDinger-main\QuantDinger-main，AI策略页 J/K/L/M/N 分区架构可完全借鉴）。
-18. 后端阶段五（5.1~5.6）已完成：5.1 容器化（stock_backend/Dockerfile 多阶段依赖缓存 + docker-entrypoint.sh 等DB→alembic迁移→种子（幂等）；deploy/docker-compose.yml 全栈编排 postgres/redis/api/worker/beat/nginx/prometheus/grafana，db/redis 仅内网不映射宿主端口，worker --pool=solo，宿主端口经 .env.docker 按需映射）；5.2 Nginx（deploy/nginx/nginx.conf 覆盖前端模板：分级限流 api 30r/s + ai 5r/s 精确 /api/v1/chat、安全头、gzip、TLS 443 可选注释块，自包含 proxy headers）；5.3 CI/CD（.github/workflows/ci.yml lint→test→build，PostgreSQL/Redis service 容器，deploy 为 workflow_dispatch 手动 + secrets 待配）；5.4 监控（/metrics 扩展 LLM 指标 llm_calls_total/llm_request_duration_seconds/llm_tokens_total + 平台指标 celery_queue_depth/redis_cache_hit_rate/market_data_freshness_seconds/backtest_queued_tasks，llm_service._log_call 埋点，Prometheus 抓取+4 条告警，Grafana provisioning 9 图面板）；5.5 补齐前端缺失接口 GET /agent/runs、/agent/runs/{id}（含 steps）、/memory/files（user 隔离）；5.6 收尾（working_docs 六要素自查、四文档补全）。全库 120 个 pytest 全绿 + ruff 通过。容器部署：cp .env.docker.example .env.docker && docker compose --env-file .env.docker -f deploy/docker-compose.yml up -d --build；nginx 默认 127.0.0.1:8080，Grafana 3000（admin/admin）。
-19. 2026-08-11 行情页 bug 修复：① 固定指数（大盘14+行业35）默认无 K 线/快照，行情页显示空白与 "--" —— 新增 scripts/sync_fixed_indices.py 补齐（首次/重置库后需运行，幂等可重跑，roadmap 已记）；② snapshot_repo.upsert_snapshot 对指数快照 volume/amount 写 None 触发 NOT NULL 回滚，已加 _not_null 兜底写 0；③ EastMoneyProvider 增指数K线降级（A股大盘→新浪 stock_zh_index_daily、行业板块→同花顺 stock_board_industry_index_ths），东财被限流仍可入库；④ 行业指数 etf_linked 种子补齐（docs/sql/02_seed_fixed_indices.sql，43/49 有关联ETF，光学光电子/商业航天无直接ETF留空）；⑤ 前端 IndexListPanel/WatchlistPanel 增 dblclick，MarketView 接线跳转 /market/detail 打开 ABCD。测试修正 test_snapshot_merges_symbols（改用无快照测试标的）。全库 120 pytest 全绿。
-20. 2026-08-11 AI 对话降级 bug 修复：chat_service.stream_chat 的 model 参数是测试注入用可选参数，API 端点从不传（恒 None）；原降级条件 `if not llm_svc.available or model is None:` 把 model is None 误当不可用，导致填入 DeepSeek Key 后 AI 对话永远走降级。已改为仅按 `not llm_svc.available` 判定，model 兜底走 provider.raw_model。新增回归测试 test_stream_chat_model_none_with_available_not_fallback。全库 121 pytest 全绿。改 chat_service.py 后需重启后端生效。
-21. 2026-08-20 V0.2 第一波（行情数据基础）完成，全库 188 pytest 全绿 + ruff 通过。① 阶段四 DataProvider 可插拔：SinaProvider/THSProvider 拆分、DataProviderFactory 优先级链[eastmoney,sina,ths]+每源独立熔断(半开探测)、/api/v1/admin/providers/health、beat provider_probe 每60s 恢复；② 阶段一缓存：sync_status 表+entrypoint 预同步(固定指数X/49)+startup 预热、K线"最近N根"缓存+击穿锁、快照14字段缓存+data_age_seconds、指标缓存键改含 latest_ts；③ 阶段三目录/搜索/关注：symbols.is_catalog+catalog_sync(全A股+ETF, 每日3:00, partial 1h重试)+POST /admin/catalog/sync、搜索三层+外部回退+search:* 缓存+is_catalog/has_kline、关注添加自动 kline_init+sync_status、watchlist/watchlist_snap Redis 缓存；④ 阶段二 WS：/api/v1/ws/market(query token 鉴权)、ConnectionManager 多标签页、心跳15s/30s、订阅模型、realtime_poll 经 Redis pub/sub 桥接推送、sync 断线补拉。Alembic 0004（users.is_admin/sync_status/symbols.is_catalog/user_watchlist.sync_status）。需人工配置 ADMIN_USERNAMES（管理端点）。注意：K线ts/快照updated_at 列为 timestamp without time zone（DB naive，代码内 as_utc 归一）。
+2. 技术栈：Python(FastAPI) + PostgreSQL + Vue3(TS) + Redis + Celery + Nginx + DeepSeek + LangChain/LangGraph + ChromaDB。
+3. 硬约束：前端不计算复杂指标（后端算）；回测走 Celery 不阻塞主线程；Agent 记忆本地存储（ChromaDB + HashEmbedding）；行情数据源走 DataProvider 抽象可插拔；缓存层仅 Redis+PostgreSQL（无内存缓存）。
+4. 已注册 skill：quant-prod-arch（生产级架构六要素审查）、quant-trading-frontend（交易终端前端规范）。
+
+5. V0.1 已全部完成（后端五阶段+前端五阶段，121 pytest 全绿），核心功能：
+   - 后端：FastAPI 分层架构（api→services→repositories 单向依赖）、24表+K线按月分区（680分区子表）、DataProvider(东方财富)+新浪/同花顺降级、Celery三队列(sync/backtest/ai)、用户鉴权(bcrypt+JWT)、关注列表、支撑压力位、技术指标(MACD/KDJ/成交量/成交额，Redis缓存)、AI对话(LangChain ReAct+SSE流式)、本地记忆(ChromaDB+HashEmbedding)、策略生成(ast.parse校验)+CRUD、定制Agent、多智能体(LangGraph五节点：技术分析→多空辩论→风控→决策)、回测引擎(RestrictedPython沙箱+撮合+胜率/夏普/最大回撤)、Docker Compose全栈编排、Nginx反代+分级限流、Prometheus+Grafana监控(9面板+4告警)、CI/CD。
+   - 前端：Vue3+TS+Vite+Pinia+lightweight-charts v5，行情双层页(E/F/G/H/I首页 + A/B/C/D详情)、AI策略页(J/K/L/M/N分区，借鉴QuantDinger)、暗黑/明亮双主题、7s轮询快照、SSE流式对话。
+   - V0.1 已知 bug 已修复：固定指数预同步脚本(sync_fixed_indices.py)、指数快照 NOT NULL 兜底写0、AI对话降级条件误判(model is None)、行业指数关联ETF种子补齐。
+
+6. V0.2 第一波（行情数据基础）已完成（2026-08-20，全库 188 pytest 全绿 + ruff 通过）：
+   - 阶段四 DataProvider 可插拔：SinaProvider/THSProvider 独立拆分、DataProviderFactory 优先级链[eastmoney,sina,ths]+每源独立熔断(半开探测)、GET /api/v1/admin/providers/health、beat provider_probe 每60s恢复探测。
+   - 阶段一 缓存体系：sync_status 表+entrypoint 预同步(固定指数 X/49 进度)+startup 预热、K线"最近N根"Redis缓存(kline:{symbol_id}:{period}:{limit}, TTL300s)+击穿锁(SETNX)、快照14字段Redis缓存(snapshot:{symbol_id}, TTL300s)+data_age_seconds、指标缓存键含 latest_ts 自动失效。
+   - 阶段三 目录/搜索/关注：symbols.is_catalog 字段+catalog_sync(全A股约5000+ETF, 每日3:00, partial失败1h重试)+POST /admin/catalog/sync 手动触发、搜索三层(精确>已同步>仅目录)+外部回退+search:* 缓存(1h)+is_catalog/has_kline 返回、关注添加自动触发 kline_init+sync_status(pending/syncing/done/failed)、watchlist/watchlist_snap Redis 缓存。
+   - 阶段二 WebSocket：/api/v1/ws/market(query token 鉴权)、ConnectionManager 多标签页共享、心跳15s ping/30s超时断连、订阅模型、realtime_poll 经 Redis pub/sub 桥接推送增量快照、sync 断线补拉(按 since 时间戳)。
+   - Alembic 0004 迁移：users.is_admin、sync_status 表、symbols.is_catalog、user_watchlist.sync_status。
+   - 需人工配置：ADMIN_USERNAMES（管理端点访问权限）。
+   - 注意：K线 ts/快照 updated_at 列为 timestamp without time zone（DB naive，代码内 as_utc 归一）。
+
+7. 开发环境：
+   - Python 3.14（D:\Pycharm\python），venv 在 stock_backend/.venv
+   - PostgreSQL 本机 5432（postgres/123456，库 stock_invest）
+   - Redis Docker 容器 stock-redis（redis:7-alpine，端口 6379，需先启动 Docker Desktop）
+   - 前端：stock_frontend，npm run dev（端口 5173），vite 代理 /api 到后端 8000
+   - 启动后端：cd stock_backend && .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+   - 启动 Celery worker：.venv/Scripts/celery.exe -A app.worker.celery worker --pool=solo -l info
+   - 启动 Celery beat：.venv/Scripts/celery.exe -A app.worker.celery beat -l info
+   - 跑测试：.venv/Scripts/python.exe -m pytest tests/ -v
+
+8. 参考开源项目（须借鉴避免造轮子）：
+   - TradingAgents-CN：C:\Users\112\Desktop\TradingAgents-CN-main\TradingAgents-CN-main（MongoDB+Redis 双层缓存、数据源优先级链、全量标的预同步、新鲜度容错匹配）
+   - QuantDinger：C:\Users\112\Desktop\QuantDinger-main\QuantDinger-main（内存LRU+Redis可选+PG 三层缓存、全量目录搜索+别名表、关注列表验证+名称解析、AI策略页 J/K/L/M/N 分区）
+
+9. 关键文档索引：
+   - 需求：docs/project_docs/docs.md
+   - 架构：docs/project_docs/working_docs.md（生产级六要素）
+   - 后端规划：docs/Agent_backend/roadmap.md（V0.1 五阶段 + V0.2 八阶段）
+   - 前端规划：docs/Agent_frontend/roadmap.md（V0.1 五阶段 + V0.2 七阶段）
+   - API 文档：docs/Agent_backend/api-docs.md
+   - 编码记录：docs/Agent_backend/Agent_code.md、docs/Agent_frontend/Agent_code.md
+   - 修复记录：docs/Agent_backend/fixed.md、docs/Agent_frontend/fixed.md
+   - 数据库：docs/sql/（01_schema.sql 建表、02_seed_fixed_indices.sql 固定指数种子、03_agent_extensions.sql Agent 扩展表）
+   - 增强提示词：docs/Agent/enhanced_prompt.md（V0.2 开发用，强制设计验证→编码→自我审查→测试→报告流程）
+
+10. V0.2 后续规划（第二至四波，待开发，审计通过后开启）：
+    - 第二波：AI 流式稳定性与错误降级（SSE 心跳+delta序号断点续传+三级超时+错误码标准化+分级降级：LLM挂了返回规则分析）、AI 记忆系统升级（HashEmbedding→ONNX MiniLM、短期/长期分层+重要性评分1-10、去重合并、记忆管理 CRUD API）。
+    - 第三波：多智能体可观测性（agent_step 实时 SSE 推送、节点失败降级不中断、运行历史 API）、长会话上下文管理（滑动窗口+LLM 摘要压缩、Token 预算控制在模型上限80%）。
+    - 第四波：策略生成可靠性（三级校验：语法→接口→沙箱dry-run、失败自动重试2次、5个策略模板库、生成→回测一键内嵌结果卡片）、会话标题自动生成。
+    - 前端 V0.2 七阶段：数据加载同步进度体验、WebSocket 客户端+多标签页共享、搜索关注同步状态增强、AI 流式错误分级 UI、记忆管理可视化抽屉、多智能体时间线、长会话 token 用量+策略回测内嵌。
+
+11. 当前状态：V0.2 第一波已完成并通过 188 测试，等待代码审计。下一波开发前必须阅读 docs/Agent/enhanced_prompt.md，严格执行强制流程：强制代码阅读→设计验证(等确认)→编码→10项自我审查→测试(100%通过)→细分任务报告。
