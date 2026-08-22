@@ -1,12 +1,14 @@
 """3.4 本地记忆系统测试：事实解析、落库（文件+向量+索引）、检索、Agent 工具、聊天后抽取接线。"""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from app.agent.memory import memory_service, store
 from app.models.agent import MemoryChunk
 from app.models.user import User
+from app.repositories import agent_repo
 from app.utils.db import get_session
 from fastapi.testclient import TestClient
 
@@ -129,6 +131,110 @@ def test_memory_tool_search(client: TestClient, mem_env):
         tool = memory_service.memory_tool(get_session(), user["id"])
         result = tool.invoke({"query": "仓位管理"})
         assert result["results"] and "仓位" in result["results"][0]["content"]
+    finally:
+        _cleanup_memory(user["id"], mem_env["chroma"], mem_env["memory"])
+        _cleanup_users(uname)
+
+
+# ---- 6.2：记忆分层与重要性 ----
+def test_weighted_score():
+    # 距离越小（越相似）+ 重要性越高 → 分数越高
+    assert store._weighted_score(0.0, 10) > store._weighted_score(2.0, 1)
+    # 高重要性可补偿一定距离差距
+    assert store._weighted_score(0.5, 9) > store._weighted_score(0.2, 3)
+
+
+def test_save_memory_stores_importance(client: TestClient, mem_env):
+    uname = _uname()
+    user = _register(client, uname)
+    try:
+        db = get_session()
+        try:
+            memory_service.save_memory(
+                db, user["id"], "rule", None, [{"content": "止损不超过2%", "type": "rule", "importance": 8}]
+            )
+        finally:
+            db.close()
+
+        db = get_session()
+        try:
+            chunk = db.query(MemoryChunk).filter(MemoryChunk.user_id == user["id"]).first()
+            assert chunk.importance == 8
+        finally:
+            db.close()
+
+        hits = store.search(user["id"], "止损", top_k=3)
+        assert hits and hits[0]["importance"] == 8
+    finally:
+        _cleanup_memory(user["id"], mem_env["chroma"], mem_env["memory"])
+        _cleanup_users(uname)
+
+
+def test_dedup_merge_identical_fact(client: TestClient, mem_env):
+    uname = _uname()
+    user = _register(client, uname)
+    try:
+        db = get_session()
+        try:
+            n1 = memory_service.save_memory(db, user["id"], "rule", None, [{"content": "止损不超过2%", "type": "rule", "importance": 8}])
+            assert n1 == 1
+        finally:
+            db.close()
+
+        # 相同事实再保存 → 合并（不新增），importance 取最大
+        db = get_session()
+        try:
+            n2 = memory_service.save_memory(db, user["id"], "rule", None, [{"content": "止损不超过2%", "type": "rule", "importance": 9}])
+            assert n2 == 0
+        finally:
+            db.close()
+
+        db = get_session()
+        try:
+            chunks = db.query(MemoryChunk).filter(MemoryChunk.user_id == user["id"]).all()
+            assert len(chunks) == 1
+            assert chunks[0].importance == 9  # max(8,9)
+        finally:
+            db.close()
+    finally:
+        _cleanup_memory(user["id"], mem_env["chroma"], mem_env["memory"])
+        _cleanup_users(uname)
+
+
+def test_cleanup_expired_memories(client: TestClient, mem_env):
+    uname = _uname()
+    user = _register(client, uname)
+    try:
+        db = get_session()
+        try:
+            c1 = agent_repo.add_memory_chunk(db, user["id"], "rule", None, "低价值旧记忆", "v1", None, importance=2)
+            c2 = agent_repo.add_memory_chunk(db, user["id"], "rule", None, "高价值旧记忆", "v2", None, importance=8)
+            c3 = agent_repo.add_memory_chunk(db, user["id"], "rule", None, "低价值新记忆", "v3", None, importance=2)
+            db.commit()
+            # 手动把 c1/c2 创建时间改为 40 天前
+            old = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=40)
+            for c in (c1, c2):
+                c.created_at = old
+            db.commit()
+            c1_id, c2_id, c3_id = c1.id, c2.id, c3.id
+        finally:
+            db.close()
+
+        db = get_session()
+        try:
+            deleted = memory_service.cleanup_expired_memories(db, importance_below=3, days=30)
+            assert deleted == 1  # 仅删除低重要性且超期的 c1
+        finally:
+            db.close()
+
+        db = get_session()
+        try:
+            ids = [r[0] for r in db.query(MemoryChunk.id).filter(MemoryChunk.user_id == user["id"]).all()]
+            assert c1_id not in ids
+            assert c2_id in ids  # 高重要性保留
+            assert c3_id in ids  # 低重要性但未超期保留
+        finally:
+            db.close()
     finally:
         _cleanup_memory(user["id"], mem_env["chroma"], mem_env["memory"])
         _cleanup_users(uname)

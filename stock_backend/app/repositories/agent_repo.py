@@ -3,6 +3,8 @@
 多租户隔离（借鉴 QuantDinger）：所有查询强制带 user_id 过滤。
 """
 
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -143,6 +145,7 @@ def add_memory_chunk(
     content: str,
     vector_id: str,
     file_path: str | None,
+    importance: int = 5,
 ) -> MemoryChunk:
     row = MemoryChunk(
         user_id=user_id,
@@ -151,6 +154,7 @@ def add_memory_chunk(
         content=content,
         vector_id=vector_id,
         file_path=file_path,
+        importance=importance,
     )
     db.add(row)
     db.flush()
@@ -162,6 +166,87 @@ def delete_memory_chunk_by_vector(db: Session, user_id: int, vector_id: str) -> 
     if row:
         db.delete(row)
         db.flush()
+
+
+def get_memory_chunk_by_vector(db: Session, user_id: int, vector_id: str) -> MemoryChunk | None:
+    return db.scalar(select(MemoryChunk).where(MemoryChunk.user_id == user_id, MemoryChunk.vector_id == vector_id))
+
+
+def update_memory_chunk_by_vector(
+    db: Session, user_id: int, vector_id: str, *, content: str | None = None, importance: int | None = None
+) -> bool:
+    """更新记忆内容/重要性（阶段六 6.3 去重合并）。"""
+    row = get_memory_chunk_by_vector(db, user_id, vector_id)
+    if row is None:
+        return False
+    if content is not None:
+        row.content = content
+    if importance is not None:
+        row.importance = importance
+    db.flush()
+    return True
+
+
+def delete_memory_chunk_by_id(db: Session, user_id: int, chunk_id: int) -> bool:
+    row = db.scalar(select(MemoryChunk).where(MemoryChunk.id == chunk_id, MemoryChunk.user_id == user_id))
+    if row is None:
+        return False
+    db.delete(row)
+    db.flush()
+    return True
+
+
+def list_low_importance_chunks(
+    db: Session, *, importance_below: int = 3, older_than: datetime | None = None
+) -> list[MemoryChunk]:
+    """低重要性且超过保留期的记忆（阶段六 6.2 清理用）。"""
+    stmt = select(MemoryChunk).where(MemoryChunk.importance < importance_below)
+    if older_than is not None:
+        stmt = stmt.where(MemoryChunk.created_at < older_than)
+    return list(db.scalars(stmt.order_by(MemoryChunk.id)))
+
+
+def list_memory_chunks(
+    db: Session,
+    user_id: int,
+    importance_min: int | None = None,
+    offset: int = 0,
+    limit: int = 20,
+) -> list[MemoryChunk]:
+    """分页返回用户记忆（阶段六 6.4 记忆管理 API），支持按重要性下限筛选。"""
+    stmt = select(MemoryChunk).where(MemoryChunk.user_id == user_id)
+    if importance_min is not None:
+        stmt = stmt.where(MemoryChunk.importance >= importance_min)
+    return list(db.scalars(stmt.order_by(MemoryChunk.id.desc()).offset(offset).limit(limit)))
+
+
+def count_memory_chunks(db: Session, user_id: int, importance_min: int | None = None) -> int:
+    from sqlalchemy import func
+
+    stmt = select(func.count()).select_from(MemoryChunk).where(MemoryChunk.user_id == user_id)
+    if importance_min is not None:
+        stmt = stmt.where(MemoryChunk.importance >= importance_min)
+    return int(db.scalar(stmt) or 0)
+
+
+def get_memory_chunk_by_id(db: Session, user_id: int, chunk_id: int) -> MemoryChunk | None:
+    return db.scalar(select(MemoryChunk).where(MemoryChunk.id == chunk_id, MemoryChunk.user_id == user_id))
+
+
+def delete_all_memory_chunks(db: Session, user_id: int) -> int:
+    from sqlalchemy import delete
+
+    result = db.execute(delete(MemoryChunk).where(MemoryChunk.user_id == user_id))
+    db.flush()
+    return result.rowcount
+
+
+def delete_all_memory_files(db: Session, user_id: int) -> int:
+    from sqlalchemy import delete
+
+    result = db.execute(delete(UserMemoryFile).where(UserMemoryFile.user_id == user_id))
+    db.flush()
+    return result.rowcount
 
 
 def upsert_memory_file(db: Session, user_id: int, file_path: str, content_type: str) -> UserMemoryFile:

@@ -175,3 +175,40 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-08-20
 编码内容（描述）：V0.2 阶段二 2.3 断线重连与增量补拉。客户端重连后发 {"action":"sync","since":"ISO"}，snapshot_repo.get_updated_after 查该时间后更新的快照（naive UTC 归一）批量返回订阅范围内标的，补齐断线缺口；重连退避与 HTTP 轮询降级为前端行为，后端提供 sync 动作即可。验收：补拉批量返回 1 单测。
+
+## v0.2
+---
+编码时间：2026-08-21
+编码内容（描述）：补齐 sync-status 查询端点（V0.2 1.1 缺口修复）。project_constraints.md 4.5 声明 GET /api/v1/sync-status?scope=fixed_indices 已完成但实际未注册路由（阶段一 1.1 漏了对外 API）。新增 ops_repo.get_latest_sync_status(scope) 取最新一条，market.py 增公开端点 GET /api/v1/sync-status?scope= 返回 {status/progress/total/message}，无记录返回 done/100/0 供前端判定无进行中同步；scope 支持 fixed_indices/catalog/watchlist。验收：market_api 增 2 单测（无记录默认/有记录返回最新），全库 190 pytest 全绿 + ruff 通过。api-docs.md 已补。
+
+---
+编码时间：2026-08-22
+编码内容（描述）：V0.2 阶段五 5.1 SSE心跳与三级超时。config.py 增 SSE_KEEPALIVE_INTERVAL/FIRST_TOKEN_TIMEOUT/INTER_DELTA_TIMEOUT/TOTAL_TIMEOUT/DELTA_CACHE_* 配置。chat_service.stream_chat 用 _stream_with_timeouts 包装 Agent 事件流（首字30s/单delta15s/总120s，asyncio.wait_for 逐事件超时），超时保存已生成内容+返回 {"type":"done","truncated":true,"reason":"timeout"} 且 run 标 failed/error=timeout。chat.py event_source 改 asyncio.Queue+后台 keeper 每15s发 :keepalive 注释行（避免 wait_for 取消在途生成）。验收：新增 3 单测（超时截断/正常透传/keepalive），全库 193 pytest 全绿。
+
+---
+编码时间：2026-08-22
+编码内容（描述）：V0.2 阶段五 5.2 delta序号与断点续传。新增 app/agent/sse.py（chat_delta:{conv} List 缓存最近100条 delta TTL600s + chat_done:{conv} done 标记 + clear/cache/read 函数，异常降级）。chat_service._stream_with_timeouts 给每个 delta 加递增 seq 并 cache_delta、done 事件 cache_done；stream_chat 新消息开始 clear_delta_cache。chat.py 增 GET /api/v1/chat/resume?conversation_id&last_seq（校验会话归属后从 Redis 补发 seq>last_seq 的 delta，缓存过期返回 {"type":"resync"}）。验收：新增 5 单测（缓存往返/过期/done/resume补发不重复/越权404），全库 198 pytest 全绿。
+
+---
+编码时间：2026-08-22
+编码内容（描述）：V0.2 阶段五 5.3 错误帧标准化。sse.py 增 ErrorCode 枚举（NETWORK_ERROR/RATE_LIMITED/TOKEN_INVALID/TOKEN_QUOTA/CONTENT_FILTERED/PROVIDER_UNAVAILABLE/TIMEOUT）+ build_error_event 统一 {"type":"error","code","message","retryable","retry_after"?}。llm_service 增 LLMAuthError/Quota/ContentFiltered/Timeout 子类 + _classify_provider_error（沿异常链查 status_code/文本归类，鉴权402等不可重试不空转）+ classify_llm_error 映射错误帧。chat_service _yield_failure 改收异常生成标准化 error 帧（call site 传 e 而非 str(e)），stream_chat preflight 包 try/except 兜底熔断/限流。验收：新增 8 单测（类型/可重试/状态码/消息分类/流式错误帧），全库 204 pytest 全绿。
+
+---
+编码时间：2026-08-22
+编码内容（描述）：V0.2 阶段五 5.4 错误分级降级。chat_service 增 _rule_based_analysis（熔断降级用 indicator_service 取 MACD/KDJ 生成"MACD金叉、KDJ超买，短期趋势偏多"规则文案，无数据/异常优雅降级）+ _degraded_text（按错误码分级：TOKEN_INVALID/QUOTA 返回"您的DeepSeek API Key无效或余额不足"、PROVIDER_UNAVAILABLE 返回"已切换基础分析模式"+规则文案、CONTENT_FILTERED/其他走原文案）。_yield_failure 与 not available 降级路径改走 _degraded_text（token 错误不再降级为服务端 token）。prompts.py 数据规范补工具失败标注语（"行情数据暂时不可用，以下分析基于历史数据"）。验收：新增 6 单测（规则文案格式/无标的/token文案/熔断走规则/系统提示标注），全库 210 pytest 全绿。
+
+---
+编码时间：2026-08-22
+编码内容（描述）：V0.2 阶段六 6.1 Embedding升级ONNX MiniLM int8。新增 app/agent/memory/embedding.py：HashEmbedding 移入（kind=hash）+ MiniLMEmbedding（kind=minilm，加载 paraphrase-multilingual-MiniLM-L12-v2 int8 量化 ONNX，urllib 直连 HF 下载到 data/models，mean pooling+L2 归一 384 维，本地 CPU 推理）+ get_embedding 工厂（按 EMBEDDING_MODEL 选择，minilm 加载失败自动回退 hash）。store.py 改 collection 按 embedding kind 隔离 collection 名（hash 保持 user_memory_{id} 兼容旧数据，minilm 加 _minilm 后缀）+ update_chunk/delete_collection。config.py 增 EMBEDDING_MODEL/MODEL_NAME/MODEL_PATH/QUANTIZATION/DIM/MAX_LENGTH。新增 scripts/rebuild_embeddings.py（hash→minilm 重建）。conftest 强制 hash（测试不下载模型）。pyproject 显式声明 onnxruntime/tokenizers。验收：新增 6 单测（hash归一确定性/minilm池化归一/量化文件名/工厂hash/加载失败回退/collection隔离），全库 216 pytest 全绿。注：roadmap 6.1 原 all-MiniLM-L6-v2 英文模型中文语义失效，经确认改用多语言 MiniLM-L12（118MB 放宽≤50MB）。
+
+---
+编码时间：2026-08-22
+编码内容（描述）：V0.2 阶段六 6.2 记忆分层与重要性。Alembic 0005 迁移 memory_chunks 加 importance 列（默认5）。MemoryChunk 模型+agent_repo.add_memory_chunk 加 importance；save_memory 写 importance 入 PG+Chroma meta。store.search 改加权检索（多取候选 k*3 后按 相似度×0.7+重要性×0.3 重排，_weighted_score）。新增 memory_service.cleanup_expired_memories（删 importance<3 且>30天，PG+Chroma 同步）+ ai_tasks.memory_cleanup 任务 + beat 每日4:00。短期记忆（最近10轮=MAX_HISTORY20）与长期记忆（TopK5 注入）原已具备，补注释明确。验收：新增 3 单测（加权分数/importance落库检索/低重要性清理），全库 219 pytest 全绿 + ruff。注：抽取仍按 MEMORY_IMPORTANCE_MIN=5 过滤，importance<3 清理为前向安全网。
+
+---
+编码时间：2026-08-22
+编码内容（描述）：V0.2 阶段六 6.3 记忆去重合并。store.py 增 embed_text（单条向量化）+ find_duplicate（get 全量 chunks 的 embeddings，用归一向量点积算余弦相似度，>0.85 返回最相似 chunk）+ _to_list（ChromaDB list/numpy 统一）；agent_repo 增 get/update_memory_chunk_by_vector。save_memory 写入前先 find_duplicate，命中则 store.update_chunk（重嵌入）+ update_memory_chunk_by_vector（内容取较新、importance 取最大）+ 记忆文件追加"合并更新"，不新增；未命中走原新增。验收：新增 1 单测（同事实二次保存合并为1条、importance取最大9），全库 220 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-22
+编码内容（描述）：V0.2 阶段六 6.4 记忆管理API。新增 app/api/v1/memory.py：GET /api/v1/memory/facts（分页 page/size + importance_min 筛选，返回 content/importance/source_type/source_id(对话ID)/created_at）、DELETE /facts/{id}（同步删 ChromaDB 向量+PG，404 兜底）、DELETE /facts（清空=delete_collection+删 memory_chunks/user_memory_files+rmtree 记忆目录）。agent_repo 增 list/count/get/delete_all memory_chunks + delete_all_memory_files；memory_service 增 list_facts/delete_fact/clear_all_facts；schemas 增 MemoryFactOut。chat_service 记忆抽取改传 source_id=conv.id 存"来源对话ID"，抽取后 yield {"type":"memory_saved","summary","importance"}（done 前）。router 注册 memory。验收：新增 4 单测（列表/筛选/删除/清空/鉴权 + memory_saved 事件），全库 223 pytest 全绿 + ruff。api-docs.md 已补 3 端点。

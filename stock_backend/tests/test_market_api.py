@@ -100,3 +100,40 @@ def test_snapshot_merges_symbols(client: TestClient, _kline_test_data):
 def test_snapshot_invalid_id(client: TestClient):
     resp = client.get("/api/v1/snapshot", params={"symbols": "abc"})
     assert resp.status_code == 400
+
+
+def test_sync_status_no_record_returns_done(client: TestClient):
+    resp = client.get("/api/v1/sync-status", params={"scope": "fixed_indices"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["status"] == "done" and data["progress"] == 100 and "message" in data
+
+
+def test_sync_status_returns_latest_record(client: TestClient):
+    from datetime import UTC, datetime
+
+    from app.models.ops import SyncStatus
+    from app.utils.db import get_session
+
+    db = get_session()
+    try:
+        db.add(
+            SyncStatus(
+                scope="fixed_indices", status="running", progress=35, total=49,
+                message="已同步 35/49", started_at=datetime.now(UTC),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    try:
+        resp = client.get("/api/v1/sync-status", params={"scope": "fixed_indices"})
+        data = resp.json()["data"]
+        assert data == {"status": "running", "progress": 35, "total": 49, "message": "已同步 35/49"}
+    finally:
+        db = get_session()
+        try:
+            db.query(SyncStatus).filter_by(scope="fixed_indices").delete()
+            db.commit()
+        finally:
+            db.close()

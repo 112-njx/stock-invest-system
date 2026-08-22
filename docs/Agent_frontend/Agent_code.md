@@ -89,3 +89,16 @@ Agent的前端编码记录,你需要按照：
 
 编码时间：2026-08-10
 编码内容（描述）：5.5 收尾检查——对照 working_docs.md 六要素自查：可维护（组件化/CSS变量/API层/注释）、可扩展（懒加载+组件复用）、可演进（接口版本化+占位降级）、稳定性（轮询静默/错误拦截/降级兜底）、可观测（前端监控埋点+JSON日志）、可部署（Docker+Nginx 反代）；typecheck/lint/build 全绿、docker compose build 通过；roadmap.md 已补阶段五人工配置说明。
+
+## v0.2
+编码时间：2026-08-21
+编码内容（描述）：V0.2 阶段一基础层——api/market.ts 补 Snapshot.data_age_seconds、SymbolInfo.is_catalog/has_kline、WatchlistItem.sync_status/last_synced_at、SyncStatus 类型与 fetchSyncStatus()；marketStore 加 syncStatus 状态+setSyncStatus；新增 utils/tradingTime.ts（A股交易时段判断+数据新鲜度计算，纯工具无UI依赖）。typecheck 通过。
+
+编码时间：2026-08-21
+编码内容（描述）：V0.2 阶段一加载体验——MarketView 加 sync-status 查询（同步中显示 absolute 覆盖进度条+骨架屏，done后加载数据，不改网格布局）；KLineChart 切换标的不清空旧数据（无闪烁）+加载顶部细进度条+错误态重试按钮+暴露 updateLastBar；BasicInfoPanel 更新时间改用新鲜度逻辑（交易时段绿/延迟黄/非交易灰）+错误重试；WatchlistPanel/IndexListPanel 加错误态+重试。全部最小化增量改动，不改布局/路由/样式结构。
+
+编码时间：2026-08-21
+编码内容（描述）：V0.2 阶段二WS基础设施——新增 utils/wsClient.ts（单例WS客户端，指数退避重连1s→30s，ping/pong心跳30s超时，消息按type分发，断线补拉sync，BroadcastChannel多标签页单连接leader选举）；新增 stores/wsStore.ts（订阅集合管理 current+watchlist+fixedIndices去重，snapshot消息merge到marketStore，kline消息回调KLineChart.updateLastBar）；useSnapshotPolling 加WS连接检测（连上停轮询、断线自动降级轮询）；MarketView 初始化WS+订阅同步；KLineChart 注册kline回调。纯基础设施，无UI改动。浏览器实测WS连接成功、订阅49个固定指数。
+
+编码时间：2026-08-21
+编码内容（描述）：V0.2 阶段三搜索关注增强——WatchlistPanel 搜索结果按 has_kline/is_catalog 分组展示（已同步组/未同步组灰色标注"添加后同步"）；关注列表行加同步状态图标（syncing旋转loading/failed黄色感叹号点击重试/done无图标）；关注增删后自动调 wsStore.syncSubscriptions() 同步WS订阅；retrySync 重新添加幂等触发 kline_init。最小化改动，不改布局结构。typecheck 通过。

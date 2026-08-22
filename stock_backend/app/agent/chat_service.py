@@ -9,8 +9,10 @@
 - {"type":"error","content":...}     LLM 失败降级文案
 """
 
+import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -20,16 +22,20 @@ from app.agent.context import build_llm_messages, build_tools, log_context
 from app.agent.memory import memory_service
 from app.agent.prompts import build_system_prompt as default_system_prompt
 from app.agent.research_graph import run_research_graph
+from app.agent.sse import cache_delta, cache_done, clear_delta_cache
+from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.models.agent import UserAgent
 from app.repositories import agent_repo, conversation_repo
-from app.services import conversation_service, market_service
+from app.services import conversation_service, indicator_service, market_service
 from app.services.llm import LLMService, get_llm_service
+from app.services.llm.llm_service import classify_llm_error
 from app.utils.db import SessionLocal
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
-MAX_HISTORY = 20  # 注入 LLM 的历史消息条数
+MAX_HISTORY = 20  # 注入 LLM 的历史消息条数（=最近 10 轮对话，短期记忆，不向量化）
 # 深度模式：L 区功能卡片（诊断/交易计划/机会雷达）走多智能体研究图（3.8），其余走单 Agent 工具流
 DEEP_RUN_TYPES = {"diagnose", "plan", "radar"}
 _AGENT_ROLE = {
@@ -43,6 +49,52 @@ _AGENT_ROLE = {
 
 def _fallback_text() -> str:
     return "当前 AI 服务暂不可用（未配置 API Key 或服务异常），请稍后重试。以下为数据可用的说明：无法生成智能分析，请核对行情与风险后自行决策。"
+
+
+def _rule_based_analysis(db, symbol_id: int | None) -> str:
+    """熔断降级（5.4）：基于规则的技术指标状态描述（MACD/KDJ），不依赖 LLM。"""
+    if not symbol_id:
+        return "未绑定分析标的，无法生成基础技术分析。"
+    try:
+        rows = indicator_service.compute_indicators(db, str(symbol_id), "1d", ["macd", "kdj"], limit=30)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("rule-based analysis failed: %s", e)
+        return "行情数据暂时不可用，无法生成基础技术分析。"
+    if not rows:
+        return "暂无该标的的行情数据，无法生成基础技术分析。"
+    last = rows[-1]
+    dif, dea = last.get("macd_dif"), last.get("macd_dea")
+    k, d = last.get("kdj_k"), last.get("kdj_d")
+    signals: list[str] = []
+    trend: str | None = None
+    if dif is not None and dea is not None:
+        signals.append("MACD金叉" if dif > dea else "MACD死叉")
+        trend = "偏多" if dif > dea else "偏空"
+    if k is not None and d is not None:
+        if k > 80:
+            signals.append("KDJ超买")
+        elif k < 20:
+            signals.append("KDJ超卖")
+        elif k > d:
+            signals.append("KDJ多头排列")
+        else:
+            signals.append("KDJ空头排列")
+        if trend is None:
+            trend = "偏多" if k > d else "偏空"
+    if not signals:
+        return "暂无有效指标数据，无法生成基础技术分析。"
+    return "、".join(signals) + (f"，短期趋势{trend}" if trend else "")
+
+
+def _degraded_text(db, symbol_id: int | None, error_code: str) -> str:
+    """按错误码分级生成降级文案（5.4）。"""
+    if error_code in ("TOKEN_INVALID", "TOKEN_QUOTA"):
+        return "您的DeepSeek API Key无效或余额不足，请检查配置"
+    if error_code == "PROVIDER_UNAVAILABLE":
+        return "AI服务暂时不可用，已切换基础分析模式。\n" + _rule_based_analysis(db, symbol_id)
+    if error_code == "CONTENT_FILTERED":
+        return "内容违规，已被过滤，请调整提问后重试。"
+    return _fallback_text()
 
 
 def _load_agent(db: Session, user_id: int, agent_id: int | None) -> UserAgent | None:
@@ -76,12 +128,14 @@ async def _run_react(
         full_text = "".join(parts).strip() or _fallback_text()
         llm_svc.breaker.on_success()
         assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, full_text, 0, "success")
-        await _extract_and_save_memory(db, run.user_id, user_msg.content, full_text, llm_svc)
+        saved_facts = await _extract_and_save_memory(db, run.user_id, conv.id, user_msg.content, full_text, llm_svc)
+        for f in saved_facts:
+            yield {"type": "memory_saved", "summary": f["content"], "importance": int(f.get("importance", 5))}
         yield {"type": "done", "message_id": assistant_msg.id, "conversation_id": conv.id, "run_id": run.id}
     except Exception as e:  # noqa: BLE001
         logger.exception("agent run failed: %s", e)
         llm_svc.breaker.on_failure()
-        yield _yield_failure(db, run, user_msg, conv, symbol_id, str(e))
+        yield _yield_failure(db, run, user_msg, conv, symbol_id, e)
 
 
 async def _run_deep(
@@ -108,19 +162,22 @@ async def _run_deep(
         full_text = "\n\n".join(parts).strip() or _fallback_text()
         llm_svc.breaker.on_success()
         assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, full_text, 0, "success")
-        await _extract_and_save_memory(db, run.user_id, content, full_text, llm_svc)
+        saved_facts = await _extract_and_save_memory(db, run.user_id, conv.id, content, full_text, llm_svc)
+        for f in saved_facts:
+            yield {"type": "memory_saved", "summary": f["content"], "importance": int(f.get("importance", 5))}
         yield {"type": "done", "message_id": assistant_msg.id, "conversation_id": conv.id, "run_id": run.id}
     except Exception as e:  # noqa: BLE001
         logger.exception("research graph run failed: %s", e)
         llm_svc.breaker.on_failure()
-        yield _yield_failure(db, run, user_msg, conv, symbol_id, str(e))
+        yield _yield_failure(db, run, user_msg, conv, symbol_id, e)
 
 
-def _yield_failure(db, run, user_msg, conv, symbol_id, error: str) -> dict:
-    """运行失败：降级文案入库 + 返回 error 事件。"""
-    text = _fallback_text()
-    assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, text, 0, "failed", error)
-    return {"type": "error", "content": text, "message_id": assistant_msg.id, "conversation_id": conv.id, "run_id": run.id}
+def _yield_failure(db, run, user_msg, conv, symbol_id, exc: Exception) -> dict:
+    """运行失败：按错误码分级降级文案入库 + 返回标准化 error 事件（阶段五 5.3/5.4）。"""
+    error_ev = classify_llm_error(exc)
+    text = _degraded_text(db, symbol_id, error_ev["code"])
+    assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, text, 0, "failed", error_ev["message"])
+    return {**error_ev, "message_id": assistant_msg.id, "conversation_id": conv.id, "run_id": run.id}
 
 
 async def stream_chat(
@@ -153,6 +210,7 @@ async def stream_chat(
 
         user_msg = conversation_repo.add_message(db, conv.id, "user", content, symbol_id=symbol_id)
         db.commit()
+        clear_delta_cache(conv.id)  # 新消息开始：清空旧 delta 断点续传缓存
         yield {"type": "start"}
 
         # ---- 上下文组装 ----
@@ -182,20 +240,25 @@ async def stream_chat(
         # ---- LLM 不可用降级 ----
         # 仅按服务可用性判定；model 为可选注入（None 时下面用 llm_svc.provider.raw_model 兜底），不得作为降级条件
         if not llm_svc.available:
-            text = _fallback_text()
+            text = _degraded_text(db, symbol_id, "PROVIDER_UNAVAILABLE")
             assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, text, 0, "failed", "AI 服务不可用")
             yield {"type": "delta", "content": text}
             yield {"type": "done", "message_id": assistant_msg.id, "conversation_id": conv.id, "run_id": run.id}
             return
 
         # ---- 运行 Agent（深度模式走研究图，其余走 ReAct 工具流）----
-        await llm_svc.preflight()
+        try:
+            await llm_svc.preflight()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("llm preflight failed: %s", e)
+            yield _yield_failure(db, run, user_msg, conv, symbol_id, e)
+            return
         agent_model = model if model is not None else llm_svc.provider.raw_model
         if run_type in DEEP_RUN_TYPES:
             gen = _run_deep(db, run, user_msg, conv, symbol_id, symbol, content, run_type, agent_model, llm_svc)
         else:
             gen = _run_react(db, run, user_msg, conv, symbol_id, messages, tools, agent_model, llm_svc)
-        async for ev in gen:
+        async for ev in _stream_with_timeouts(gen, db, run, user_msg, conv, symbol_id):
             yield ev
     finally:
         db.close()
@@ -231,14 +294,16 @@ def _emit_update(db: Session, run, update: dict, parts: list[str], idx: int) -> 
     return events
 
 
-async def _extract_and_save_memory(db: Session, user_id: int, user_msg: str, assistant_msg: str, llm_svc) -> None:
-    """对话结束后抽取关键事实入库（best-effort，失败不影响主链路）。"""
+async def _extract_and_save_memory(db: Session, user_id: int, source_id: int | None, user_msg: str, assistant_msg: str, llm_svc) -> list[dict]:
+    """对话结束后抽取关键事实入库（best-effort，失败不影响主链路）。返回已抽取事实列表（供 memory_saved 事件）。"""
     try:
         facts = await memory_service.aextract_facts(user_msg, assistant_msg, llm_svc)
         if facts:
-            memory_service.save_memory(db, user_id, "rule", None, facts)
+            memory_service.save_memory(db, user_id, "rule", source_id, facts)
+            return facts
     except Exception as e:  # noqa: BLE001
         logger.warning("memory extract/save failed: %s", e)
+    return []
 
 
 def _save_result(db, run, user_msg, conv, symbol_id, text, tokens, status, error=None):
@@ -248,3 +313,52 @@ def _save_result(db, run, user_msg, conv, symbol_id, text, tokens, status, error
     db.commit()
     db.refresh(assistant_msg)
     return assistant_msg
+
+
+async def _stream_with_timeouts(gen, db, run, user_msg, conv, symbol_id) -> AsyncIterator[dict]:
+    """给 Agent 事件流加三级超时 + delta 序号/断点续传缓存（阶段五 5.1/5.2）。
+
+    - 首字超时：首个输出（delta/tool_call）前等待上限 SSE_FIRST_TOKEN_TIMEOUT；
+    - 单 delta 间隔超时：相邻输出间隔上限 SSE_INTER_DELTA_TIMEOUT；
+    - 总流式超时：SSE_TOTAL_TIMEOUT。
+    每个 delta 事件携带递增 seq 并缓存到 Redis；done 事件缓存供断点续传。
+    超时后保存已生成内容 + 返回 ``{"type":"done","truncated":true,"reason":"timeout"}``。
+    """
+    start = time.monotonic()
+    first = True
+    seq = 0
+    partial_parts: list[str] = []
+    try:
+        while True:
+            remaining = settings.SSE_TOTAL_TIMEOUT - (time.monotonic() - start)
+            if remaining <= 0:
+                raise TimeoutError("total streaming timeout")
+            step_timeout = settings.SSE_FIRST_TOKEN_TIMEOUT if first else settings.SSE_INTER_DELTA_TIMEOUT
+            try:
+                ev = await asyncio.wait_for(gen.__anext__(), timeout=min(step_timeout, remaining))
+            except TimeoutError:
+                logger.warning("sse stream timeout user=%s conv=%s", run.user_id, conv.id)
+                full_text = "".join(partial_parts).strip() or _fallback_text()
+                assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, full_text, 0, "failed", "timeout")
+                done_ev = {
+                    "type": "done",
+                    "message_id": assistant_msg.id,
+                    "conversation_id": conv.id,
+                    "run_id": run.id,
+                    "truncated": True,
+                    "reason": "timeout",
+                }
+                cache_done(conv.id, done_ev)
+                yield done_ev
+                return
+            if ev.get("type") == "delta":
+                partial_parts.append(ev.get("content", ""))
+                seq += 1
+                ev = {**ev, "seq": seq}
+                cache_delta(conv.id, ev)
+            elif ev.get("type") == "done":
+                cache_done(conv.id, ev)
+            first = False
+            yield ev
+    except StopAsyncIteration:
+        return

@@ -2,6 +2,44 @@
 在实施规划后方提前写出前端软件vibe coding后需要人配置的地方或日志文件说明，要求遵循简洁的原则，一条一句话总结即可
 并且每一条都必须是需要手动配置或观看系统运行的。
 
+
+## 需要人工配置的地方 / 日志文件说明
+
+v0.1开发
+### 阶段一（1.1~1.4）
+- 启动后端：`cd stock_backend && .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000`（需 PostgreSQL 本机 5432 与 Docker Redis stock-redis 已运行）。
+- 启动前端：`cd stock_frontend && npm install && npm run dev`，浏览器访问 http://localhost:5173；开发环境 `/api` 由 vite 代理到后端 8000。
+- 登录/注册为普通用户流程，无手动配置项；新用户注册后即自动登录。
+
+### 阶段二（2.1~2.5）
+- 访问 http://localhost:5173/market/detail 直接查看第一层 A/B/C/D 区；无当前标时自动选中关注第一项或固定指数第一项（上证指数）。
+- 实时价刷新依赖后端 Celery 行情同步（realtime_poll/kline_init）已入库，前端 7s 轮询 /api/v1/snapshot；未同步标的现价/涨跌幅显示 --。
+- 技术指标、支撑/压力位、关注列表均需登录（JWT）；Redis 未启动时指标缓存自动降级直查库，K 线不受影响。
+- 页面调试看浏览器 F12 Console/Network（轮询失败静默不弹 toast）；后端 JSON 日志输出到 uvicorn 控制台 stdout。
+
+### 阶段四（4.1~4.8）
+- 访问 http://localhost:5173/ai 进入 AI 策略页（需登录）；SSE 流式对话经 vite 代理到后端 8000，F12 Network 可见 data: JSON 帧（start/delta/done）。
+- 4.6 记忆文件（GET /api/v1/memory/files）、4.8.4 运行记录（GET /api/v1/agent/runs）两个后端接口暂未实现，前端已按约定对接并做 404 占位；需后端补齐后自动生效（详见 docs 两个 fixed.md）。
+- AI 流式对话、深度分析、策略代码生成依赖后端 DeepSeek API Key（stock_backend/.env 配 DEEPSEEK_API_KEY）；未配置时后端返回降级文案，前端打字机照常渲染。
+- 回测显示跳转第一层需策略已有回测结果：先启动 Celery backtest worker 并发起回测（后端阶段四冒烟已跑通）。
+
+### 阶段三（3.1~3.5）
+- 访问 http://localhost:5173 默认首页即行情第二层 E/F/G/H/I 区；E/G/H 行点击联动 F 区，双击 F 区 K 线进入第一层详情页（Esc/返回退出）。
+- 关注增删仍在第一层 D 区操作，第二层 E 区只读展示、与 D 区共用同一 store 数据源；两页关注数据一致。
+- 固定指数列表为后端 is_fixed=1 的 49 条（G 大盘 14 + H 行业 35），前端按 sort_order 分组，顺序与种子数据一致；指数现价依赖 Celery 同步已入库，未同步显示 --。
+- 页面调试看浏览器 F12 Console/Network（轮询失败静默不弹 toast）；后端 JSON 日志输出到 uvicorn 控制台 stdout。
+
+### 阶段五（5.1~5.5）
+- Docker 部署：需本机 Docker Desktop 已启动；后端 FastAPI 在本机 8000 运行（或把 docker-compose.yml 的 NGINX_PROXY_PASS 改为后端容器服务名）；
+- 执行 `cd stock-invest-system && docker compose up -d --build`，访问 http://localhost:8080（Nginx 托管静态 + 反代 /api）。
+- Docker 构建需拉取 node:22-alpine / nginx:1.27-alpine（docker.io）；国内网络无法直连 Docker Hub 时，需在 Docker Desktop Settings→Docker Engine 
+- 配置镜像加速器（如 https://docker.m.daocloud.io 等）并重启 Docker Desktop，再执行 `docker compose build`（镜像已由 docker compose config 语法校验通过，网络就绪即可构建）。
+- 5.3 监控埋点无需人工配置；数据查看：dev 模式浏览器 F12 Console 输出 `[monitor]` 摘要、localStorage key `stock_invest_monitor` 存队列；
+- 上报 POST /api/v1/monitor/events 后端尚未实现，404 静默降级本地收集，后端补齐后自动补传。
+- 5.1 双向标的联动：AI 页「回测显示」跳转第一层自动携带策略回测标的（?symbol=code）切换 K 线；从行情页进入 AI 页自动带出当前标的到「选择要分析的标的」，无需人工配置。
+
+v0.2开发（按波次开发而非阶段补充内容）
+
 ---
 
 ## 前端开发实施方案（项目启动 → 第一版发布）
@@ -176,40 +214,6 @@ M 区增加"运行记录"标签页。
 - 验收：每项有结论并补全前端开发收尾记录（docs/Agent_frontend/Agent_code.md）。
 
 ---
-
-## 需要人工配置的地方 / 日志文件说明
-
-### 阶段一（1.1~1.4）
-- 启动后端：`cd stock_backend && .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000`（需 PostgreSQL 本机 5432 与 Docker Redis stock-redis 已运行）。
-- 启动前端：`cd stock_frontend && npm install && npm run dev`，浏览器访问 http://localhost:5173；开发环境 `/api` 由 vite 代理到后端 8000。
-- 登录/注册为普通用户流程，无手动配置项；新用户注册后即自动登录。
-
-### 阶段二（2.1~2.5）
-- 访问 http://localhost:5173/market/detail 直接查看第一层 A/B/C/D 区；无当前标时自动选中关注第一项或固定指数第一项（上证指数）。
-- 实时价刷新依赖后端 Celery 行情同步（realtime_poll/kline_init）已入库，前端 7s 轮询 /api/v1/snapshot；未同步标的现价/涨跌幅显示 --。
-- 技术指标、支撑/压力位、关注列表均需登录（JWT）；Redis 未启动时指标缓存自动降级直查库，K 线不受影响。
-- 页面调试看浏览器 F12 Console/Network（轮询失败静默不弹 toast）；后端 JSON 日志输出到 uvicorn 控制台 stdout。
-
-### 阶段四（4.1~4.8）
-- 访问 http://localhost:5173/ai 进入 AI 策略页（需登录）；SSE 流式对话经 vite 代理到后端 8000，F12 Network 可见 data: JSON 帧（start/delta/done）。
-- 4.6 记忆文件（GET /api/v1/memory/files）、4.8.4 运行记录（GET /api/v1/agent/runs）两个后端接口暂未实现，前端已按约定对接并做 404 占位；需后端补齐后自动生效（详见 docs 两个 fixed.md）。
-- AI 流式对话、深度分析、策略代码生成依赖后端 DeepSeek API Key（stock_backend/.env 配 DEEPSEEK_API_KEY）；未配置时后端返回降级文案，前端打字机照常渲染。
-- 回测显示跳转第一层需策略已有回测结果：先启动 Celery backtest worker 并发起回测（后端阶段四冒烟已跑通）。
-
-### 阶段三（3.1~3.5）
-- 访问 http://localhost:5173 默认首页即行情第二层 E/F/G/H/I 区；E/G/H 行点击联动 F 区，双击 F 区 K 线进入第一层详情页（Esc/返回退出）。
-- 关注增删仍在第一层 D 区操作，第二层 E 区只读展示、与 D 区共用同一 store 数据源；两页关注数据一致。
-- 固定指数列表为后端 is_fixed=1 的 49 条（G 大盘 14 + H 行业 35），前端按 sort_order 分组，顺序与种子数据一致；指数现价依赖 Celery 同步已入库，未同步显示 --。
-- 页面调试看浏览器 F12 Console/Network（轮询失败静默不弹 toast）；后端 JSON 日志输出到 uvicorn 控制台 stdout。
-
-### 阶段五（5.1~5.5）
-- Docker 部署：需本机 Docker Desktop 已启动；后端 FastAPI 在本机 8000 运行（或把 docker-compose.yml 的 NGINX_PROXY_PASS 改为后端容器服务名）；
-- 执行 `cd stock-invest-system && docker compose up -d --build`，访问 http://localhost:8080（Nginx 托管静态 + 反代 /api）。
-- Docker 构建需拉取 node:22-alpine / nginx:1.27-alpine（docker.io）；国内网络无法直连 Docker Hub 时，需在 Docker Desktop Settings→Docker Engine 
-- 配置镜像加速器（如 https://docker.m.daocloud.io 等）并重启 Docker Desktop，再执行 `docker compose build`（镜像已由 docker compose config 语法校验通过，网络就绪即可构建）。
-- 5.3 监控埋点无需人工配置；数据查看：dev 模式浏览器 F12 Console 输出 `[monitor]` 摘要、localStorage key `stock_invest_monitor` 存队列；
-- 上报 POST /api/v1/monitor/events 后端尚未实现，404 静默降级本地收集，后端补齐后自动补传。
-- 5.1 双向标的联动：AI 页「回测显示」跳转第一层自动携带策略回测标的（?symbol=code）切换 K 线；从行情页进入 AI 页自动带出当前标的到「选择要分析的标的」，无需人工配置。
 
 #### 项目v0.2用户体验升级
 ** 该阶段仅为现有功能进行生产实际可用级架构补充。

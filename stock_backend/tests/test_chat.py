@@ -298,6 +298,207 @@ def test_stream_chat_tool_call_records_steps(client: TestClient):
         _cleanup_users(uname)
 
 
+# ---- 5.1：SSE 心跳与超时保护 ----
+def test_stream_with_timeouts_truncates_on_stall(monkeypatch):
+    """首字超时：gen 不产出 → 返回 truncated done + 保存部分内容（status=failed/error=timeout）。"""
+    import asyncio
+
+    from app.agent import chat_service as cs
+
+    monkeypatch.setattr(cs.settings, "SSE_FIRST_TOKEN_TIMEOUT", 0.01)
+    monkeypatch.setattr(cs.settings, "SSE_TOTAL_TIMEOUT", 30.0)
+    saved = {}
+    monkeypatch.setattr(
+        cs,
+        "_save_result",
+        lambda db, run, user_msg, conv, symbol_id, text, tokens, status, error=None: saved.update(
+            status=status, error=error, text=text
+        )
+        or types.SimpleNamespace(id=1),
+    )
+
+    class _Conv:
+        id = 5
+
+    class _Run:
+        id = 9
+        user_id = 1
+
+    async def _gen():
+        await asyncio.sleep(10)  # 挂起不产出
+        yield {"type": "done"}
+
+    async def _collect():
+        evs = []
+        async for ev in cs._stream_with_timeouts(_gen(), None, _Run(), None, _Conv(), None):
+            evs.append(ev)
+        return evs
+
+    evs = asyncio.run(_collect())
+    assert evs[-1]["type"] == "done"
+    assert evs[-1]["truncated"] is True
+    assert evs[-1]["reason"] == "timeout"
+    assert saved["status"] == "failed"
+    assert saved["error"] == "timeout"
+
+
+def test_stream_with_timeouts_passthrough():
+    """正常路径：delta 加 seq 并透传，done 透传，不注入 truncated。"""
+    import asyncio
+
+    from app.agent import chat_service as cs
+
+    class _Conv:
+        id = 12345
+
+    async def _gen():
+        yield {"type": "delta", "content": "你好"}
+        yield {"type": "done", "message_id": 1}
+
+    async def _collect():
+        return [ev async for ev in cs._stream_with_timeouts(_gen(), None, None, None, _Conv(), None)]
+
+    evs = asyncio.run(_collect())
+    assert evs[0] == {"type": "delta", "content": "你好", "seq": 1}
+    assert evs[1] == {"type": "done", "message_id": 1}
+
+
+def test_sse_keepalive_emits(monkeypatch):
+    """空闲时发送 :keepalive 注释行，同时透传 data 帧。"""
+    import asyncio
+
+    from app.api.v1 import chat as chat_api
+
+    monkeypatch.setattr(chat_api.settings, "SSE_KEEPALIVE_INTERVAL", 0.02)
+
+    async def _gen():
+        await asyncio.sleep(0.06)
+        yield {"type": "done"}
+
+    async def _collect():
+        frames = []
+        async for f in chat_api._sse_keepalive(_gen()):
+            frames.append(f)
+        return frames
+
+    frames = asyncio.run(_collect())
+    assert any(":keepalive" in f for f in frames)
+    assert any(f.startswith("data: ") and "done" in f for f in frames)
+
+
+# ---- 5.3：错误帧标准化 ----
+class FakeErrorChatModel(FakeChatModel):
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        raise ConnectionError("network down")
+
+
+def test_stream_chat_error_frame_standardized(client: TestClient):
+    """LLM 失败 → 标准化 error 帧（code/retryable/message），而非旧 content 格式。"""
+    uname = _uname()
+    try:
+        token = _register(client, uname)
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+        fake = FakeLLMService(FakeErrorChatModel())
+        events = _run_stream_chat(fake, user_id=me["id"], conversation_id=None, symbol=None, content="hi", run_type="custom")
+        errs = [e for e in events if e["type"] == "error"]
+        assert errs, f"期望 error 事件，实际 {[e['type'] for e in events]}"
+        err = errs[0]
+        assert err["code"] == "NETWORK_ERROR"
+        assert err["retryable"] is True
+        assert "message" in err and err["message"]
+    finally:
+        _cleanup_users(uname)
+
+
+# ---- 6.4：记忆写入反馈 memory_saved 事件 ----
+def test_stream_chat_emits_memory_saved(client: TestClient, monkeypatch):
+    from app.agent.memory import memory_service as ms
+
+    facts = [{"content": "止损不超过2%", "type": "rule", "importance": 7}]
+
+    async def _fake_extract(user_msg, assistant_msg, llm_svc=None):
+        return facts
+
+    monkeypatch.setattr(ms, "aextract_facts", _fake_extract)
+    monkeypatch.setattr(ms, "save_memory", lambda *a, **k: 1)  # 隔离真实 chroma/文件写入
+
+    uname = _uname()
+    try:
+        token = _register(client, uname)
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+        fake = FakeLLMService(FakeChatModel(final_text="分析完成"))
+        events = _run_stream_chat(fake, user_id=me["id"], conversation_id=None, symbol=None, content="hi", run_type="custom")
+        mem_evs = [e for e in events if e["type"] == "memory_saved"]
+        assert mem_evs, f"期望 memory_saved 事件，实际 {[e['type'] for e in events]}"
+        assert mem_evs[0]["summary"] == "止损不超过2%"
+        assert mem_evs[0]["importance"] == 7
+        assert events[-1]["type"] == "done"  # memory_saved 在 done 之前
+    finally:
+        _cleanup_users(uname)
+
+
+# ---- 5.4：错误分级降级 ----
+def test_rule_based_analysis_format(monkeypatch):
+    from app.agent import chat_service as cs
+
+    fake_rows = [{"macd_dif": 1.0, "macd_dea": 0.5, "kdj_k": 85, "kdj_d": 80}]
+    monkeypatch.setattr(cs.indicator_service, "compute_indicators", lambda *a, **k: fake_rows)
+    text = cs._rule_based_analysis(None, 1)
+    assert "MACD金叉" in text
+    assert "KDJ超买" in text
+    assert "偏多" in text
+
+
+def test_rule_based_analysis_no_symbol():
+    from app.agent import chat_service as cs
+
+    assert "未绑定分析标的" in cs._rule_based_analysis(None, None)
+
+
+def test_degraded_text_token_error():
+    from app.agent import chat_service as cs
+
+    assert cs._degraded_text(None, None, "TOKEN_INVALID") == "您的DeepSeek API Key无效或余额不足，请检查配置"
+    assert cs._degraded_text(None, None, "TOKEN_QUOTA") == "您的DeepSeek API Key无效或余额不足，请检查配置"
+
+
+def test_degraded_text_circuit_open_uses_rule_based():
+    from app.agent import chat_service as cs
+
+    assert "已切换基础分析模式" in cs._degraded_text(None, 1, "PROVIDER_UNAVAILABLE")
+
+
+def test_yield_failure_circuit_open_saves_rule_text(monkeypatch):
+    from app.agent import chat_service as cs
+    from app.services.llm.llm_service import LLMCircuitOpenError
+
+    saved = {}
+    monkeypatch.setattr(
+        cs,
+        "_save_result",
+        lambda db, run, u, c, sid, text, t, s, e=None: saved.update(text=text, error=e) or types.SimpleNamespace(id=1),
+    )
+    monkeypatch.setattr(cs.indicator_service, "compute_indicators", lambda *a, **k: [{"macd_dif": 1.0, "macd_dea": 0.5, "kdj_k": 85, "kdj_d": 80}])
+
+    class _Conv:
+        id = 1
+
+    class _Run:
+        id = 2
+
+    ev = cs._yield_failure(None, _Run(), None, _Conv(), 1, LLMCircuitOpenError("熔断"))
+    assert ev["code"] == "PROVIDER_UNAVAILABLE"
+    assert "已切换基础分析模式" in saved["text"]
+    assert "MACD金叉" in saved["text"]
+
+
+def test_build_system_prompt_has_tool_failure_annotation():
+    from app.agent.prompts import build_system_prompt
+
+    sp = build_system_prompt()
+    assert "行情数据暂时不可用，以下分析基于历史数据" in sp
+
+
 # ---- API：SSE 降级 ----
 def test_chat_api_stream_and_requires_token(client: TestClient, monkeypatch):
     uname = _uname()

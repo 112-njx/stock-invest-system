@@ -13,6 +13,7 @@ from .v1 import (
     health,
     indicators,
     market,
+    memory,
     strategies,
     support_resistance,
     users,
@@ -35,4 +36,5 @@ api_router.include_router(strategies.router)  # /api/v1/strategies
 api_router.include_router(agents.router)  # /api/v1/agents
 api_router.include_router(backtest.router)  # /api/v1/backtest
 api_router.include_router(agent_ops.router)  # /api/v1/agent/runs、/api/v1/memory/files
+api_router.include_router(memory.router)  # /api/v1/memory/facts（记忆管理，阶段六 6.4）
 api_router.include_router(ws_market.router)  # WS /api/v1/ws/market（实时行情）

@@ -84,21 +84,45 @@ async def aextract_facts(user_msg: str, assistant_msg: str, llm_svc: LLMService 
 
 
 def save_memory(db: Session, user_id: int, source_type: str, source_id: int | None, facts: list[dict]) -> int:
-    """保存抽取事实：写记忆文件 + ChromaDB 向量化 + memory_chunks/user_memory_files 登记。返回入库条数。"""
+    """保存抽取事实：写记忆文件 + ChromaDB 向量化 + memory_chunks/user_memory_files 登记。
+
+    阶段六 6.3 去重合并：新记忆写入前与同用户已有记忆算余弦相似度，>0.85 时更新已有记忆
+    （内容取较新表述、importance 取最大值），不新增。返回入库条数（不含合并条数）。
+    """
     saved = 0
+    merged = 0
     for fact in facts:
         try:
+            importance = int(fact.get("importance", 5))
+            dup = store.find_duplicate(user_id, fact["content"], threshold=0.85)
+            if dup is not None:
+                # 合并：更新已有记忆内容 + importance 取最大，不新增
+                new_importance = max(importance, int((dup["meta"] or {}).get("importance", 5)))
+                meta = {**(dup["meta"] or {}), "importance": new_importance}
+                store.update_chunk(user_id, dup["chunk_id"], fact["content"], meta)
+                agent_repo.update_memory_chunk_by_vector(
+                    db, user_id, dup["chunk_id"], content=fact["content"], importance=new_importance
+                )
+                store.append_to_memory_file(user_id, fact["type"], f"{fact['content']}（合并更新）", new_importance)
+                merged += 1
+                continue
+
             vector_id = f"u{user_id}_{source_type}_{uuid.uuid4().hex[:12]}"
-            fpath = store.append_to_memory_file(user_id, fact["type"], fact["content"], fact["importance"])
-            store.add_chunk(user_id, vector_id, fact["content"], {"source_type": fact["type"], "source_id": source_id, "file_path": str(fpath)})
+            fpath = store.append_to_memory_file(user_id, fact["type"], fact["content"], importance)
+            store.add_chunk(
+                user_id,
+                vector_id,
+                fact["content"],
+                {"source_type": fact["type"], "source_id": source_id, "file_path": str(fpath), "importance": importance},
+            )
             agent_repo.add_memory_chunk(
-                db, user_id, fact["type"], source_id, fact["content"], vector_id, str(fpath)
+                db, user_id, fact["type"], source_id, fact["content"], vector_id, str(fpath), importance=importance
             )
             agent_repo.upsert_memory_file(db, user_id, str(fpath), fact["type"])
             saved += 1
         except Exception as e:  # noqa: BLE001
             logger.warning("save_memory failed user=%s: %s", user_id, e)
-    if saved:
+    if saved or merged:
         db.commit()
     return saved
 
@@ -110,6 +134,62 @@ def retrieve_memory(db: Session, user_id: int, query: str, top_k: int | None = N
         return ""
     lines = [f"- {h['content']}（来源:{h['source_type']}）" for h in hits]
     return "\n".join(lines)
+
+
+def cleanup_expired_memories(db: Session, *, importance_below: int = 3, days: int = 30) -> int:
+    """清理低重要性且超过保留期的记忆（PG + ChromaDB），返回删除条数（阶段六 6.2）。"""
+    from datetime import UTC, datetime, timedelta
+
+    older_than = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)  # naive UTC 对齐 DB 列
+    chunks = agent_repo.list_low_importance_chunks(db, importance_below=importance_below, older_than=older_than)
+    deleted = 0
+    for c in chunks:
+        if c.vector_id:
+            store.delete_chunk(c.user_id, c.vector_id)
+        agent_repo.delete_memory_chunk_by_id(db, c.user_id, c.id)
+        deleted += 1
+    if deleted:
+        db.commit()
+    return deleted
+
+
+def list_facts(
+    db: Session, user_id: int, importance_min: int | None = None, page: int = 1, size: int = 20
+) -> tuple[list, int]:
+    """分页返回用户记忆（阶段六 6.4），返回 (rows, total)。"""
+    page = max(1, page)
+    size = max(1, min(size, 100))
+    rows = agent_repo.list_memory_chunks(db, user_id, importance_min=importance_min, offset=(page - 1) * size, limit=size)
+    total = agent_repo.count_memory_chunks(db, user_id, importance_min)
+    return rows, total
+
+
+def delete_fact(db: Session, user_id: int, fact_id: int) -> bool:
+    """删除单条记忆（同步删 ChromaDB 向量 + PG 记录，阶段六 6.4）。"""
+    chunk = agent_repo.get_memory_chunk_by_id(db, user_id, fact_id)
+    if chunk is None:
+        return False
+    if chunk.vector_id:
+        store.delete_chunk(user_id, chunk.vector_id)
+    agent_repo.delete_memory_chunk_by_id(db, user_id, fact_id)
+    db.commit()
+    return True
+
+
+def clear_all_facts(db: Session, user_id: int) -> int:
+    """清空全部记忆（重建 ChromaDB collection + 删 PG 记录 + 删本地记忆文件，阶段六 6.4）。"""
+    import shutil
+
+    store.delete_collection(user_id)  # 重建 collection
+    deleted = agent_repo.delete_all_memory_chunks(db, user_id)
+    agent_repo.delete_all_memory_files(db, user_id)
+    db.commit()
+    try:
+        d = store.memory_dir(user_id)
+        shutil.rmtree(d, ignore_errors=True)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("clear memory dir failed user=%s: %s", user_id, e)
+    return deleted
 
 
 def memory_tool(db: Session, user_id: int):

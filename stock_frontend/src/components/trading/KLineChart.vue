@@ -35,6 +35,7 @@ import {
 } from '@/api/market'
 import type { SymbolInfo } from '@/api/market'
 import { useMarketStore, type Period } from '@/stores/market'
+import { useWsStore } from '@/stores/wsStore'
 import { useThemeStore } from '@/stores/theme'
 import { trackTiming } from '@/utils/monitor'
 import { toast } from '@/utils/toast'
@@ -70,6 +71,7 @@ const emit = defineEmits<{
 
 const market = useMarketStore()
 const theme = useThemeStore()
+const ws = useWsStore()
 
 const container = ref<HTMLDivElement | null>(null)
 const loading = ref(false)
@@ -426,6 +428,13 @@ async function loadKline() {
   }
 }
 
+/** V0.2：错误态重试 */
+function retryLoad() {
+  error.value = ''
+  loadKline()
+  loadSRLines()
+}
+
 /* ---------- 支撑/压力横线 ---------- */
 function clearSRLines() {
   for (const line of srLines) candleSeries?.removePriceLine(line)
@@ -467,6 +476,15 @@ async function loadSRLines() {
 defineExpose({
   setSRLines: (list: SupportResistanceItem[]) => drawSRLines(list),
   refreshSRLines: () => loadSRLines(),
+  /** V0.2 阶段二：WS 推送新末根 K 线时调用 */
+  updateLastBar: (bar: KLineBar) => {
+    if (!candleSeries) return
+    lastBar = bar
+    candleSeries.update({
+      time: toUtcSeconds(bar.ts),
+      open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+    })
+  },
 })
 
 /* ---------- 实时行情 ---------- */
@@ -486,7 +504,7 @@ watch(
   }
 )
 
-watch(() => props.symbol, () => {
+watch(() => props.symbol, (newSym, oldSym) => {
   if (!props.symbol) {
     lastBar = null
     candleSeries?.setData([])
@@ -494,6 +512,12 @@ watch(() => props.symbol, () => {
     indicatorRows.value = []
     if (props.showIndicators) removeAllIndicatorPanes()
     return
+  }
+  // V0.2：无闪烁——切换标的时保留旧 K 线直到新数据返回，不清空
+  clearSRLines()
+  if (oldSym && newSym && oldSym.id !== newSym.id) {
+    indicatorRows.value = []
+    if (props.showIndicators) removeAllIndicatorPanes()
   }
   loadKline()
   loadSRLines()
@@ -509,6 +533,16 @@ onMounted(() => {
     loadKline()
     loadSRLines()
   }
+  // V0.2：注册 WS kline 更新回调
+  ws.setKlineHandler((symbolId, period, bar) => {
+    if (props.symbol?.id === symbolId && market.period === period) {
+      lastBar = bar
+      candleSeries?.update({
+        time: toUtcSeconds(bar.ts),
+        open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+      })
+    }
+  })
 })
 
 onBeforeUnmount(() => {
@@ -521,6 +555,8 @@ onBeforeUnmount(() => {
   candleSeries = null
   srLines = []
   indicatorPanes.clear()
+  // V0.2：注销 WS kline 回调
+  ws.setKlineHandler(null)
 })
 
 /* ---------- 支撑/压力位弹窗 ---------- */
@@ -610,10 +646,16 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
       </div>
     </header>
 
-    <div ref="container" class="kline-chart__body" @dblclick.stop="emit('dblclick')" />
+    <div ref="container" class="kline-chart__body" @dblclick.stop="emit('dblclick')">
+      <!-- V0.2：加载中顶部细进度条（无闪烁切换时提示） -->
+      <div v-if="loading && props.symbol" class="kline-chart__progress" />
+    </div>
 
-    <div v-if="loading" class="kline-chart__state">加载中…</div>
-    <div v-else-if="error" class="kline-chart__state kline-chart__state--error">{{ error }}</div>
+    <div v-if="loading && !props.symbol" class="kline-chart__state">加载中…</div>
+    <div v-else-if="error" class="kline-chart__state kline-chart__state--error">
+      <span>{{ error }}</span>
+      <button class="kline-chart__retry" @click="retryLoad">点击重试</button>
+    </div>
     <div v-else-if="!symbol" class="kline-chart__state">请选择标的</div>
 
     <!-- 支撑/压力位弹窗 -->
@@ -794,6 +836,34 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   pointer-events: none;
 }
 .kline-chart__state--error { color: var(--up); }
+/* V0.2：加载中顶部细进度条 */
+.kline-chart__progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 3;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 200% 100%;
+  animation: kline-progress 1.2s infinite;
+}
+@keyframes kline-progress {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.kline-chart__retry {
+  margin-top: 8px;
+  padding: 4px 14px;
+  font-size: 12px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+.kline-chart__retry:hover {
+  background: var(--accent-soft);
+}
 
 /* 弹窗 */
 .modal-mask {

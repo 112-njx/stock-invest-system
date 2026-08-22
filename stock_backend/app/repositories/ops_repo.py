@@ -106,3 +106,10 @@ def list_sync_status(db: Session, scope: str | None = None) -> list[SyncStatus]:
     if scope:
         stmt = stmt.where(SyncStatus.scope == scope)
     return list(db.scalars(stmt))
+
+
+def get_latest_sync_status(db: Session, scope: str) -> SyncStatus | None:
+    """某 scope 最新一条同步状态（前端轮询固定指数/目录/关注同步进度）。"""
+    return db.scalar(
+        select(SyncStatus).where(SyncStatus.scope == scope).order_by(SyncStatus.id.desc()).limit(1)
+    )

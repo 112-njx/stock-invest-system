@@ -93,6 +93,28 @@ curl "http://127.0.0.1:8000/api/v1/snapshot?symbols=70,125"
 {"code":0,"msg":"ok","data":[{"symbol_id":70,"code":"000001","name":"上证指数","type":"index","price":null,"extra":{}},...]}
 ```
 
+## 5. 同步状态查询
+
+- **接口名称**：同步状态查询
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/sync-status
+- **接口作用**：查询某同步范围（fixed_indices/catalog/watchlist）的最新同步进度，行情页加载时轮询展示"数据同步中（X/49）"。
+- **请求 Body**：无（Query：scope=fixed_indices|watchlist|catalog）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/sync-status?scope=fixed_indices"
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"status":"running","progress":35,"total":49,"message":"已同步 35/49"}}
+```
+
+（无进行中同步时返回 `{"status":"done","progress":100,"total":0,"message":"无进行中的同步"}`）
+
 # 用户鉴权 API（Auth）
 
 ## 1. 用户注册
@@ -466,7 +488,52 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/chat" -H "Authorization: Bearer ey
 ```
 data: {"type":"start"}
 data: {"type":"tool_call","tool":"market_snapshot","input":{"symbol":"600519"}}
-data: {"type":"delta","content":"..."}
+data: {"type":"delta","seq":1,"content":"..."}
+data: {"type":"delta","seq":2,"content":"..."}
+data: {"type":"done","message_id":9,"conversation_id":2,"run_id":3}
+```
+
+**SSE 事件协议（V0.2 阶段五增强）**
+
+| 事件 | 字段 | 说明 |
+|---|---|---|
+| `start` | — | 流开始 |
+| `delta` | `seq`(递增序号)、`content`、`node`?(深度模式) | 文本增量；seq 用于断点续传 |
+| `tool_call` | `tool`、`input` | Agent 调用工具 |
+| `tool_result` | `tool`、`preview` | 工具返回预览 |
+| `done` | `message_id`、`conversation_id`、`run_id`、`truncated`?、`reason`? | 正常结束；超时截断时带 `truncated:true,reason:"timeout"` |
+| `error` | `code`、`message`、`retryable`、`retry_after`? | 错误帧（见下错误码） |
+| `resync` | `conversation_id` | 断点续传缓存已过期，提示前端重新加载完整消息 |
+
+- **心跳**：空闲每 15s 发送注释行 `:keepalive\n\n`（防 Nginx proxy_read_timeout）。
+- **三级超时**：首字 30s / 单 delta 间隔 15s / 总流式 120s，超时返回已生成内容 + `done(truncated=true,reason="timeout")`。
+- **错误码**：`NETWORK_ERROR`(可重试)、`RATE_LIMITED`(可重试,带retry_after)、`TOKEN_INVALID`(不可重试)、`TOKEN_QUOTA`(不可重试)、`CONTENT_FILTERED`(不可重试)、`PROVIDER_UNAVAILABLE`(可重试)、`TIMEOUT`(可重试)。
+- **错误分级降级**：LLM 熔断/未配置 Key → 返回「AI服务暂时不可用，已切换基础分析模式」+ 规则指标文案；token 无效/余额不足 → 「您的DeepSeek API Key无效或余额不足，请检查配置」；工具失败 → 输出标注「行情数据暂时不可用，以下分析基于历史数据」。
+
+**错误帧示例**
+
+```
+data: {"type":"error","code":"RATE_LIMITED","message":"请求过于频繁，请30秒后重试","retryable":true,"retry_after":30}
+```
+
+## 2. 断点续传（Resume）
+
+- **接口名称**：流式断点续传（SSE）
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/chat/resume
+- **接口作用**：流式中断后前端带 `last_seq` 重连，后端从 Redis 缓存补发 `seq>last_seq` 的 delta（不重复不丢失），补发完成后若流已结束再发 `done`；缓存已过期（TTL 600s）返回 `{"type":"resync"}` 提示重新加载完整消息。
+- **请求 Body**：无（Query：`conversation_id`(必填)、`last_seq`(默认0)；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -N "http://127.0.0.1:8000/api/v1/chat/resume?conversation_id=2&last_seq=42" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例（SSE data 行）**
+
+```
+data: {"type":"delta","seq":43,"content":"..."}
 data: {"type":"done","message_id":9,"conversation_id":2,"run_id":3}
 ```
 
@@ -856,6 +923,66 @@ curl "http://127.0.0.1:8000/api/v1/memory/files" -H "Authorization: Bearer eyJhb
 
 ```json
 {"code":0,"msg":"ok","data":[{"path":"D:/stock-invest-system/stock_backend/data/memory/1/rule.md","content_type":"rule","updated_at":"2026-08-11T05:00:00Z"}]}
+```
+
+## 4. 记忆事实列表（V0.2 阶段六 6.4）
+
+- **接口名称**：记忆事实列表（分页）
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/memory/facts
+- **接口作用**：分页返回当前用户记忆列表（内容、重要性、来源类型/对话ID、创建时间），支持按重要性下限筛选。M 区「记忆文件」数据源。
+- **请求 Body**：无（Query：`page`(默认1)、`size`(默认20，≤100)、`importance_min`(可选 1-10)；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/memory/facts?page=1&size=20&importance_min=7" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"items":[{"id":12,"content":"止损不超过2%","importance":8,"source_type":"rule","source_id":3,"created_at":"2026-08-11T05:00:00Z"}],"total":1,"page":1,"size":20}}
+```
+
+## 5. 删除单条记忆（V0.2 阶段六 6.4）
+
+- **接口名称**：删除单条记忆
+- **请求 Method**：DELETE
+- **请求 Path**：/api/v1/memory/facts/{fact_id}
+- **接口作用**：删除单条记忆（同步删 ChromaDB 向量 + PG 记录），删除后 AI 不再召回。
+- **请求 Body**：无（Path：fact_id；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -X DELETE "http://127.0.0.1:8000/api/v1/memory/facts/12" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"已删除","data":null}
+```
+
+## 6. 清空全部记忆（V0.2 阶段六 6.4）
+
+- **接口名称**：清空全部记忆
+- **请求 Method**：DELETE
+- **请求 Path**：/api/v1/memory/facts
+- **接口作用**：清空当前用户全部记忆（重建 ChromaDB collection + 删 PG 记录 + 删本地记忆文件）。
+- **请求 Body**：无（Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -X DELETE "http://127.0.0.1:8000/api/v1/memory/facts" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"已清空","data":{"deleted":5}}
 ```
 
 # 管理员 API（Admin）

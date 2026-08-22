@@ -66,4 +66,5 @@ class MemoryChunk(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     vector_id: Mapped[str | None] = mapped_column(String(64))
     file_path: Mapped[str | None] = mapped_column(String(512))
+    importance: Mapped[int] = mapped_column(Integer, nullable=False, default=5)  # 重要性 1-10（检索加权 + 低重要性清理）
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")

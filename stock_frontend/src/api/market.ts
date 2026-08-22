@@ -13,6 +13,10 @@ export interface SymbolInfo {
   etf_linked?: string
   is_fixed_index?: boolean
   sort_order?: number
+  /** V0.2：仅在目录中未同步K线（搜索结果） */
+  is_catalog?: boolean
+  /** V0.2：是否已有K线数据（搜索结果） */
+  has_kline?: boolean
 }
 
 export interface KLineBar {
@@ -42,6 +46,8 @@ export interface Snapshot {
   turnover: number | null
   amplitude: number | null
   updated_at?: string | null
+  /** V0.2：快照数据龄（秒），当前时间 - updated_at */
+  data_age_seconds?: number | null
   /** 特殊字段：个股 market_cap/pe、ETF nav/premium、指数 pe */
   extra: Record<string, unknown>
 }
@@ -57,6 +63,18 @@ export interface WatchlistItem {
   change_pct: number | null
   updated_at?: string | null
   created_at?: string | null
+  /** V0.2：K线同步状态 pending/syncing/done/failed */
+  sync_status?: 'pending' | 'syncing' | 'done' | 'failed'
+  /** V0.2：最近同步完成时间 */
+  last_synced_at?: string | null
+}
+
+/** V0.2：固定指数预同步进度 */
+export interface SyncStatus {
+  status: 'pending' | 'running' | 'done' | 'failed' | 'partial' | 'queued'
+  progress: number
+  total: number
+  message?: string | null
 }
 
 /** 技术指标行：K 线基础字段 + 请求的指标列（macd_dif/dea/hist、kdj_k/d/j；成交量成交额为基础字段） */
@@ -83,9 +101,14 @@ export function fetchSymbols(params?: { type?: SymbolType; search?: string; is_f
   return request<SymbolInfo[]>({ url: '/symbols', params })
 }
 
-/** 标的搜索联想（6 位代码/名称，已入库优先） */
-export function searchSymbols(q: string) {
-  return request<SymbolInfo[]>({ url: '/symbols/search', params: { q } })
+/** 标的搜索联想（6 位代码/名称，已入库优先；V0.2 支持 type 过滤、返回 is_catalog/has_kline） */
+export function searchSymbols(q: string, params?: { type?: SymbolType; limit?: number }) {
+  return request<SymbolInfo[]>({ url: '/symbols/search', params: { q, ...params } })
+}
+
+/** V0.2：固定指数/目录同步状态查询（行情页加载时轮询进度） */
+export function fetchSyncStatus(scope = 'fixed_indices') {
+  return request<SyncStatus>({ url: '/sync-status', params: { scope }, silent: true })
 }
 
 /** 多周期 K 线（15m/1d/1w/1mon，时间 UTC） */

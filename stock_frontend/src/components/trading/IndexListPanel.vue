@@ -11,11 +11,12 @@ import type { SymbolInfo } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
 import { formatPct, formatPrice, trendClass } from '@/utils/color'
 
-const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; loading?: boolean }>(), {
+const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; loading?: boolean; error?: boolean }>(), {
   loading: false,
+  error: false,
 })
 
-const emit = defineEmits<{ (e: 'dblclick', symbol: SymbolInfo): void }>()
+const emit = defineEmits<{ (e: 'dblclick', symbol: SymbolInfo): void; (e: 'retry'): void }>()
 
 const market = useMarketStore()
 
@@ -49,6 +50,10 @@ function onDblClick(s: SymbolInfo) {
     <div class="index-panel__list">
       <div v-if="loading" class="index-panel__skeleton">
         <div v-for="n in 5" :key="n" class="sk-row"><span class="sk-line" /></div>
+      </div>
+      <div v-else-if="error" class="index-panel__empty index-panel__empty--error">
+        <span>加载失败</span>
+        <button class="idx-retry" @click="$emit('retry')">重试</button>
       </div>
       <div v-else-if="!list.length" class="index-panel__empty">暂无固定指数</div>
       <template v-else>
@@ -154,6 +159,22 @@ function onDblClick(s: SymbolInfo) {
   text-align: center;
   font-size: 12px;
   color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.index-panel__empty--error { color: var(--up); }
+.idx-retry {
+  padding: 3px 12px;
+  font-size: 11px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+.idx-retry:hover {
+  background: var(--accent-soft);
 }
 
 /* 数据行：替代 ListRow，保持 clickable/active/hover 交互 */

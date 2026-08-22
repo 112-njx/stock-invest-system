@@ -83,3 +83,16 @@ class MemoryFileOut(BaseModel):
     path: str = Field(validation_alias="file_path")
     content_type: str
     updated_at: datetime
+
+
+class MemoryFactOut(BaseModel):
+    """单条记忆事实（GET /memory/facts，阶段六 6.4 记忆管理 API）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    content: str
+    importance: int
+    source_type: str
+    source_id: int | None = None
+    created_at: datetime

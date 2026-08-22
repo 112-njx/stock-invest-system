@@ -24,4 +24,8 @@ def build_beat_schedule() -> dict:
             "task": "app.worker.tasks.sync_tasks.catalog_sync",
             "schedule": crontab(hour=3, minute=0),  # 每日凌晨 3:00 全量目录同步
         },
+        "memory-cleanup-daily": {
+            "task": "app.worker.tasks.ai_tasks.memory_cleanup",
+            "schedule": crontab(hour=4, minute=0),  # 每日凌晨 4:00 低重要性记忆清理（阶段六 6.2）
+        },
     }

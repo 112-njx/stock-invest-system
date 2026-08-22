@@ -9,7 +9,7 @@ from app.api.deps import get_current_user_optional, get_db
 from app.core.exceptions import ApiError
 from app.core.response import ok
 from app.models.user import User
-from app.repositories import user_repo
+from app.repositories import ops_repo, user_repo
 from app.schemas.market import KlineBarOut, SnapshotOut, SymbolOut, SymbolSearchOut
 from app.services import market_service, sync_service
 from app.utils import market_cache
@@ -81,3 +81,22 @@ def get_snapshot(
             return ok(data=[SnapshotOut(**s).model_dump(mode="json") for s in snapshots])
     snapshots = market_service.get_snapshots(db, ids)
     return ok(data=[SnapshotOut(**s).model_dump(mode="json") for s in snapshots])
+
+
+@router.get("/sync-status")
+def get_sync_status(
+    scope: str = Query("fixed_indices", description="fixed_indices/catalog/watchlist 同步范围"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """同步状态查询（V0.2 1.1）：前端行情页轮询固定指数预同步进度（X/49）。"""
+    row = ops_repo.get_latest_sync_status(db, scope)
+    if row is None:
+        return ok(data={"status": "done", "progress": 100, "total": 0, "message": "无进行中的同步"})
+    return ok(
+        data={
+            "status": row.status,
+            "progress": row.progress,
+            "total": row.total,
+            "message": row.message,
+        }
+    )

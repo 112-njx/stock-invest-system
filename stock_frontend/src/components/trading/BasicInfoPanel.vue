@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /** C 区 · 基本数据面板：快照通用字段 + 按类型特殊字段（股票 market_cap/pe、ETF premium、指数 pe）。 */
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { fetchSnapshot } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
 import { formatAmount, formatPct, formatPrice, trendClass } from '@/utils/color'
+import { getFreshness } from '@/utils/tradingTime'
 
 const market = useMarketStore()
 
@@ -12,15 +13,24 @@ const snapshot = computed(() =>
   current.value ? market.snapshots[current.value.id] ?? null : null
 )
 
+/** V0.2：加载错误状态（统一三态） */
+const loadError = ref(false)
+
 /** 当前标的快照缺失时主动拉取一次（后续由轮询刷新） */
 async function ensureSnapshot() {
   if (!current.value || snapshot.value) return
+  loadError.value = false
   try {
     const list = await fetchSnapshot([current.value.id])
     market.mergeSnapshots(list)
   } catch {
-    /* 静默：轮询会自愈 */
+    loadError.value = true
   }
+}
+
+/** V0.2：错误重试 */
+function retryLoad() {
+  ensureSnapshot()
 }
 
 watch(current, () => ensureSnapshot())
@@ -48,7 +58,9 @@ const fields = computed(() => {
     list.push({ label: '换手率', value: formatPct(s.turnover) })
   }
   list.push({ label: '振幅', value: formatPct(s.amplitude) })
-  list.push({ label: '更新时间', value: s.updated_at ? s.updated_at.slice(11, 19) : '--' })
+  // V0.2：数据新鲜度标注（交易时段绿色/延迟黄色/非交易灰色收盘）
+  const fresh = getFreshness(s.updated_at, s.data_age_seconds)
+  list.push({ label: '更新时间', value: fresh.label, cls: `fresh-${fresh.level}` })
   return list
 })
 
@@ -83,6 +95,10 @@ const specialFields = computed(() => {
     </header>
 
     <div v-if="!current" class="basic-info__empty">未选择标的</div>
+    <div v-else-if="loadError && !snapshot" class="basic-info__empty basic-info__empty--error">
+      <span>数据加载失败</span>
+      <button class="basic-info__retry" @click="retryLoad">点击重试</button>
+    </div>
     <div v-else-if="!snapshot" class="basic-info__empty">数据加载中…</div>
     <div v-else class="basic-info__grid">
       <template v-for="f in fields" :key="f.label">
@@ -125,12 +141,31 @@ const specialFields = computed(() => {
 .basic-info__empty {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 10px;
   font-size: 13px;
   color: var(--text-muted);
   padding: 16px;
 }
+.basic-info__empty--error { color: var(--up); }
+.basic-info__retry {
+  padding: 4px 14px;
+  font-size: 12px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+.basic-info__retry:hover {
+  background: var(--accent-soft);
+}
+/* V0.2：数据新鲜度颜色 */
+.fresh-live { color: var(--down); }
+.fresh-stale { color: #eab308; }
+.fresh-closed { color: var(--text-muted); }
+.fresh-unknown { color: var(--text-muted); }
 .basic-info__grid {
   flex: 1;
   min-height: 0;

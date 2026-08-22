@@ -109,3 +109,48 @@ def test_memory_files_list(client: TestClient):
         assert any(f["path"].endswith("rule.md") and f["content_type"] == "rule" for f in rows)
     finally:
         _cleanup_users(uname)
+
+
+def test_memory_facts_list_filter_delete_clear(client: TestClient):
+    uname = _uname()
+    try:
+        user = _register(client, uname)
+        uid = user["user"]["id"]
+        h = _auth(user["token"])
+
+        db = get_session()
+        try:
+            c1 = agent_repo.add_memory_chunk(db, uid, "rule", 1, "止损不超过2%", "v1", None, importance=8)
+            agent_repo.add_memory_chunk(db, uid, "preference", 1, "偏好短线", "v2", None, importance=3)
+            db.commit()
+            c1_id = c1.id
+        finally:
+            db.close()
+
+        # 列表
+        data = client.get("/api/v1/memory/facts", headers=h).json()["data"]
+        assert data["total"] == 2
+        assert any(i["id"] == c1_id and i["importance"] == 8 and i["source_id"] == 1 for i in data["items"])
+
+        # 按重要性筛选
+        data = client.get("/api/v1/memory/facts?importance_min=7", headers=h).json()["data"]
+        assert data["total"] == 1 and data["items"][0]["id"] == c1_id
+
+        # 删除单条
+        assert client.delete(f"/api/v1/memory/facts/{c1_id}", headers=h).status_code == 200
+        assert client.get("/api/v1/memory/facts", headers=h).json()["data"]["total"] == 1
+
+        # 越权：删除他人记忆 404（用 c2 已删则再造，此处直接验证不存在 id）
+        assert client.delete("/api/v1/memory/facts/999999", headers=h).status_code == 404
+
+        # 清空
+        assert client.delete("/api/v1/memory/facts", headers=h).status_code == 200
+        assert client.get("/api/v1/memory/facts", headers=h).json()["data"]["total"] == 0
+    finally:
+        _cleanup_users(uname)
+
+
+def test_memory_facts_requires_auth(client: TestClient):
+    assert client.get("/api/v1/memory/facts").status_code == 401
+    assert client.delete("/api/v1/memory/facts").status_code == 401
+    assert client.delete("/api/v1/memory/facts/1").status_code == 401

@@ -16,6 +16,7 @@ import {
   type WatchlistItem,
 } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
+import { useWsStore } from '@/stores/wsStore'
 import { formatPct, formatPrice, trendClass } from '@/utils/color'
 import { toast } from '@/utils/toast'
 import ListRow from '@/components/base/ListRow.vue'
@@ -25,8 +26,10 @@ withDefaults(defineProps<{ readonly?: boolean }>(), { readonly: false })
 const emit = defineEmits<{ (e: 'dblclick', item: WatchlistItem): void }>()
 
 const market = useMarketStore()
+const ws = useWsStore()
 
 const loading = ref(false)
+const loadError = ref(false)
 const query = ref('')
 const suggestions = ref<SymbolInfo[]>([])
 const searching = ref(false)
@@ -47,12 +50,28 @@ const displayList = computed(() =>
 
 const currentId = computed(() => market.current?.id ?? null)
 
+/** V0.2：搜索结果分组：已同步（has_kline=true）/ 未同步（is_catalog=true） */
+const groupedSuggestions = computed(() => {
+  const synced = suggestions.value.filter((s) => s.has_kline === true || s.is_catalog !== true)
+  const unsynced = suggestions.value.filter((s) => s.is_catalog === true && s.has_kline !== true)
+  return { synced, unsynced }
+})
+
+/** V0.2：关注列表失败项重试（重新添加触发 kline_init，幂等） */
+async function retrySync(item: WatchlistItem) {
+  try {
+    await addWatchlist(item.code)
+    toast.info(`正在重新同步 ${item.name}`)
+  } catch { /* 错误已 toast */ }
+}
+
 async function load() {
   loading.value = true
+  loadError.value = false
   try {
     market.setWatchlist(await fetchWatchlist())
   } catch {
-    /* 错误已 toast */
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -76,6 +95,8 @@ async function onDelete(item: WatchlistItem) {
   try {
     await removeWatchlist(item.id)
     market.removeWatchlistItem(item.id)
+    // V0.2：删除关注后同步 WS 订阅
+    ws.syncSubscriptions()
   } catch {
     /* 错误已 toast */
   }
@@ -109,6 +130,8 @@ async function onPickSuggestion(s: SymbolInfo) {
     query.value = ''
     suggestions.value = []
     toast.success(`已添加 ${s.name}`)
+    // V0.2：添加关注后同步 WS 订阅
+    ws.syncSubscriptions()
   } catch {
     /* 错误已 toast */
   }
@@ -133,6 +156,10 @@ onMounted(load)
 
     <div class="watchlist-panel__list">
       <div v-if="loading" class="watchlist-panel__empty">加载中…</div>
+      <div v-else-if="loadError" class="watchlist-panel__empty watchlist-panel__empty--error">
+        <span>加载失败</span>
+        <button class="wl-retry" @click="load">点击重试</button>
+      </div>
       <div v-else-if="!displayList.length" class="watchlist-panel__empty">
         {{ readonly ? '暂无重点关注，可在上方菜单搜索添加' : '暂无重点关注，可在下方搜索添加' }}
       </div>
@@ -146,7 +173,19 @@ onMounted(load)
           @dblclick="onDblClick(item)"
         >
           <span class="wl-code">{{ item.code }}</span>
-          <span class="wl-name">{{ item.name }}</span>
+          <span class="wl-name">
+            {{ item.name }}
+            <!-- V0.2：同步状态图标：syncing=旋转loading，failed=黄色感叹号（点击重试），done=无图标 -->
+            <span v-if="item.sync_status === 'syncing'" class="wl-sync wl-sync--syncing" title="同步中…">
+              <span class="wl-sync__spinner" />
+            </span>
+            <span
+              v-else-if="item.sync_status === 'failed'"
+              class="wl-sync wl-sync--failed"
+              title="同步失败，点击重试"
+              @click.stop="retrySync(item)"
+            >!</span>
+          </span>
           <span class="wl-price" :class="trendClass(item.change_pct)">
             {{ formatPrice(item.price) }}
           </span>
@@ -172,16 +211,34 @@ onMounted(load)
         <span v-if="searching" class="search-box__hint">…</span>
       </div>
       <div v-if="suggestions.length" class="search-suggest">
-        <button
-          v-for="s in suggestions"
-          :key="s.id"
-          class="search-suggest__item"
-          @mousedown.prevent="onPickSuggestion(s)"
-        >
-          <span class="search-suggest__name">{{ s.name }}</span>
-          <span class="search-suggest__code">{{ s.code }}</span>
-          <span class="search-suggest__type">{{ s.type }}</span>
-        </button>
+        <!-- V0.2：已同步组 -->
+        <div v-if="groupedSuggestions.synced.length" class="search-suggest__group">
+          <div class="search-suggest__group-title">已同步</div>
+          <button
+            v-for="s in groupedSuggestions.synced"
+            :key="s.id"
+            class="search-suggest__item"
+            @mousedown.prevent="onPickSuggestion(s)"
+          >
+            <span class="search-suggest__name">{{ s.name }}</span>
+            <span class="search-suggest__code">{{ s.code }}</span>
+            <span class="search-suggest__type">{{ s.type }}</span>
+          </button>
+        </div>
+        <!-- V0.2：未同步组（灰色标注"添加后同步"） -->
+        <div v-if="groupedSuggestions.unsynced.length" class="search-suggest__group">
+          <div class="search-suggest__group-title search-suggest__group-title--muted">未同步 · 添加后同步</div>
+          <button
+            v-for="s in groupedSuggestions.unsynced"
+            :key="s.id"
+            class="search-suggest__item search-suggest__item--muted"
+            @mousedown.prevent="onPickSuggestion(s)"
+          >
+            <span class="search-suggest__name">{{ s.name }}</span>
+            <span class="search-suggest__code">{{ s.code }}</span>
+            <span class="search-suggest__type">{{ s.type }}</span>
+          </button>
+        </div>
         <div v-if="!suggestions.length && !searching && /^\d{6}$/.test(query)" class="search-suggest__empty">
           未找到匹配标的
         </div>
@@ -230,6 +287,22 @@ onMounted(load)
   text-align: center;
   font-size: 12px;
   color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.watchlist-panel__empty--error { color: var(--up); }
+.wl-retry {
+  padding: 4px 14px;
+  font-size: 12px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+.wl-retry:hover {
+  background: var(--accent-soft);
 }
 .wl-code {
   flex: none;
@@ -349,6 +422,61 @@ onMounted(load)
   font-size: 11px;
   color: var(--text-muted);
   text-transform: uppercase;
+}
+/* V0.2：搜索结果分组 */
+.search-suggest__group-title {
+  padding: 4px 10px;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-panel-2);
+  border-bottom: 1px solid var(--border);
+}
+.search-suggest__group-title--muted {
+  color: var(--text-muted);
+}
+.search-suggest__item--muted {
+  opacity: 0.6;
+}
+.search-suggest__item--muted:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}
+/* V0.2：关注列表同步状态图标 */
+.wl-sync {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  font-size: 11px;
+  vertical-align: middle;
+}
+.wl-sync--syncing {
+  color: var(--accent);
+}
+.wl-sync__spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: wl-spin 0.7s linear infinite;
+}
+@keyframes wl-spin {
+  to { transform: rotate(360deg); }
+}
+.wl-sync--failed {
+  color: #eab308;
+  cursor: pointer;
+  font-weight: 700;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid #eab308;
+  justify-content: center;
+  line-height: 1;
+}
+.wl-sync--failed:hover {
+  background: rgba(234, 179, 8, 0.12);
 }
 .search-suggest__empty {
   padding: 10px;

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { Snapshot, SymbolInfo, WatchlistItem } from '@/api/market'
+import type { Snapshot, SymbolInfo, SyncStatus, WatchlistItem } from '@/api/market'
 
 export type Period = '15m' | '1d' | '1w' | '1mon'
 
@@ -15,6 +15,8 @@ export const useMarketStore = defineStore('market', {
     watchlist: [] as WatchlistItem[],
     /** 固定指数列表（GET /symbols?type=index&is_fixed=1，G/H 区共用，按 sort_order 前端分组） */
     fixedIndices: [] as SymbolInfo[],
+    /** V0.2：固定指数预同步状态 */
+    syncStatus: null as SyncStatus | null,
   }),
   actions: {
     setCurrent(symbol: SymbolInfo | null) {
@@ -32,6 +34,10 @@ export const useMarketStore = defineStore('market', {
     },
     setFixedIndices(list: SymbolInfo[]) {
       this.fixedIndices = list
+    },
+    /** V0.2：更新固定指数预同步状态 */
+    setSyncStatus(status: SyncStatus | null) {
+      this.syncStatus = status
     },
     /** 本地移除一条关注（接口删除成功后由组件调用） */
     removeWatchlistItem(id: number) {

@@ -25,6 +25,8 @@ dependencies = [
     "langchain-openai>=0.2",
     "langgraph>=0.2",
     "chromadb>=0.5",
+    "onnxruntime>=1.17",
+    "tokenizers>=0.15",
     "tiktoken>=0.7",
     "RestrictedPython>=7.0",
 ]

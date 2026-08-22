@@ -6,6 +6,7 @@
 
 ## 人工配置 / 日志说明
 
+v0.1阶段
 - .env 配置：本机 PostgreSQL 连接 DATABASE_URL（postgres/123456）与 Redis REDIS_URL（见 stock_backend/.env）。
 - JWT 密钥：生产/多用户需在 .env 设置强随机 JWT_SECRET_KEY（≥32 字节），dev 默认值仅限本地，否则 token 可被伪造。
 - 阶段二冒烟测试：`uvicorn app.main:app` 启动后运行 `python scripts/smoke_phase2.py`，可观察注册/登录/自选/支撑压力位/指标全流程（脚本自动清理测试用户）。
@@ -34,6 +35,21 @@
 - 行业指数实时匹配：35 个固定行业 23 个可匹配东财板块（白酒→白酒Ⅲ、游戏→游戏Ⅲ、证券→证券Ⅲ 等），10 个（创新药/文化传媒/军工/消费/细分化工/农业种植/猪肉/港口航运/公路铁路运输/汽车整车）东财无对应板块，最新价/涨跌幅显示 "--" 属数据源无对应而非 bug，接入更多数据源可补全。
 - 指数成交量/成交额：海外指数（道琼斯/纳斯达克等）数据源无成交量字段，快照 volume/amount 存 NULL 前端显示 "--" 属正常；国内指数/行业指数重同步后有真实成交量。
 - 指数PE/个股市值/ETF溢价：实时轮询 best-effort 填充；指数PE 仅 沪深300/上证50/中证1000 可取自乐咕 `stock_index_pe_lg`，其余指数无 PE 数据源；乐咕/东财限流时该轮跳过，不阻塞轮询。
+
+v0.2阶段
+- WS 实时数据推送需要同时启动 Celery worker + beat，否则 WS 连接正常但无数据推送,启动命令：
+- # 启动 worker
+.venv\Scripts\celery.exe -A app.worker.celery_app worker --pool=solo -l info
+
+# 启动 beat
+.venv\Scripts\celery.exe -A app.worker.celery_app beat -l info
+
+
+- ADMIN_USERNAMES 环境变量（管理端点访问权限）
+- 阶段六 Embedding 升级：生产需在 .env 设 `EMBEDDING_MODEL=minilm`（默认 minilm），首次启动/首次记忆操作会自动从 HuggingFace 下载 `paraphrase-multilingual-MiniLM-L12-v2` int8 量化 ONNX（约 118MB）到 `stock_backend/data/models/`，需联网；下载失败自动回退 `hash` embedding（字符 n-gram 哈希），检索退化但不报错。
+- 阶段六 Embedding 可选配置：`EMBEDDING_MODEL_PATH`（模型本地目录，默认 data/models）、`EMBEDDING_QUANTIZATION`（int8 默认 / fp32）、`EMBEDDING_MODEL_NAME`（HF 模型仓库，默认多语言 MiniLM-L12）。
+- 阶段六从 hash 切换到 minilm 后，需手动重建向量库（hash 与 minilm 向量不兼容）：`.venv\Scripts\python.exe scripts\rebuild_embeddings.py`（按 memory_chunks 原文重新向量化，幂等）。
+- 阶段六注意：多语言 MiniLM-L12 因 25 万词表，量化后模型约 118MB（roadmap 原 6.1 估 40MB 基于英文 all-MiniLM-L6-v2，该模型中文语义失效已弃用），运行时内存约 150~250MB；如需更小模型可换 `EMBEDDING_MODEL_NAME`。
 ---
 
 ## 后端开发实施方案（项目启动 → v0.1）
@@ -442,4 +458,5 @@
 - Provider 熔断/健康：东方财富被限流自动切新浪/同花顺（日志 `[provider] eastmoney failed, fallback to ...`）；`GET /api/v1/admin/providers/health` 查看各源状态，beat 每60s 探测熔断源自动恢复。
 - 缓存体系：K线/快照/搜索/关注列表均走 Redis（TTL 见 .env），Redis 不可用时自动降级直查 PostgreSQL；快照 data_age_seconds 供前端标注"数据时间"。
 - 预同步脚本：`python scripts/presync_fixed_indices.py` 可手动触发固定指数/目录检查（幂等可重跑），容器启动已自动执行。
+- 同步进度展示：行情页加载时调 `GET /api/v1/sync-status?scope=fixed_indices` 轮询"数据同步中（X/49）"（running 显示进度条，done 自动刷新；无记录返回 done 表示未触发预同步）。
 

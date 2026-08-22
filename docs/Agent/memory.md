@@ -2,12 +2,12 @@
 
 > 每次开启 Agent 先阅读最新记忆内容，快速重新上手。
 
-保存时间：2026-08-21（V0.2 第一波完成后更新）
+保存时间：2026-08-22（V0.2 第二波后端阶段五+六完成时更新）
 记忆内容：
 
 1. 项目定位：量化交易软件——选股买卖决策 + DeepSeek Agent 辅助（主观交易经验转量化因子/回测），Agent 记忆本地存储。
-2. 技术栈：Python(FastAPI) + PostgreSQL + Vue3(TS) + Redis + Celery + Nginx + DeepSeek + LangChain/LangGraph + ChromaDB。
-3. 硬约束：前端不计算复杂指标（后端算）；回测走 Celery 不阻塞主线程；Agent 记忆本地存储（ChromaDB + HashEmbedding）；行情数据源走 DataProvider 抽象可插拔；缓存层仅 Redis+PostgreSQL（无内存缓存）。
+2. 技术栈：Python(FastAPI) + PostgreSQL + Vue3(TS) + Redis + Celery + Nginx + DeepSeek + LangChain/LangGraph + ChromaDB + ONNX Runtime。
+3. 硬约束：前端不计算复杂指标（后端算）；回测走 Celery 不阻塞主线程；Agent 记忆本地存储（ChromaDB + ONNX MiniLM 语义向量，hash 回退）；行情数据源走 DataProvider 抽象可插拔；缓存层仅 Redis+PostgreSQL（无内存缓存）。
 4. 已注册 skill：quant-prod-arch（生产级架构六要素审查）、quant-trading-frontend（交易终端前端规范）。
 
 5. V0.1 已全部完成（后端五阶段+前端五阶段，121 pytest 全绿），核心功能：
@@ -15,13 +15,20 @@
    - 前端：Vue3+TS+Vite+Pinia+lightweight-charts v5，行情双层页(E/F/G/H/I首页 + A/B/C/D详情)、AI策略页(J/K/L/M/N分区，借鉴QuantDinger)、暗黑/明亮双主题、7s轮询快照、SSE流式对话。
    - V0.1 已知 bug 已修复：固定指数预同步脚本(sync_fixed_indices.py)、指数快照 NOT NULL 兜底写0、AI对话降级条件误判(model is None)、行业指数关联ETF种子补齐。
 
-6. V0.2 第一波（行情数据基础）已完成（2026-08-20，全库 188 pytest 全绿 + ruff 通过）：
-   - 阶段四 DataProvider 可插拔：SinaProvider/THSProvider 独立拆分、DataProviderFactory 优先级链[eastmoney,sina,ths]+每源独立熔断(半开探测)、GET /api/v1/admin/providers/health、beat provider_probe 每60s恢复探测。
-   - 阶段一 缓存体系：sync_status 表+entrypoint 预同步(固定指数 X/49 进度)+startup 预热、K线"最近N根"Redis缓存(kline:{symbol_id}:{period}:{limit}, TTL300s)+击穿锁(SETNX)、快照14字段Redis缓存(snapshot:{symbol_id}, TTL300s)+data_age_seconds、指标缓存键含 latest_ts 自动失效。
-   - 阶段三 目录/搜索/关注：symbols.is_catalog 字段+catalog_sync(全A股约5000+ETF, 每日3:00, partial失败1h重试)+POST /admin/catalog/sync 手动触发、搜索三层(精确>已同步>仅目录)+外部回退+search:* 缓存(1h)+is_catalog/has_kline 返回、关注添加自动触发 kline_init+sync_status(pending/syncing/done/failed)、watchlist/watchlist_snap Redis 缓存。
-   - 阶段二 WebSocket：/api/v1/ws/market(query token 鉴权)、ConnectionManager 多标签页共享、心跳15s ping/30s超时断连、订阅模型、realtime_poll 经 Redis pub/sub 桥接推送增量快照、sync 断线补拉(按 since 时间戳)。
+6. V0.2 第一波（行情数据基础，约占总工作量40%）后端已完成（2026-08-20，全库 188 pytest 全绿 + ruff 通过），前端未完成：
+   - 第一波范围（参考 docs/Agent/Reference_guide_v0.2.md）：后端阶段四→一→三→二 + 前端阶段一→二→三。
+   - 后端阶段四 DataProvider 可插拔：SinaProvider/THSProvider 独立拆分、DataProviderFactory 优先级链[eastmoney,sina,ths]+每源独立熔断(半开探测)、GET /api/v1/admin/providers/health、beat provider_probe 每60s恢复探测。
+   - 后端阶段一 缓存体系：sync_status 表+entrypoint 预同步(固定指数 X/49 进度)+startup 预热、K线"最近N根"Redis缓存(kline:{symbol_id}:{period}:{limit}, TTL300s)+击穿锁(SETNX)、快照14字段Redis缓存(snapshot:{symbol_id}, TTL300s)+data_age_seconds、指标缓存键含 latest_ts 自动失效。
+   - 后端阶段三 目录/搜索/关注：symbols.is_catalog 字段+catalog_sync(全A股约5000+ETF, 每日3:00, partial失败1h重试)+POST /admin/catalog/sync 手动触发、搜索三层(精确>已同步>仅目录)+外部回退+search:* 缓存(1h)+is_catalog/has_kline 返回、关注添加自动触发 kline_init+sync_status(pending/syncing/done/failed)、watchlist/watchlist_snap Redis 缓存。
+   - 后端阶段二 WebSocket：/api/v1/ws/market(query token 鉴权)、ConnectionManager 多标签页共享、心跳15s ping/30s超时断连、订阅模型、realtime_poll 经 Redis pub/sub 桥接推送增量快照、sync 断线补拉(按 since 时间戳)。
+   - 第一波前端（2026-08-21 完成）：前端阶段一(加载体验)+阶段二(WS基础设施)+阶段三(搜索关注)全部完成。
+     - 阶段一：sync-status 轮询进度条(absolute覆盖层不改布局)、K线切换无闪烁(保留旧数据+顶部细进度条)、统一三态(加载/错误重试/空态)、数据新鲜度标注(utils/tradingTime.ts，交易时段绿/延迟黄/非交易灰)。
+     - 阶段二：utils/wsClient.ts(单例WS+指数退避重连+心跳+断线补拉+BroadcastChannel多标签页leader选举)、stores/wsStore.ts(订阅集合管理+snapshot merge到marketStore+kline回调)、useSnapshotPolling 加WS连接检测(连上停轮询/断线降级)。浏览器实测WS连接成功订阅49个固定指数。
+     - 阶段三：WatchlistPanel 搜索结果按 has_kline/is_catalog 分组(已同步/未同步灰色标注)、关注行同步状态图标(syncing旋转/failed黄色感叹号点击重试)、关注增删自动调 wsStore.syncSubscriptions()。
+     - 全部最小化增量改动，不改布局/路由/样式结构；typecheck 全绿。
    - Alembic 0004 迁移：users.is_admin、sync_status 表、symbols.is_catalog、user_watchlist.sync_status。
    - 需人工配置：ADMIN_USERNAMES（管理端点访问权限）。
+   - 2026-08-21 补齐 sync-status 查询端点：新增 GET /api/v1/sync-status?scope=fixed_indices（market.py，公开），返回 {status/progress/total/message}，供行情页轮询"数据同步中（X/49）"；ops_repo.get_latest_sync_status。全库 190 pytest 全绿。
    - 注意：K线 ts/快照 updated_at 列为 timestamp without time zone（DB naive，代码内 as_utc 归一）。
 
 7. 开发环境：
@@ -49,10 +56,17 @@
    - 数据库：docs/sql/（01_schema.sql 建表、02_seed_fixed_indices.sql 固定指数种子、03_agent_extensions.sql Agent 扩展表）
    - 增强提示词：docs/Agent/enhanced_prompt.md（V0.2 开发用，强制设计验证→编码→自我审查→测试→报告流程）
 
-10. V0.2 后续规划（第二至四波，待开发，审计通过后开启）：
-    - 第二波：AI 流式稳定性与错误降级（SSE 心跳+delta序号断点续传+三级超时+错误码标准化+分级降级：LLM挂了返回规则分析）、AI 记忆系统升级（HashEmbedding→ONNX MiniLM、短期/长期分层+重要性评分1-10、去重合并、记忆管理 CRUD API）。
-    - 第三波：多智能体可观测性（agent_step 实时 SSE 推送、节点失败降级不中断、运行历史 API）、长会话上下文管理（滑动窗口+LLM 摘要压缩、Token 预算控制在模型上限80%）。
-    - 第四波：策略生成可靠性（三级校验：语法→接口→沙箱dry-run、失败自动重试2次、5个策略模板库、生成→回测一键内嵌结果卡片）、会话标题自动生成。
-    - 前端 V0.2 七阶段：数据加载同步进度体验、WebSocket 客户端+多标签页共享、搜索关注同步状态增强、AI 流式错误分级 UI、记忆管理可视化抽屉、多智能体时间线、长会话 token 用量+策略回测内嵌。
+10. V0.2 后续规划（共4波，拓扑依赖见 docs/Agent/Reference_guide_v0.2.md）：
+    - 第一波（行情数据基础，40%）：后端阶段四/一/三/二已完成；前端阶段一(加载体验)/二(WS)/三(搜索关注)待开发。
+    - 第二波（AI基础加固，25%）：后端阶段五(AI流式稳定性：SSE心跳/超时/错误帧/分级降级)→前端阶段四(AI流式体验)；后端阶段六(记忆系统升级：HashEmbedding→ONNX MiniLM int8量化、分层+重要性评分、去重合并、记忆管理API)→前端阶段五(记忆可视化)。
+    - 第三波（AI高级功能，25%）：后端阶段七(多智能体：LangGraph+agent_step SSE+运行历史API)→前端阶段六(多智能体可视化)；后端阶段八(长会话+策略生成：滑动窗口摘要、Token预算、三级校验+重试+模板库+一键回测、标题自动生成)→前端阶段七(长会话+策略生成体验)。
+    - 第四波（全链路联调，10%）：全链路联调、边界场景、性能优化、部署验证、收尾检查。
+    - 后端能力对接清单（前端开发参考）见 docs/Agent/project_constraints.md 第四章。
 
-11. 当前状态：V0.2 第一波已完成并通过 188 测试，等待代码审计。下一波开发前必须阅读 docs/Agent/enhanced_prompt.md，严格执行强制流程：强制代码阅读→设计验证(等确认)→编码→10项自我审查→测试(100%通过)→细分任务报告。
+11. V0.2 第二波后端（AI基础加固）已完成（2026-08-22，全库 223 pytest 全绿 + ruff 通过），前端阶段四/五未开发：
+   - 阶段五（AI流式稳定性）：SSE 心跳 keepalive（每15s `:keepalive`，防 Nginx 断连）+ 三级超时（首字30s/单delta 15s/总120s，超时返已生成内容+`done(truncated=true)`）；delta 递增 seq + Redis 缓存最近100条（`chat_delta:{conv}` TTL600s）+ `GET /api/v1/chat/resume` 断点续传（缓存过期返 `resync`）；错误帧标准化（`ErrorCode` 枚举 + `classify_llm_error` 异常分类 + 不可重试不空转）；错误分级降级（熔断→「已切换基础分析模式」+ MACD/KDJ 规则文案、token 无效→明确提示、工具失败→标注基于历史数据）。
+   - 阶段六（记忆系统 int8 量化）：Embedding 升级为 ONNX MiniLM 语义向量（`paraphrase-multilingual-MiniLM-L12-v2` int8，384维，urllib 自动下载到 data/models，加载失败回退 hash）；ChromaDB collection 按 embedding 类型隔离 + `scripts/rebuild_embeddings.py` 重建脚本；memory_chunks.importance（Alembic 0005）+ 检索加权（相似度×0.7+重要性×0.3）+ 低重要性<3 且>30天每日清理（Celery beat 4:00）；记忆去重合并（余弦>0.85 合并，importance 取最大）；记忆管理 API（GET/DELETE /memory/facts + 清空）+ `memory_saved` SSE 事件。
+   - 需人工配置：`EMBEDDING_MODEL=minilm`（默认）+ 首次联网下载模型（~118MB）+ 切换后跑 rebuild_embeddings.py（见 roadmap.md 阶段六说明）。
+   - 关键决策：roadmap 6.1 原 all-MiniLM-L6-v2 为英文模型中文语义失效（实测相似度全 0.85~1.0），经确认改用多语言 MiniLM-L12（384维、中文语义、118MB，放宽≤50MB 验收为≤120MB）。
+
+12. 当前状态：V0.2 第一波后端+前端已完成，第二波后端（阶段五/六）已完成、前端（阶段四/五）待开发。下一波（第三波：多智能体/长会话）开发前必须阅读 docs/Agent/enhanced_prompt.md（强制流程）+ docs/Agent/Reference_guide_v0.2.md（波次拓扑）+ docs/Agent/project_constraints_v0.2.md（遗留问题+对接清单）。

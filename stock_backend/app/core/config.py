@@ -75,11 +75,27 @@ class Settings(BaseSettings):
     LLM_RATE_LIMIT_RPM: int = 30  # 每分钟限流请求数
     LLM_TEMPERATURE: float = 0.7  # 默认采样温度
 
+    # ---- SSE 流式稳定性（阶段五：心跳/三级超时/delta 断点续传缓存）----
+    SSE_KEEPALIVE_INTERVAL: int = 15  # SSE 空闲时每 N 秒发注释行 :keepalive，防 Nginx proxy_read_timeout
+    SSE_FIRST_TOKEN_TIMEOUT: float = 30.0  # 首字超时（LLM 未返回首个输出即超时，秒）
+    SSE_INTER_DELTA_TIMEOUT: float = 15.0  # 单 delta 间隔超时（相邻输出间隔，秒）
+    SSE_TOTAL_TIMEOUT: float = 120.0  # 总流式超时（秒），超时返回已生成内容
+    SSE_DELTA_CACHE_TTL: int = 600  # delta 断点续传缓存 TTL（秒）
+    SSE_DELTA_CACHE_MAX: int = 100  # 每会话缓存最近 delta 条数上限
+
     # ---- 本地记忆（ChromaDB 持久化 + 人类可读记忆文件，本地存储约束）----
     MEMORY_DIR: str = str(_BASE_DIR / "data" / "memory")  # 记忆文件根目录（M 区可打开）
     CHROMA_DIR: str = str(_BASE_DIR / "data" / "chroma")  # 向量库持久化目录
     MEMORY_TOP_K: int = 5  # 记忆检索注入条数
     MEMORY_IMPORTANCE_MIN: int = 5  # 抽取时重要性低于该值不入库（噪音过滤）
+
+    # ---- Embedding（阶段六：ONNX MiniLM 语义向量，int8 量化，本地 CPU 推理）----
+    EMBEDDING_MODEL: str = "minilm"  # minilm | hash（hash 为回退选项）
+    EMBEDDING_MODEL_NAME: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"  # HF 模型仓库
+    EMBEDDING_MODEL_PATH: str = str(_BASE_DIR / "data" / "models")  # 模型文件本地目录（首次启动自动下载）
+    EMBEDDING_QUANTIZATION: str = "int8"  # int8 | fp32（机器性能够时可切 fp32 完整版）
+    EMBEDDING_DIM: int = 384  # 向量维度
+    EMBEDDING_MAX_LENGTH: int = 128  # 输入截断长度（token）
 
     # ---- 回测引擎（阶段四：异步 Celery，不阻塞主线程）----
     BACKTEST_INITIAL_CASH: float = 1_000_000  # 初始资金（元）
