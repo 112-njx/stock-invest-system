@@ -14,7 +14,7 @@ const ai = useAiStore()
 const emit = defineEmits<{ (e: 'send'): void }>()
 
 function onSend() {
-  if (!ai.inputText.trim() || ai.streaming) return
+  if (!ai.inputText.trim() || ai.streaming || ai.retryCountdown > 0) return
   emit('send')
 }
 
@@ -88,6 +88,11 @@ function closeStrategyModule() {
       </label>
     </div>
 
+    <!-- RATE_LIMITED 黄色提示 + 倒计时（4.3） -->
+    <div v-if="ai.retryCountdown > 0" class="ci-rate">
+      请求过于频繁，请 {{ ai.retryCountdown }} 秒后重试
+    </div>
+
     <!-- ④ 大文本输入框 -->
     <textarea
       v-model="ai.inputText"
@@ -102,11 +107,11 @@ function closeStrategyModule() {
       <span class="ci-risk">风险提示：AI 输出仅用于研究参考，不构成投资建议。决策前请自行核对数据、风险和仓位。</span>
       <button
         class="ci-send"
-        :class="{ 'is-disabled': !ai.inputText.trim() || ai.streaming }"
-        :disabled="!ai.inputText.trim() || ai.streaming"
+        :class="{ 'is-disabled': !ai.inputText.trim() || ai.streaming || ai.retryCountdown > 0 }"
+        :disabled="!ai.inputText.trim() || ai.streaming || ai.retryCountdown > 0"
         @click="onSend"
       >
-        发送
+        {{ ai.retryCountdown > 0 ? `重试（${ai.retryCountdown}s）` : '发送' }}
       </button>
     </div>
   </div>
@@ -306,5 +311,14 @@ function closeStrategyModule() {
 .ci-send.is-disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+/* RATE_LIMITED 黄色提示（4.3） */
+.ci-rate {
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--ind-dea);
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 2px solid var(--ind-dea);
 }
 </style>

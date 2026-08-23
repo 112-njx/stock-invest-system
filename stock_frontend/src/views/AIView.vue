@@ -6,11 +6,9 @@
  * - M 交易策略 + 记忆文件 + 我的 Agent + 运行记录
  * - N 交易策略显示区（点击 M/J 策略后替换 K+L）
  */
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
 import { useAiStore, type QuickCardType } from '@/stores/ai'
 import { useMarketStore } from '@/stores/market'
-import { streamChat } from '@/api/ai'
-import { toast } from '@/utils/toast'
 import SessionSidebar from '@/components/ai/SessionSidebar.vue'
 import WelcomeHeader from '@/components/ai/WelcomeHeader.vue'
 import ChatMessages from '@/components/ai/ChatMessages.vue'
@@ -83,7 +81,7 @@ function onCardClick(card: QuickCardType) {
   ai.setInputText(cardPrompt(card, name))
 }
 
-/** 发送：SSE 流式对话（深度模式走 LangGraph，步骤经 delta+node 透传） */
+/** 发送：SSE 流式对话（深度模式走 LangGraph，步骤经 delta+node 透传；断线续传/错误处理在 store 编排） */
 async function send() {
   const content = ai.inputText.trim()
   if (!content || ai.streaming) return
@@ -102,7 +100,6 @@ async function send() {
     created_at: new Date().toISOString(),
   })
   ai.setInputText('')
-  ai.startStreaming()
   if (runType === 'strategy') {
     ai.setStrategyOutput({
       conversationId: ai.activeConversationId ?? 0,
@@ -111,53 +108,13 @@ async function send() {
     })
   }
 
-  try {
-    await streamChat(
-      {
-        content: finalContent,
-        conversation_id: ai.activeConversationId,
-        symbol: symbol ? symbol.id : null,
-        agent_id: ai.selectedAgentId || null,
-        run_type: runType,
-      },
-      {
-        onEvent: (ev) => {
-          if (ev.type === 'delta' && ev.content) {
-            ai.appendStreamContent(ev.content, ev.node)
-          } else if (ev.type === 'tool_call') {
-            ai.pushToolStep({
-              step_name: `tool:${ev.tool ?? '?'}`,
-              content: JSON.stringify(ev.input ?? {}),
-              agent_role: 'assistant',
-            })
-          } else if (ev.type === 'tool_result') {
-            ai.pushToolStep({ step_name: `tool_result:${ev.tool ?? '?'}`, content: ev.preview ?? '', agent_role: 'tool' })
-          } else if (ev.type === 'done') {
-            if (ev.conversation_id) ai.activeConversationId = ev.conversation_id
-            void ai.loadConversations()
-          }
-        },
-        onDone: () => {
-          if (ai.streamingContent) {
-            ai.messages.push({
-              id: Date.now(),
-              conversation_id: ai.activeConversationId ?? 0,
-              role: 'assistant',
-              content: ai.streamingContent,
-              created_at: new Date().toISOString(),
-            })
-          }
-          ai.endStreaming()
-        },
-        onError: (err) => {
-          toast.error(err.message)
-          ai.endStreaming()
-        },
-      }
-    )
-  } catch {
-    ai.endStreaming()
-  }
+  await ai.streamSend({
+    content: finalContent,
+    conversation_id: ai.activeConversationId,
+    symbol: symbol ? symbol.id : null,
+    agent_id: ai.selectedAgentId || null,
+    run_type: runType,
+  })
 }
 
 onMounted(() => {
@@ -168,6 +125,11 @@ onMounted(() => {
   if (!ai.selectedSymbol && market.current) {
     ai.selectSymbol(market.current)
   }
+})
+
+// 离开 AI 页时中止流式连接，避免后台残留请求
+onUnmounted(() => {
+  ai.abortStream()
 })
 </script>
 

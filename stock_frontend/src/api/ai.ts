@@ -60,9 +60,18 @@ export function sendMessage(
 
 /* ===================== 流式对话（SSE） ===================== */
 
-/** SSE 事件：deep 模式（run_type=diagnose/plan/radar）delta 事件带 node 透传多智能体节点输出 */
+/**
+ * SSE 事件（V0.2 阶段五协议）：
+ * - start / delta(seq+content, 深度模式带 node) / tool_call / tool_result
+ * - done（超时截断带 truncated+reason="timeout"）
+ * - error（code/message/retryable/retry_after，运行失败时带 message_id/conversation_id/run_id）
+ * - resync（断点续传缓存已过期，需重新加载完整消息）
+ * - memory_saved（对话中写入了新记忆）
+ */
 export interface SSEEvent {
-  type: 'start' | 'delta' | 'tool_call' | 'tool_result' | 'done' | 'error'
+  type: 'start' | 'delta' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'resync' | 'memory_saved'
+  /** delta 递增序号（断点续传断点） */
+  seq?: number
   content?: string
   node?: string
   tool?: string
@@ -71,11 +80,85 @@ export interface SSEEvent {
   message_id?: number
   conversation_id?: number
   run_id?: number
+  /** done 截断标记（超时返回部分结果） */
+  truncated?: boolean
+  reason?: string
+  /** error 帧 */
+  code?: string
+  message?: string
+  retryable?: boolean
+  retry_after?: number
+  /** memory_saved */
+  summary?: string
+  importance?: number
+}
+
+/** 解析 SSE 流：按 \n\n 分帧，回调 data: JSON 帧（忽略 :keepalive 注释行 / 异常帧） */
+async function consumeSSEStream(body: ReadableStream<Uint8Array>, onEvent: (ev: SSEEvent) => void): Promise<void> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let idx: number
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, idx)
+      buf = buf.slice(idx + 2)
+      const line = chunk.split('\n').find((l) => l.startsWith('data:'))
+      if (!line) continue
+      try {
+        onEvent(JSON.parse(line.slice(5).trim()) as SSEEvent)
+      } catch {
+        /* 忽略异常帧 */
+      }
+    }
+  }
+}
+
+/** fetch 可选参数窄类型（streamChat/resumeChat 两处使用） */
+interface FetchInit {
+  method?: string
+  headers?: Record<string, string>
+  body?: string | null
+  signal?: AbortSignal
+}
+
+/** 请求前统一处理 401 登出；请求失败由 onError 回调（AbortError 静默忽略） */
+async function guardedFetch(
+  input: string,
+  init: FetchInit,
+  onError: (err: Error) => void
+): Promise<Response | null> {
+  const user = useUserStore()
+  let res: Response
+  try {
+    res = await fetch(input, init)
+  } catch (e) {
+    if ((e as Error).name !== 'AbortError') onError(e as Error)
+    return null
+  }
+  if (!res.ok) {
+    if (res.status === 401) {
+      user.logout()
+      router.push({ name: 'login' })
+      return null
+    }
+    onError(new Error(`请求失败（HTTP ${res.status}）`))
+    return null
+  }
+  if (!res.body) {
+    onError(new Error('AI 服务无响应'))
+    return null
+  }
+  return res
 }
 
 /**
  * 流式对话（SSE）：POST /api/v1/chat，fetch 流式解析 data: JSON 帧。
  * 事件按后端协议：start → delta/tool_call/tool_result → done（失败 error）。
+ * 网络中断/HTTP 失败走 onError（由调用方决定重连/续传）。
  */
 export async function streamChat(
   payload: {
@@ -89,52 +172,55 @@ export async function streamChat(
   signal?: AbortSignal
 ): Promise<void> {
   const user = useUserStore()
-  let res: Response
-  try {
-    res = await fetch('/api/v1/chat', {
+  const res = await guardedFetch(
+    '/api/v1/chat',
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` },
       body: JSON.stringify(payload),
       signal,
-    })
-  } catch (e) {
-    if ((e as Error).name !== 'AbortError') handlers.onError?.(e as Error)
-    return
-  }
-  if (!res.ok) {
-    if (res.status === 401) {
-      user.logout()
-      router.push({ name: 'login' })
-      return
-    }
-    handlers.onError?.(new Error(`请求失败（HTTP ${res.status}）`))
-    return
-  }
-  if (!res.body) {
+    },
+    (err) => handlers.onError?.(err)
+  )
+  if (!res) return
+  const body = res.body
+  if (!body) {
     handlers.onError?.(new Error('AI 服务无响应'))
     return
   }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
   try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      let idx: number
-      while ((idx = buf.indexOf('\n\n')) >= 0) {
-        const chunk = buf.slice(0, idx)
-        buf = buf.slice(idx + 2)
-        const line = chunk.split('\n').find((l) => l.startsWith('data:'))
-        if (!line) continue
-        try {
-          handlers.onEvent?.(JSON.parse(line.slice(5).trim()) as SSEEvent)
-        } catch {
-          /* 忽略异常帧 */
-        }
-      }
-    }
+    await consumeSSEStream(body, (ev) => handlers.onEvent?.(ev))
+    handlers.onDone?.()
+  } catch (e) {
+    if ((e as Error).name !== 'AbortError') handlers.onError?.(e as Error)
+  }
+}
+
+/**
+ * 流式断点续传（SSE）：GET /api/v1/chat/resume?conversation_id=&last_seq=。
+ * 后端补发 seq>last_seq 的 delta（不重复不丢失），流已结束则再发 done；
+ * 缓存已过期返回 {"type":"resync"}（由调用方重新加载完整消息）。
+ */
+export async function resumeChat(
+  conversationId: number,
+  lastSeq: number,
+  handlers: { onEvent?: (ev: SSEEvent) => void; onDone?: () => void; onError?: (err: Error) => void },
+  signal?: AbortSignal
+): Promise<void> {
+  const user = useUserStore()
+  const res = await guardedFetch(
+    `/api/v1/chat/resume?conversation_id=${conversationId}&last_seq=${lastSeq}`,
+    { headers: { Authorization: `Bearer ${user.token}` }, signal },
+    (err) => handlers.onError?.(err)
+  )
+  if (!res) return
+  const body = res.body
+  if (!body) {
+    handlers.onError?.(new Error('AI 服务无响应'))
+    return
+  }
+  try {
+    await consumeSSEStream(body, (ev) => handlers.onEvent?.(ev))
     handlers.onDone?.()
   } catch (e) {
     if ((e as Error).name !== 'AbortError') handlers.onError?.(e as Error)
@@ -362,5 +448,40 @@ export interface MemoryFileItem {
  */
 export function fetchMemoryFiles() {
   return request<MemoryFileItem[]>({ url: '/memory/files', silent: true })
+}
+
+/* ===================== 记忆事实（V0.2 阶段六 6.4，M 区记忆文件面板） ===================== */
+
+/** 单条记忆事实（GET /memory/facts 返回项） */
+export interface MemoryFact {
+  id: number
+  content: string
+  importance: number
+  source_type: string
+  source_id?: number | null
+  created_at?: string
+}
+
+/** 记忆事实分页返回 */
+export interface MemoryFactPage {
+  items: MemoryFact[]
+  total: number
+  page: number
+  size: number
+}
+
+/** 记忆事实列表（分页，可按重要性下限筛选） */
+export function fetchMemoryFacts(params: { page?: number; size?: number; importance_min?: number } = {}) {
+  return request<MemoryFactPage>({ url: '/memory/facts', params, silent: true })
+}
+
+/** 删除单条记忆 */
+export function deleteMemoryFact(factId: number) {
+  return request<null>({ url: `/memory/facts/${factId}`, method: 'delete', silent: true })
+}
+
+/** 清空全部记忆 */
+export function clearMemoryFacts() {
+  return request<{ deleted: number }>({ url: '/memory/facts', method: 'delete', silent: true })
 }
 

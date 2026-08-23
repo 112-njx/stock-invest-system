@@ -20,6 +20,28 @@ const scrollEl = ref<HTMLElement | null>(null)
 /** 本次策略输出已保存的 strategy_id（未保存时回测先自动保存） */
 const savedStrategyId = ref<number | null>(null)
 
+/** 降级模式内容检测：后端降级文案统一以「AI服务暂时不可用」开头 */
+function isDegradedContent(text?: string): boolean {
+  return !!text && text.startsWith('AI服务暂时不可用')
+}
+
+/** 错误分级提示文案（阶段四 4.3） */
+function errorNotice(ev: { code?: string; message?: string }) {
+  switch (ev.code) {
+    case 'TOKEN_INVALID':
+    case 'TOKEN_QUOTA':
+      return { text: 'API Key无效或余额不足，请检查配置', kind: 'danger' }
+    case 'CONTENT_FILTERED':
+      return { text: '内容涉及敏感话题，无法生成', kind: 'muted' }
+    case 'PROVIDER_UNAVAILABLE':
+      return { text: 'AI服务暂不可用，已切换基础分析模式', kind: 'degraded' }
+    case 'NETWORK_ERROR':
+      return { text: ev.message || '网络错误', kind: 'danger' }
+    default:
+      return { text: ev.message || 'AI 服务异常，请稍后重试', kind: 'danger' }
+  }
+}
+
 watch(
   () => [ai.messages.length, ai.streamingContent, ai.streamingSteps.length] as const,
   async () => {
@@ -92,14 +114,49 @@ async function onBacktest() {
     <div v-if="ai.streaming" class="chat-msg chat-msg--assistant">
       <div class="chat-msg__avatar chat-msg__avatar--ai">AI</div>
       <div class="chat-msg__body">
+        <!-- 降级模式蓝色横幅（4.4） -->
+        <div v-if="ai.degradedBanner || isDegradedContent(ai.streamingContent)" class="sse-banner sse-banner--degraded">
+          AI服务暂不可用，以下为基于技术指标的基础分析
+        </div>
         <div class="md-body" v-html="renderMarkdown(ai.streamingContent)" />
-        <span v-if="!ai.streamingContent" class="chat-msg__cursor">思考中…</span>
+        <span v-if="!ai.streamingContent" class="chat-msg__cursor">AI 思考中…</span>
         <AgentStepsPanel
           v-if="ai.streamingSteps.length"
           :steps="ai.streamingSteps"
           :running="ai.streaming"
         />
+        <!-- 断线状态（4.1）：自动重连 / 手动续传 -->
+        <div v-if="ai.streamStatus === 'reconnecting'" class="sse-status">
+          连接中断，正在重连…
+        </div>
+        <div v-else-if="ai.streamStatus === 'manual'" class="sse-status sse-status--manual">
+          <span>连接中断</span>
+          <button class="sse-status__btn" @click="ai.resumeManual()">点击继续</button>
+        </div>
       </div>
+    </div>
+
+    <!-- 流式结束后的状态提示（4.2/4.3）：超时部分结果 / 错误分级 / memory_saved 轻量反馈 -->
+    <div v-if="!ai.streaming && ai.truncatedNotice" class="sse-notice sse-notice--muted">
+      分析超时，已返回部分结果
+    </div>
+    <div
+      v-if="
+        !ai.streaming &&
+        ai.streamError &&
+        ai.streamError.code !== 'RATE_LIMITED' &&
+        ai.streamError.code !== 'PROVIDER_UNAVAILABLE'
+      "
+      class="sse-error"
+      :class="`sse-error--${errorNotice(ai.streamError).kind}`"
+    >
+      <span>{{ errorNotice(ai.streamError).text }}</span>
+      <button v-if="ai.streamError.code === 'NETWORK_ERROR'" class="sse-status__btn" @click="ai.retrySend()">
+        点击重试
+      </button>
+    </div>
+    <div v-if="ai.memorySavedNotice" class="sse-memory">
+      <span class="sse-memory__dot" />已记住：{{ ai.memorySavedNotice.summary }}
     </div>
 
     <!-- 策略模式输出结束后的操作栏（4.5）：保存交易策略 / 回测显示 -->
@@ -160,6 +217,96 @@ async function onBacktest() {
 .chat-msg__cursor {
   font-size: 12px;
   color: var(--text-muted);
+}
+/* 阶段四：降级横幅 / 连接状态 / 错误提示 / memory_saved */
+.sse-banner {
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.sse-banner--degraded {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.12);
+  border-left: 2px solid var(--accent);
+}
+.sse-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.sse-status--manual {
+  color: var(--text-secondary);
+}
+.sse-status__btn {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  background: transparent;
+  transition: background-color 0.15s;
+}
+.sse-status__btn:hover {
+  background: var(--accent-soft);
+}
+.sse-notice {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.sse-notice--muted {
+  color: var(--text-muted);
+}
+.sse-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.sse-error--danger {
+  color: var(--up);
+  background: var(--up-soft);
+  border-left: 2px solid var(--up);
+}
+.sse-error--warn {
+  color: var(--ind-dea);
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 2px solid var(--ind-dea);
+}
+.sse-error--muted {
+  color: var(--text-secondary);
+  background: var(--bg-panel-2);
+  border-left: 2px solid var(--border-strong);
+}
+.sse-error--degraded {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.12);
+  border-left: 2px solid var(--accent);
+}
+.sse-memory {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.sse-memory__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--down);
 }
 .strategy-actions {
   display: flex;

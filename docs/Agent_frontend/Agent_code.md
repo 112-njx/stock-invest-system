@@ -102,3 +102,21 @@ Agent的前端编码记录,你需要按照：
 
 编码时间：2026-08-21
 编码内容（描述）：V0.2 阶段三搜索关注增强——WatchlistPanel 搜索结果按 has_kline/is_catalog 分组展示（已同步组/未同步组灰色标注"添加后同步"）；关注列表行加同步状态图标（syncing旋转loading/failed黄色感叹号点击重试/done无图标）；关注增删后自动调 wsStore.syncSubscriptions() 同步WS订阅；retrySync 重新添加幂等触发 kline_init。最小化改动，不改布局结构。typecheck 通过。
+
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段四 4.1 SSE断线重连与断点续传——api/ai.ts 扩展 SSEEvent 类型（seq/truncated/reason/code/message/retryable/retry_after + resync/memory_saved），抽出 consumeSSEStream/guardedFetch 复用解析与 401 处理，新增 resumeChat()（GET /chat/resume?conversation_id=&last_seq=）；stores/ai.ts 新增 streamSend 编排（POST→事件分发→断线自动 resume→指数退避1s/2s/4s→>3次转 manual→resumeManual 手动续传→resync 全量重载），状态 lastSeq/streamStatus/streamConversationId/reconnectAttempt，abortStream 清理；AIView.send 改用 ai.streamSend，卸载中止流；ChatMessages 流式块下渲染「连接中断，正在重连…/点击继续」按钮。typecheck 通过，后端 SSE+resume+resync 协议经 curl 实测通过（补发/去重/404 均正确）。
+
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段四 4.2 超时与部分结果展示——store 收到 done(truncated=true) 置 truncatedNotice；ChatMessages 流结束后显示灰色提示「分析超时，已返回部分结果」，不显示错误；首字 30s 无 delta 期间保留「AI 思考中…」loading 动画（后端 30s 首字超时/15s 单 delta/120s 总超时兜底，经 config 核对）。正常流结束部分内容照常推入消息列表。
+
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段四 4.3 错误分级 UI——store error 事件记录 streamError{code/message/retryable/retry_after}；ChatInput RATE_LIMITED 黄条+倒计时（retry_after 默认 30s 兜底）禁用发送按钮；ChatMessages 按 code 分级渲染：TOKEN_INVALID/QUOTA 红条、CONTENT_FILTERED 灰条、NETWORK_ERROR 消息末尾「点击重试」按钮（ai.retrySend 重发 lastPayload）、PROVIDER_UNAVAILABLE 由降级横幅承载不重复提示。typecheck 通过。
+
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段四 4.4 降级模式展示——两种降级路径前端统一用 isDegradedContent 检测「AI服务暂时不可用」前缀：① LLM 未配 key 时后端降级文案以 delta 推送（无标记），流式块/历史气泡均按前缀显示蓝色横幅；② PROVIDER_UNAVAILABLE error 帧时 store 置 degradedBanner + _reloadLastAssistantMessage 拉取后端已入库的基础分析内容展示（决策：后端 error 帧不带降级内容，前端拉取补足）。横幅文案「AI服务暂不可用，以下为基于技术指标的基础分析」，内容正常渲染 markdown。typecheck 通过。
+
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段五 5.1 M区记忆文件面板——升级 MemoryFilesDialog.vue（复用原弹窗骨架，替代 /memory/files 只读占位）：GET /memory/facts 分页列表（page/size/importance_min）；卡片含内容摘要 2 行点击展开全文、重要性星级 1-5（高≥7 红/中≥4 黄/低灰 t-warn 自定义色）、来源标签+时间、删除按钮；顶部记忆总数+重要性筛选（全部/高≥7/中≥4/低≥1，映射 importance_min，记录 低≈全部 语义）、清空二次确认；分页上一页/下一页；删除单条 DELETE /memory/facts/{id}、清空 DELETE /memory/facts，操作后刷新+toast。api/ai.ts 新增 fetchMemoryFacts/deleteMemoryFact/clearMemoryFacts + MemoryFact/MemoryFactPage 类型。经真实后端实测：列表/importance_min 筛选/删除/清空全通过，vite 编译 200。
+
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段五 5.2 记忆写入反馈——复用阶段四 SSE 事件框架：store _handleSSEEvent 新增 memory_saved 分支 → setMemorySaved（{summary,importance}，setTimeout 2s 自动清除，不打断对话）；ChatMessages 消息底部渲染轻量提示「已记住：{摘要}」（绿色圆点 + muted 文案），非阻塞式。SSE 事件字段 summary/importance 已入 SSEEvent 类型。typecheck 通过。（注：真实对话触发 memory_saved 需后端记忆抽取成功，本次 curl 测试中后端 aextract_facts 返回空、未见 memory_saved 事件，属后端行为观察，已在总结中记录。）

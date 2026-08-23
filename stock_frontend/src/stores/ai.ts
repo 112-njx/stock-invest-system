@@ -7,10 +7,13 @@ import {
   fetchStrategies,
   createConversation as apiCreateConversation,
   fetchStrategy,
+  resumeChat,
+  streamChat,
   type AgentConfig,
   type AgentStep,
   type ChatMessage,
   type Conversation,
+  type SSEEvent,
   type Strategy,
 } from '@/api/ai'
 
@@ -18,6 +21,29 @@ import {
 export type QuickCardType = 'create' | 'diagnose' | 'plan' | 'radar'
 /** 对话区展示模式：chat=聊天(K+L)，strategy=N区策略详情 */
 export type AiPanelMode = 'chat' | 'strategy'
+/** 流式连接状态：idle / streaming（正常接收）/ reconnecting（断线自动重连）/ manual（需点击继续） */
+export type StreamStatus = 'idle' | 'streaming' | 'reconnecting' | 'manual'
+
+/** 流式对话载荷（AIView.send 与重试共用） */
+export interface StreamChatPayload {
+  content: string
+  conversation_id?: number | null
+  symbol?: string | number | null
+  agent_id?: number | null
+  run_type?: string
+}
+
+/* ---------- 模块级非响应式流式控制 ---------- */
+/** 当前流 AbortController（切换会话/卸载时中止） */
+let streamAbort: AbortController | null = null
+/** 流代次：每次新流 +1，异步续传步骤校验代次避免旧流继续改状态 */
+let streamToken = 0
+/** RATE_LIMITED 倒计时定时器 */
+let retryTimer: number | null = null
+/** memory_saved 轻量提示定时器 */
+let memoryTimer: number | null = null
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** AI 策略输出后的操作信息（4.5：保存交易策略 / 回测显示） */
 export interface StrategyOutputInfo {
@@ -67,6 +93,28 @@ export const useAiStore = defineStore('ai', {
     streamingSteps: [] as AgentStep[],
     /** 策略模式输出结束后的按钮信息（4.5） */
     strategyOutput: null as StrategyOutputInfo | null,
+
+    /* ---------- 流式（阶段四增强：稳定性与错误体验） ---------- */
+    /** 已收到的最后 delta seq（断点续传断点） */
+    lastSeq: 0,
+    /** 流式连接状态（idle/streaming/reconnecting/manual） */
+    streamStatus: 'idle' as StreamStatus,
+    /** 当前流式会话 id（断点续传用，done/error 事件可能更新） */
+    streamConversationId: null as number | null,
+    /** 错误帧信息（error 事件后按 code 分级展示） */
+    streamError: null as { code?: string; message?: string; retryable?: boolean; retry_after?: number } | null,
+    /** RATE_LIMITED 剩余倒计时（秒），>0 时禁用发送 */
+    retryCountdown: 0,
+    /** done(truncated=true) 是否发生（分析超时，已返回部分结果） */
+    truncatedNotice: false,
+    /** 降级模式标记：PROVIDER_UNAVAILABLE 时蓝色横幅 */
+    degradedBanner: false,
+    /** memory_saved 轻量提示（2s 自动消失） */
+    memorySavedNotice: null as { summary: string; importance: number } | null,
+    /** 最近一次发送载荷（NETWORK_ERROR 重试用） */
+    lastPayload: null as StreamChatPayload | null,
+    /** 断线自动重连已尝试次数（超过 3 次转手动） */
+    reconnectAttempt: 0,
   }),
   actions: {
     /* ---------- 会话 ---------- */
@@ -107,6 +155,7 @@ export const useAiStore = defineStore('ai', {
     },
     /** 切换聊天/策略 tab 时重置右侧为默认页面（K+L区：空会话+欢迎页+功能卡片） */
     resetPanel() {
+      this.abortStream()
       this.mode = 'chat'
       this.activeStrategy = null
       this.messages = []
@@ -170,6 +219,285 @@ export const useAiStore = defineStore('ai', {
     },
     clearStrategyOutput() {
       this.strategyOutput = null
+    },
+
+    /* ---------- 流式编排（阶段四：断点续传/重连/错误处理） ---------- */
+
+    /**
+     * 发起流式对话（含断线自动续传）：
+     * POST /chat 主流 → 网络中断自动 GET /chat/resume 补发（指数退避，>3 次转手动）
+     * → resync 全量重载 / done(truncated) 部分结果 / error 分级降级。
+     */
+    async streamSend(payload: StreamChatPayload) {
+      const token = ++streamToken
+      if (streamAbort) {
+        streamAbort.abort()
+        streamAbort = null
+      }
+      this.startStreaming()
+      this.streamStatus = 'streaming'
+      this.streamConversationId = payload.conversation_id ?? null
+      this.lastSeq = 0
+      this.reconnectAttempt = 0
+      this.streamError = null
+      this.truncatedNotice = false
+      this.degradedBanner = false
+      this.lastPayload = payload
+
+      streamAbort = new AbortController()
+      await streamChat(
+        payload,
+        {
+          onEvent: (ev) => this._handleSSEEvent(ev),
+          onDone: async () => {
+            if (token !== streamToken) return
+            await this._finalizeStream()
+          },
+          onError: (err) => {
+            if (token !== streamToken) return
+            void this._handleStreamError(err)
+          },
+        },
+        streamAbort.signal
+      )
+    },
+
+    /** SSE 事件分发：按类型更新流式内容 / 步骤 / 错误 / 记忆反馈 */
+    _handleSSEEvent(ev: SSEEvent) {
+      switch (ev.type) {
+        case 'delta':
+          if (typeof ev.seq === 'number') this.lastSeq = ev.seq
+          if (ev.content) this.appendStreamContent(ev.content, ev.node)
+          break
+        case 'tool_call':
+          this.pushToolStep({
+            step_name: `tool:${ev.tool ?? '?'}`,
+            content: JSON.stringify(ev.input ?? {}),
+            agent_role: 'assistant',
+          })
+          break
+        case 'tool_result':
+          this.pushToolStep({ step_name: `tool_result:${ev.tool ?? '?'}`, content: ev.preview ?? '', agent_role: 'tool' })
+          break
+        case 'done':
+          if (ev.conversation_id) {
+            this.activeConversationId = ev.conversation_id
+            this.streamConversationId = ev.conversation_id
+          }
+          if (ev.truncated) this.truncatedNotice = true
+          break
+        case 'error':
+          this.streamError = {
+            code: ev.code,
+            message: ev.message,
+            retryable: ev.retryable,
+            retry_after: ev.retry_after,
+          }
+          if (ev.conversation_id) this.streamConversationId = ev.conversation_id
+          if (ev.code === 'RATE_LIMITED') this.startRetryCountdown(ev.retry_after ?? 30)
+          break
+        case 'memory_saved':
+          this.setMemorySaved({ summary: ev.summary ?? '', importance: ev.importance ?? 5 })
+          break
+        default:
+          break
+      }
+    },
+
+    /** 主流错误处理：HTTP/服务端错误收尾；网络中断尝试断点续传 */
+    async _handleStreamError(err: Error) {
+      if (err.name === 'AbortError') return
+      const terminal = err.message.includes('请求失败') || err.message.includes('无响应')
+      if (terminal) {
+        this.streamError = { code: 'NETWORK_ERROR', message: err.message, retryable: true }
+        await this._finalizeStream()
+        return
+      }
+      await this._resumeLoop(streamToken)
+    },
+
+    /** 断线自动续传：指数退避（1s/2s/4s，上限 30s），>3 次转手动 */
+    async _resumeLoop(token: number) {
+      if (token !== streamToken) return
+      if (!this.streamConversationId) {
+        await this._finalizeStream()
+        return
+      }
+      if (this.reconnectAttempt >= 3) {
+        this.streamStatus = 'manual'
+        return
+      }
+      this.streamStatus = 'reconnecting'
+      const delay = Math.min(1000 * 2 ** this.reconnectAttempt, 30000)
+      this.reconnectAttempt++
+      await sleep(delay)
+      if (token !== streamToken) return
+      const outcome = await this._doResumeOnce(token)
+      if (outcome === 'done' || outcome === 'resync') return
+      await this._resumeLoop(token)
+    },
+
+    /** 执行一次断点续传（GET /chat/resume），返回 done/resync/failed */
+    async _doResumeOnce(token: number): Promise<'done' | 'resync' | 'failed'> {
+      const convId = this.streamConversationId
+      if (!convId) return 'failed'
+      streamAbort = new AbortController()
+      let resyncSeen = false
+      let doneSeen = false
+      let errored = false
+      await resumeChat(
+        convId,
+        this.lastSeq,
+        {
+          onEvent: (ev) => {
+            if (ev.type === 'resync') {
+              resyncSeen = true
+              return
+            }
+            this._handleSSEEvent(ev)
+          },
+          onDone: () => {
+            doneSeen = true
+          },
+          onError: (err) => {
+            if (err.name !== 'AbortError') errored = true
+          },
+        },
+        streamAbort.signal
+      )
+      if (token !== streamToken) return 'done'
+      if (resyncSeen) {
+        await this._reloadConversation()
+        return 'resync'
+      }
+      if (doneSeen || !errored) {
+        await this._finalizeStream()
+        return 'done'
+      }
+      return 'failed'
+    },
+
+    /** 用户点击「连接中断，点击继续」后手动续传 */
+    async resumeManual() {
+      if (this.streamStatus !== 'manual') return
+      this.streamStatus = 'streaming'
+      this.reconnectAttempt = 0
+      await this._resumeLoop(streamToken)
+    },
+
+    /** NETWORK_ERROR 重发：重新发送最近一次载荷 */
+    async retrySend() {
+      if (!this.lastPayload || this.streaming) return
+      await this.streamSend(this.lastPayload)
+    },
+
+    /** 中止当前流（切换会话/重置面板/卸载时） */
+    abortStream() {
+      streamToken++
+      if (streamAbort) {
+        streamAbort.abort()
+        streamAbort = null
+      }
+      if (retryTimer) {
+        clearInterval(retryTimer)
+        retryTimer = null
+      }
+      this.streaming = false
+      this.streamStatus = 'idle'
+      this.streamError = null
+      this.retryCountdown = 0
+    },
+
+    /** 流结束收尾：把流式增量落为正式消息；降级模式拉取后端已入库内容 */
+    async _finalizeStream() {
+      const convId = this.streamConversationId ?? this.activeConversationId
+      const code = this.streamError?.code
+      if (code === 'PROVIDER_UNAVAILABLE') {
+        // 降级模式：后端把基础分析文案入库但 error 帧不带内容，重新拉取展示
+        this.degradedBanner = true
+        if (convId) await this._reloadLastAssistantMessage(convId)
+        this.endStreaming()
+        return
+      }
+      if (this.streamError) {
+        // 其它错误：不展示流式增量，由 UI 按错误类型分级提示
+        this.streamingContent = ''
+        this.streamingSteps = []
+        this.endStreaming()
+        return
+      }
+      if (this.streamingContent) {
+        this.messages.push({
+          id: Date.now(),
+          conversation_id: convId ?? 0,
+          role: 'assistant',
+          content: this.streamingContent,
+          created_at: new Date().toISOString(),
+        })
+      }
+      this.endStreaming()
+      void this.loadConversations()
+    },
+
+    /** 拉取会话最后一条 assistant 消息（降级内容展示，避免与流式内容重复） */
+    async _reloadLastAssistantMessage(convId: number) {
+      try {
+        const msgs = await fetchMessages(convId)
+        const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant')
+        if (lastAssistant) {
+          const last = this.messages[this.messages.length - 1]
+          if (!last || !(last.role === 'assistant' && last.id === lastAssistant.id)) {
+            this.messages.push(lastAssistant)
+          }
+        }
+      } catch {
+        /* 拉取失败不阻断，UI 已显示降级横幅 */
+      }
+    },
+
+    /** resync：断点续传缓存已过期，全量重载该会话消息 */
+    async _reloadConversation() {
+      const convId = this.streamConversationId
+      this.streamingContent = ''
+      this.streamingSteps = []
+      if (convId) {
+        this.activeConversationId = convId
+        try {
+          this.messages = await fetchMessages(convId)
+        } catch {
+          /* 重载失败保留已有流式内容，正常收尾 */
+        }
+      }
+      this.endStreaming()
+      this.streamStatus = 'idle'
+      void this.loadConversations()
+    },
+
+    /** RATE_LIMITED 倒计时：期间发送按钮禁用 */
+    startRetryCountdown(seconds: number) {
+      this.retryCountdown = Math.max(1, seconds)
+      if (retryTimer) clearInterval(retryTimer)
+      retryTimer = window.setInterval(() => {
+        if (this.retryCountdown <= 1) {
+          this.retryCountdown = 0
+          this.streamError = null
+          if (retryTimer) {
+            clearInterval(retryTimer)
+            retryTimer = null
+          }
+        } else {
+          this.retryCountdown--
+        }
+      }, 1000)
+    },
+
+    /** memory_saved 轻量提示：2s 自动消失，不打断对话 */
+    setMemorySaved(notice: { summary: string; importance: number }) {
+      this.memorySavedNotice = notice
+      if (memoryTimer) clearTimeout(memoryTimer)
+      memoryTimer = window.setTimeout(() => {
+        this.memorySavedNotice = null
+      }, 2000)
     },
   },
 })

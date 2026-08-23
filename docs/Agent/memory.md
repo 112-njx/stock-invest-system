@@ -69,4 +69,16 @@
    - 需人工配置：`EMBEDDING_MODEL=minilm`（默认）+ 首次联网下载模型（~118MB）+ 切换后跑 rebuild_embeddings.py（见 roadmap.md 阶段六说明）。
    - 关键决策：roadmap 6.1 原 all-MiniLM-L6-v2 为英文模型中文语义失效（实测相似度全 0.85~1.0），经确认改用多语言 MiniLM-L12（384维、中文语义、118MB，放宽≤50MB 验收为≤120MB）。
 
-12. 当前状态：V0.2 第一波后端+前端已完成，第二波后端（阶段五/六）已完成、前端（阶段四/五）待开发。下一波（第三波：多智能体/长会话）开发前必须阅读 docs/Agent/enhanced_prompt.md（强制流程）+ docs/Agent/Reference_guide_v0.2.md（波次拓扑）+ docs/Agent/project_constraints_v0.2.md（遗留问题+对接清单）。
+12. 当前状态：V0.2 第一波后端+前端已完成，第二波后端（阶段五/六）+ 前端（阶段四/五）已全部完成。下一波（第三波：多智能体/长会话）开发前必须阅读 docs/Agent/enhanced_prompt.md（强制流程）+ docs/Agent/Reference_guide_v0.2.md（波次拓扑）+ docs/Agent/project_constraints_v0.2.md（遗留问题+对接清单）。
+
+13. V0.2 第二波前端（AI基础加固）已完成（2026-08-23，typecheck/lint/build 全绿），前端阶段四+五：
+   - 前端阶段四（AI流式稳定性）：
+     - 4.1 SSE断点续传：api/ai.ts 扩展 SSEEvent 类型（seq/truncated/code/retry_after/resync/memory_saved），抽出 consumeSSEStream/guardedFetch；新增 resumeChat()（GET /chat/resume）；aiStore 新增 streamSend 编排（POST→事件分发→断线自动 resume→指数退避 1s/2s/4s→>3次转 manual→resumeManual 手动续传→resync 全量重载），状态 lastSeq/streamStatus/streamError/reconnectAttempt。
+     - 4.2 超时部分结果：done(truncated=true) 灰色提示「分析超时，已返回部分结果」；首字 30s loading「AI 思考中…」。
+     - 4.3 错误分级：RATE_LIMITED 黄条+倒计时（retry_after 默认30s）禁用发送；TOKEN_INVALID/QUOTA 红条；CONTENT_FILTERED 灰条；NETWORK_ERROR 消息末尾「点击重试」（ai.retrySend 重发 lastPayload）；PROVIDER_UNAVAILABLE 降级横幅承载。
+     - 4.4 降级横幅：isDegradedContent 检测「AI服务暂时不可用」前缀（未配 key 的 delta 文案 + PROVIDER_UNAVAILABLE error 帧后拉取入库内容两种路径统一）。
+   - 前端阶段五（记忆可视化）：
+     - 5.1 M区记忆面板：升级 MemoryFilesDialog.vue（复用弹窗骨架替代 /memory/files 占位）→ GET /memory/facts 分页+重要性星级（高红/中黄/低灰）+筛选（全部/高≥7/中≥4/低）+删除/清空二次确认；api/ai.ts 新增 fetchMemoryFacts/deleteMemoryFact/clearMemoryFacts。
+     - 5.2 记忆写入反馈：SSE memory_saved →「已记住：{摘要}」轻量提示 2s 自动消失。
+   - 关键决策记录：后端 PROVIDER_UNAVAILABLE 的 error 帧不含降级内容（只入库），前端 _reloadLastAssistantMessage 拉取补足（非阻塞，前端方案）。
+   - 后端行为观察（非前端问题，供后端参考）：真实对话触发记忆抽取时，aextract_facts 返回空、未见 memory_saved 事件（可能抽取 LLM 调用失败/importance<5 过滤），5.2 的 memory_saved 展示逻辑已就绪但端到端待后端抽取正常后复验。
