@@ -82,3 +82,10 @@
      - 5.2 记忆写入反馈：SSE memory_saved →「已记住：{摘要}」轻量提示 2s 自动消失。
    - 关键决策记录：后端 PROVIDER_UNAVAILABLE 的 error 帧不含降级内容（只入库），前端 _reloadLastAssistantMessage 拉取补足（非阻塞，前端方案）。
    - 后端行为观察（非前端问题，供后端参考）：真实对话触发记忆抽取时，aextract_facts 返回空、未见 memory_saved 事件（可能抽取 LLM 调用失败/importance<5 过滤），5.2 的 memory_saved 展示逻辑已就绪但端到端待后端抽取正常后复验。
+
+14. V0.2 第三波后端（AI高级功能）已完成（2026-08-23，全库 250 pytest 全绿 + ruff，前端阶段六/七未开发）：
+    - 阶段七（多智能体可观测性）：Alembic 0006 agent_steps 加 summary/duration_ms/status、agent_runs 加 duration_ms；research_graph 逐节点 SSE 推送 agent_step（running/done/failed 含 summary+耗时），节点 try/except 失败降级（默认中性观点 + 结论标注"部分节点异常" + run.error 标记）；运行历史 GET /agent/runs（分页+conversation_id 筛选+final_decision/total_duration 别名）、GET /agent/runs/{id}/steps。
+    - 阶段八（长会话+策略生成）：Alembic 0007 conversations.summary；8.1 滑动窗口（最近10轮完整+早期摘要替代，每满10轮异步生成≤200字摘要）；8.2 token 预算（字符启发式估算，超80%自动降轮 20→16→12，SSE push usage 事件）；8.3 策略三级校验（语法/接口/沙箱 dry-run 含异常行号）；8.4 生成失败自动重试（拼错误重生成，最多2次，耗尽抛模板库提示）；8.5 策略模板库（strategy_templates 表+5模板幂等种子，GET 列表/详情）；8.6 生成→回测（run_type=strategy 分支生成+保存+push strategy_ready）；8.7 会话标题自动生成（首条消息异步生成≤15字 title + SSE push title 事件）。
+    - 关键决策/修复：① SSE 场景 token 用量用 usage 事件（响应头不可行，经确认）；② run_type=strategy 新增 chat 内深度分支（经确认）；③ roadmap 8.3 的 on_bar 签名"(ctx,bar)"与引擎实际(bar,context)不符，按引擎位置调用只校验参数个数=2；④ RestrictedPython 拒绝 `_` 前缀函数名，模板 helper 改 ema/rsv；⑤ 修复 astream_events 高负载下 on_chain_end 乱序致 agent_steps 逆序落库，改回 astream(stream_mode="updates") 确定性产出。
+    - 需人工配置：LLM_MAX_TOKENS/TOKEN_BUDGET_RATIO/STRATEGY_GEN_MAX_RETRIES/TITLE_WAIT_TIMEOUT（均有默认值，见 roadmap.md 第三波说明）。
+    - 后续：前端阶段六（多智能体可视化）+ 阶段七（长会话+策略生成体验）待开发，后端能力对接见 api-docs.md（agent_step/usage/strategy_ready/title 事件 + agent/runs + strategy-templates 端点）。

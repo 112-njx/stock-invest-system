@@ -15,6 +15,7 @@ from .v1 import (
     market,
     memory,
     strategies,
+    strategy_templates,
     support_resistance,
     users,
     watchlist,
@@ -33,6 +34,7 @@ api_router.include_router(indicators.router)  # /api/v1/indicators
 api_router.include_router(conversations.router)  # /api/v1/conversations
 api_router.include_router(chat.router)  # /api/v1/chat（SSE）
 api_router.include_router(strategies.router)  # /api/v1/strategies
+api_router.include_router(strategy_templates.router)  # /api/v1/strategy-templates（阶段八 8.5）
 api_router.include_router(agents.router)  # /api/v1/agents
 api_router.include_router(backtest.router)  # /api/v1/backtest
 api_router.include_router(agent_ops.router)  # /api/v1/agent/runs、/api/v1/memory/files

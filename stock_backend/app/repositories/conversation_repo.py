@@ -38,6 +38,22 @@ def rename_conversation(db: Session, user_id: int, conv_id: int, title: str) -> 
     return conv
 
 
+def update_summary(db: Session, conv_id: int, summary: str) -> None:
+    """更新会话摘要（阶段八 8.1，异步任务调用）。"""
+    conv = db.get(Conversation, conv_id)
+    if conv is not None:
+        conv.summary = summary
+        db.flush()
+
+
+def update_title(db: Session, conv_id: int, title: str) -> None:
+    """更新会话标题（阶段八 8.7，异步任务调用）。"""
+    conv = db.get(Conversation, conv_id)
+    if conv is not None:
+        conv.title = title
+        db.flush()
+
+
 def delete_conversation(db: Session, user_id: int, conv_id: int) -> bool:
     conv = get_conversation(db, user_id, conv_id)
     if conv is None:
@@ -69,3 +85,11 @@ def list_messages(db: Session, conversation_id: int) -> list[ChatMessage]:
             select(ChatMessage).where(ChatMessage.conversation_id == conversation_id).order_by(ChatMessage.created_at, ChatMessage.id)
         )
     )
+
+
+def count_messages(db: Session, conversation_id: int) -> int:
+    """会话消息条数（阶段八 8.1 摘要触发判定）。"""
+    from sqlalchemy import func
+
+    stmt = select(func.count()).select_from(ChatMessage).where(ChatMessage.conversation_id == conversation_id)
+    return int(db.scalar(stmt) or 0)

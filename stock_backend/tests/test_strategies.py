@@ -5,7 +5,6 @@ import uuid
 
 import pytest
 from app.agent import strategy_gen
-from app.agent.strategy_gen import _validate_code
 from app.models.user import User
 from app.schemas.strategy import StrategyOutput, StrategyParams
 from app.services.llm import LLMError
@@ -70,19 +69,68 @@ def _make_output(**overrides) -> StrategyOutput:
     return StrategyOutput(**data)
 
 
-# ---- 3.5 单元：语法校验 ----
-def test_validate_code_ok():
-    _validate_code(_GOOD_CODE)
+# ---- 8.4：生成失败自动重试 ----
+class _RetryStructured:
+    """第 1 次返回语法错误代码，第 2 次返回合法代码。"""
+
+    def __init__(self, bad: StrategyOutput, good: StrategyOutput):
+        self.bad = bad
+        self.good = good
+        self.calls = 0
+        self.messages_seen: list[list[dict]] = []
+
+    async def ainvoke(self, messages):
+        self.calls += 1
+        self.messages_seen.append(messages)
+        if self.calls == 1:
+            return self.bad
+        return self.good
 
 
-def test_validate_code_missing_on_bar():
-    with pytest.raises(LLMError):
-        _validate_code("def initialize(context):\n    pass\n")
+def _make_bad_output() -> StrategyOutput:
+    return _make_output(code="def on_bar(bar, context):\n  x = ")  # 语法错误
 
 
-def test_validate_code_syntax_error():
-    with pytest.raises(LLMError):
-        _validate_code("def on_bar(bar, context):\n  x = ")
+async def test_generate_strategy_retries_on_validation_failure():
+    good = _make_output()
+    bad = _make_bad_output()
+    fake = _RetryStructured(bad, good)
+
+    async def _preflight():
+        pass
+
+    fake_svc = types.SimpleNamespace(
+        available=True,
+        breaker=SimpleBreaker(),
+        provider=types.SimpleNamespace(raw_model=None),
+        preflight=_preflight,
+    )
+
+    result = await strategy_gen.generate_strategy("双均线", llm_svc=fake_svc, structured_model=fake)
+    assert result.strategy_name == "双均线策略"  # 重试后成功
+    assert fake.calls == 2
+    # 重试 prompt 应包含校验错误信息（拼回错误要求修复）
+    assert "校验错误" in fake.messages_seen[-1][-1]["content"]
+
+
+class _AlwaysBadStructured:
+    async def ainvoke(self, messages):
+        return _make_bad_output()
+
+
+async def test_generate_strategy_exhausted_retries_raises():
+    async def _preflight():
+        pass
+
+    fake_svc = types.SimpleNamespace(
+        available=True,
+        breaker=SimpleBreaker(),
+        provider=types.SimpleNamespace(raw_model=None),
+        preflight=_preflight,
+    )
+    with pytest.raises(LLMError) as exc_info:
+        await strategy_gen.generate_strategy("双均线", llm_svc=fake_svc, structured_model=_AlwaysBadStructured())
+    assert "基于模板创建" in str(exc_info.value)
 
 
 # ---- 3.5 单元：generate_strategy（注入结构化模型）----

@@ -59,3 +59,21 @@ class StrategyOut(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+# ---- 策略模板（阶段八 8.5）----
+class StrategyTemplateListItem(BaseModel):
+    """策略模板列表项（不含完整 code，按需获取）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    description: str | None = None
+    params_schema: dict[str, Any] | None = None
+
+
+class StrategyTemplateOut(StrategyTemplateListItem):
+    """策略模板详情（含完整 code）。"""
+
+    code: str

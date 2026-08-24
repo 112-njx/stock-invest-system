@@ -212,3 +212,43 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-08-22
 编码内容（描述）：V0.2 阶段六 6.4 记忆管理API。新增 app/api/v1/memory.py：GET /api/v1/memory/facts（分页 page/size + importance_min 筛选，返回 content/importance/source_type/source_id(对话ID)/created_at）、DELETE /facts/{id}（同步删 ChromaDB 向量+PG，404 兜底）、DELETE /facts（清空=delete_collection+删 memory_chunks/user_memory_files+rmtree 记忆目录）。agent_repo 增 list/count/get/delete_all memory_chunks + delete_all_memory_files；memory_service 增 list_facts/delete_fact/clear_all_facts；schemas 增 MemoryFactOut。chat_service 记忆抽取改传 source_id=conv.id 存"来源对话ID"，抽取后 yield {"type":"memory_saved","summary","importance"}（done 前）。router 注册 memory。验收：新增 4 单测（列表/筛选/删除/清空/鉴权 + memory_saved 事件），全库 223 pytest 全绿 + ruff。api-docs.md 已补 3 端点。
+
+---
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段七 7.1 节点输出实时SSE推送。Alembic 0006 给 agent_steps 加 summary/duration_ms/status、agent_runs 加 duration_ms。research_graph 改用 astream_events 逐节点 yield running/done（含 summary 摘要+耗时），chat_service._run_deep 消费并 push agent_step SSE 事件 + add_step 落库新字段 + finish_run 记 run 总耗时；_stream_with_timeouts 让 agent_step 事件不消耗首字超时预算。验收：5 节点 running/done 依次推送、steps 落库含 summary/耗时，全库 223 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段七 7.2 节点失败降级。research_graph._make_node 用 try/except 包裹 LLM 调用，单节点失败返回默认中性观点（_NEUTRAL_TEXT）+ ResearchState 增 failed_nodes（add reducer）/node_errors（dict merge）记录失败节点与错误；run_research_graph yield status=failed + error。chat_service._run_deep 收集 failed_nodes，add_step 记 status=failed/meta.error，最终结论追加"（部分节点异常，结论仅供参考）"、run.error 标记、done 事件带 partial=true，run 仍 success。验收：模拟 technical 节点抛异常，图完成且失败节点标 failed，全库 225 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段七 7.3 运行历史API完善。agent_repo.list_runs 增 conversation_id 筛选+分页 offset/limit、新增 count_runs；agent_service.list_runs 返回 (rows,total)；schemas/agent.py AgentRunOut 增 final_decision(validation_alias=output)/total_duration(=duration_ms)、AgentStepOut 增 node(=step_name)/status/summary/duration_ms；api/v1/agent_ops.py GET /agent/runs 改分页信封 {items,total,page,size}+conversation_id 筛选，新增 GET /agent/runs/{id}/steps（node/status/summary/content/duration_ms），保留 /{id} 详情。验收：列表/详情/筛选/分页/越权/鉴权 + steps 端点，全库 226 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段八 8.1 滑动窗口与摘要压缩。Alembic 0007 给 conversations 加 summary TEXT；conversation_repo 增 update_summary/count_messages（update_title 供 8.7 预留）。chat_service 增 _assemble_history（最近10轮完整+摘要系统消息替代早期）、_generate_conversation_summary（异步 LLM 压缩早期轮次≤200字写 summary，独立 DB 会话，best-effort）、_schedule_summary_update（asyncio.create_task 不阻塞）；stream_chat 构建历史注入摘要、每满10轮（消息数%20==0）触发异步摘要。验收：摘要注入/生成落库/仅摘要早期轮次，全库 228 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段八 8.2 Token预算控制。新增 app/agent/token_budget.py：estimate_tokens（CJK 1字/token、其余4字符/token 字符启发式，不引 tiktoken）、estimate_messages_tokens（含每条+4协议开销）、fit_window_to_budget（超 max_tokens×0.8 逐级降轮 20→16→12）。config 增 LLM_MAX_TOKENS=65536/TOKEN_BUDGET_RATIO=0.8。chat_service 组装前估算工具描述 token+裁剪窗口，_run_react/_run_deep 末尾 push {"type":"usage","prompt","completion","total"}（done 前）。验收：超长历史降轮、usage 事件含三字段且在 done 前，全库 234 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段八 8.3 策略生成三级校验。新增 app/agent/strategy_validator.py：一级 ast.parse 语法（含行号）、二级接口（initialize/on_bar 存在、on_bar 参数个数=2、禁顶层 import）、三级沙箱 dry-run（compile_strategy+_DryRunContext 用 1 根模拟 K 线执行 initialize+on_bar，traceback 提取异常行号，捕获 NameError/IndexError/ZeroDivisionError）。返回 {"valid","errors":[{"line","message"}]}。注：roadmap 写 on_bar 签名"(ctx,bar)"与引擎实际 (bar,context) 不符，按引擎位置调用只校验参数个数。验收：9 单测（好码/语法/缺函数/签名/import/三类运行时异常+行号），全库 243 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段八 8.4 生成失败自动重试。重写 strategy_gen.generate_strategy：接入 8.3 三级校验（validate_strategy 替代原 _validate_code 粗校验），校验失败把错误信息（行号+类型+消息）拼回 prompt 要求修复重生成完整策略，最多重试 STRATEGY_GEN_MAX_RETRIES=2 次，仍失败抛 LLMError("策略生成遇到问题，请尝试调整描述或基于模板创建")。config 增 STRATEGY_GEN_MAX_RETRIES。验收：坏码首轮→重试成功且重试 prompt 含校验错误、耗尽重试抛模板库提示，全库 242 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段八 8.5 策略模板库。Alembic 0008 建 strategy_templates 表 + 5 个按本项目 initialize/on_bar 沙箱接口编写的已验证模板（双均线/MACD/KDJ/布林带/成交量异动，幂等种子）。模型 StrategyTemplate、repo list/get、service list_templates/get_template(404)、schemas 列表项（不含 code）/详情（含 code）、api/v1/strategy_templates.py 两端点、router 注册。修正：模板 helper 函数名不能以下划线开头（RestrictedPython 拒绝 _ema/_k_value）。验收：5 模板均通过三级校验+真实回测、列表不含 code、详情含 code、鉴权/404，全库 246 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段八 8.6 生成→回测一键流程。chat_service 增 _run_strategy：run_type="strategy" 走 generate_strategy（8.3/8.4 校验+重试）→ strategy_service.create_strategy 保存 → delta 输出代码 → 末尾 push {"type":"strategy_ready","strategy_id","auto_backtest":true}；LLMError 走友好提示（含模板库入口）。stream_chat 增 strategy 分支（绕过流式超时，keepalive 由 API 层保证）。同时修复 7.1 偶发 bug：research_graph 由 astream_events 改为 astream(stream_mode="updates")，避免高负载下 on_chain_end 乱序导致 agent_steps 逆序落库（全库复测 6 次稳定）。验收：strategy_ready 含有效 strategy_id 且策略已保存可回测、失败提示，全库 248 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-23
+编码内容（描述）：V0.2 阶段八 8.7 会话标题自动生成。chat_service 增 _TITLE_PROMPT/_generate_conversation_title（异步 LLM 生成≤15字标题，更新 conversations.title，始终在 finally 向队列放结果/哨兵避免空等）/ _schedule_title_update；stream_chat 首条消息（count_messages==1）且 llm 可用时 create_task 触发，done 后 wait_for(TITLE_WAIT_TIMEOUT=3s) 从队列取 title 事件 push {"type":"title","title","conversation_id"}（失败/超时静默）。config 增 TITLE_WAIT_TIMEOUT。验收：首条消息生成标题并 push title 事件+落库、第二条不触发、无 3s 空等，全库 250 pytest 全绿 + ruff。

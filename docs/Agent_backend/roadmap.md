@@ -35,6 +35,7 @@ v0.1阶段
 - 行业指数实时匹配：35 个固定行业 23 个可匹配东财板块（白酒→白酒Ⅲ、游戏→游戏Ⅲ、证券→证券Ⅲ 等），10 个（创新药/文化传媒/军工/消费/细分化工/农业种植/猪肉/港口航运/公路铁路运输/汽车整车）东财无对应板块，最新价/涨跌幅显示 "--" 属数据源无对应而非 bug，接入更多数据源可补全。
 - 指数成交量/成交额：海外指数（道琼斯/纳斯达克等）数据源无成交量字段，快照 volume/amount 存 NULL 前端显示 "--" 属正常；国内指数/行业指数重同步后有真实成交量。
 - 指数PE/个股市值/ETF溢价：实时轮询 best-effort 填充；指数PE 仅 沪深300/上证50/中证1000 可取自乐咕 `stock_index_pe_lg`，其余指数无 PE 数据源；乐咕/东财限流时该轮跳过，不阻塞轮询。
+- 数据库迁移命令：在后端根目录下使用命令.\.venv\Scripts\alembic.exe upgrade head，可以直接调用依赖链使当前数据库更新到最新版本。
 
 v0.2阶段
 - WS 实时数据推送需要同时启动 Celery worker + beat，否则 WS 连接正常但无数据推送,启动命令：
@@ -459,4 +460,14 @@ v0.2阶段
 - 缓存体系：K线/快照/搜索/关注列表均走 Redis（TTL 见 .env），Redis 不可用时自动降级直查 PostgreSQL；快照 data_age_seconds 供前端标注"数据时间"。
 - 预同步脚本：`python scripts/presync_fixed_indices.py` 可手动触发固定指数/目录检查（幂等可重跑），容器启动已自动执行。
 - 同步进度展示：行情页加载时调 `GET /api/v1/sync-status?scope=fixed_indices` 轮询"数据同步中（X/49）"（running 显示进度条，done 自动刷新；无记录返回 done 表示未触发预同步）。
+
+## 人工配置 / 日志说明（V0.2 第三波追加）
+
+- 数据库迁移：第三波新增 0006（agent_steps.summary/duration_ms/status + agent_runs.duration_ms）、0007（conversations.summary）、0008（strategy_templates 表 + 5 模板种子）。部署环境由 entrypoint 自动 `alembic upgrade head`，本地手动执行见 project_constraints_v0.2.md 迁移命令。
+- 策略模板种子：`strategy_templates` 5 个模板（双均线/MACD/KDJ/布林带/成交量异动）随 0008 迁移幂等写入，无需额外手动种子；如需重置/重跑可 `alembic downgrade 0007 && alembic upgrade head`。
+- 多智能体可观测：深度模式（诊断/交易计划/机会雷达）SSE 推送 `agent_step` 事件（running/done/failed 含 summary/耗时）；运行历史 `GET /api/v1/agent/runs?conversation_id=&page=&size=`、节点步骤 `GET /api/v1/agent/runs/{id}/steps`。
+- Token 预算：`LLM_MAX_TOKENS`（默认 65536，DeepSeek-chat 64K）与 `TOKEN_BUDGET_RATIO`（默认 0.8）控制发送前估算，超预算自动降轮（20→16→12），估算用字符启发式（不引 tiktoken）。
+- 策略生成校验+重试：`STRATEGY_GEN_MAX_RETRIES`（默认 2）控制校验失败重试次数；三级校验（语法/接口/沙箱 dry-run）全通过才保存/回测。
+- 会话标题生成：`TITLE_WAIT_TIMEOUT`（默认 3 秒）控制 done 后等待标题生成的最长时间（best-effort，超时静默，标题仍会异步落库）。
+- 长会话摘要：每满 10 轮（20 条消息）异步生成会话摘要（≤200 字）写入 conversations.summary，新会话加载注入「之前对话摘要」；依赖 Celery worker 常驻运行（异步任务在请求内 `asyncio.create_task`，无需额外队列）。
 

@@ -501,7 +501,11 @@ data: {"type":"done","message_id":9,"conversation_id":2,"run_id":3}
 | `delta` | `seq`(递增序号)、`content`、`node`?(深度模式) | 文本增量；seq 用于断点续传 |
 | `tool_call` | `tool`、`input` | Agent 调用工具 |
 | `tool_result` | `tool`、`preview` | 工具返回预览 |
-| `done` | `message_id`、`conversation_id`、`run_id`、`truncated`?、`reason`? | 正常结束；超时截断时带 `truncated:true,reason:"timeout"` |
+| `agent_step` | `node`、`status`、`summary`?、`duration_ms`?、`error`? | 深度模式多智能体节点状态：`running`（开始）/`done`（完成，带 summary+耗时）/`failed`（失败，带 error） |
+| `usage` | `prompt`、`completion`、`total` | token 用量（阶段八 8.2，估算值，done 前推送） |
+| `strategy_ready` | `strategy_id`、`auto_backtest` | 策略生成校验通过并已保存（阶段八 8.6，前端可自动发起回测） |
+| `title` | `title`、`conversation_id` | 会话标题自动生成完成（阶段八 8.7，done 后异步推送） |
+| `done` | `message_id`、`conversation_id`、`run_id`、`truncated`?、`reason`?、`partial`? | 正常结束；超时截断时带 `truncated:true,reason:"timeout"`；部分节点异常时带 `partial:true` |
 | `error` | `code`、`message`、`retryable`、`retry_after`? | 错误帧（见下错误码） |
 | `resync` | `conversation_id` | 断点续传缓存已过期，提示前端重新加载完整消息 |
 
@@ -657,6 +661,48 @@ curl -X DELETE "http://127.0.0.1:8000/api/v1/strategies/1" -H "Authorization: Be
 
 ```json
 {"code":0,"msg":"删除成功","data":null}
+```
+
+# 策略模板 API（Strategy-Templates）
+
+## 1. 模板列表
+
+- **接口名称**：策略模板列表
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/strategy-templates
+- **接口作用**：内置策略模板列表（id/name/description/params_schema，不含完整 code，按需获取），「基于模板创建」数据源。
+- **请求 Body**：无（Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/strategy-templates" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":[{"id":1,"name":"双均线交叉","description":"短期均线上穿长期均线买入，下穿卖出...","params_schema":{"entry":{"fast":5,"slow":20}}}]}
+```
+
+## 2. 模板详情
+
+- **接口名称**：策略模板详情
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/strategy-templates/{template_id}
+- **接口作用**：单个模板详情（含完整 code），前端加载到编辑器供用户修改保存。
+- **请求 Body**：无（Path：template_id；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/strategy-templates/1" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"id":1,"name":"双均线交叉","description":"...","params_schema":{...},"code":"def initialize(context):\n    ...\n\ndef on_bar(bar, context):\n    ..."}}
 ```
 
 # 用户定制 Agent API（Agents）
@@ -870,22 +916,42 @@ curl "http://127.0.0.1:8000/api/v1/backtest/results/5" -H "Authorization: Bearer
 - **接口名称**：Agent 运行历史
 - **请求 Method**：GET
 - **请求 Path**：/api/v1/agent/runs
-- **接口作用**：当前用户 Agent 运行记录列表（按时间倒序，前端 AgentRunsDialog 数据源）。
-- **请求 Body**：无（Header：Authorization: Bearer <token>）
+- **接口作用**：当前用户 Agent 运行记录列表（按时间倒序，支持按会话筛选 + 分页，前端 AgentRunsDialog 数据源）。
+- **请求 Body**：无（Query：conversation_id?、page?=1、size?=20；Header：Authorization: Bearer <token>）
 
 **请求示例（curl）**
 
 ```bash
-curl "http://127.0.0.1:8000/api/v1/agent/runs" -H "Authorization: Bearer eyJhbGciOi..."
+curl "http://127.0.0.1:8000/api/v1/agent/runs?conversation_id=2&page=1&size=20" -H "Authorization: Bearer eyJhbGciOi..."
 ```
 
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":[{"id":3,"agent_id":null,"conversation_id":2,"symbol_id":125,"run_type":"diagnostic","status":"success","input":"分析贵州茅台趋势","output":"结论：持有","tokens":null,"error":null,"created_at":"2026-08-11T05:00:00Z","updated_at":"2026-08-11T05:00:00Z"},...]}
+{"code":0,"msg":"ok","data":{"items":[{"id":3,"agent_id":null,"conversation_id":2,"symbol_id":125,"run_type":"diagnostic","status":"success","input":"分析贵州茅台趋势","output":"结论：持有","final_decision":"结论：持有","total_duration":3500,"tokens":null,"error":null,"created_at":"...","updated_at":"..."}],"total":1,"page":1,"size":20}}
 ```
 
-## 2. Agent 运行详情
+## 2. Agent 运行节点步骤
+
+- **接口名称**：Agent 运行节点步骤
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/agent/runs/{run_id}/steps
+- **接口作用**：某次运行的完整多智能体节点步骤（node/status/summary/content/duration_ms，按节点执行顺序）。
+- **请求 Body**：无（Path：run_id；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/agent/runs/3/steps" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":[{"id":1,"run_id":3,"step_name":"technical_analyst","node":"technical_analyst","agent_role":"analyst","status":"done","content":"趋势向上...","summary":"趋势向上，支撑1200","duration_ms":2100,"meta":null,"created_at":"..."}]}
+```
+
+## 3. Agent 运行详情
 
 - **接口名称**：Agent 运行详情
 - **请求 Method**：GET
@@ -902,10 +968,10 @@ curl "http://127.0.0.1:8000/api/v1/agent/runs/3" -H "Authorization: Bearer eyJhb
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":{"id":3,"run_type":"diagnostic","status":"success","output":"结论：持有","steps":[{"id":1,"run_id":3,"step_name":"analyst","agent_role":"analyst","content":"技术面看多","meta":null,"created_at":"..."}],"created_at":"..."}}
+{"code":0,"msg":"ok","data":{"id":3,"run_type":"diagnostic","status":"success","output":"结论：持有","final_decision":"结论：持有","total_duration":3500,"steps":[{"id":1,"run_id":3,"step_name":"technical_analyst","node":"technical_analyst","agent_role":"analyst","status":"done","content":"技术面看多","summary":"技术面看多","duration_ms":2100,"meta":null,"created_at":"..."}],"created_at":"..."}}
 ```
 
-## 3. 本地记忆文件
+## 4. 本地记忆文件
 
 - **接口名称**：本地记忆文件列表
 - **请求 Method**：GET
@@ -925,7 +991,7 @@ curl "http://127.0.0.1:8000/api/v1/memory/files" -H "Authorization: Bearer eyJhb
 {"code":0,"msg":"ok","data":[{"path":"D:/stock-invest-system/stock_backend/data/memory/1/rule.md","content_type":"rule","updated_at":"2026-08-11T05:00:00Z"}]}
 ```
 
-## 4. 记忆事实列表（V0.2 阶段六 6.4）
+## 5. 记忆事实列表（V0.2 阶段六 6.4）
 
 - **接口名称**：记忆事实列表（分页）
 - **请求 Method**：GET
@@ -945,7 +1011,7 @@ curl "http://127.0.0.1:8000/api/v1/memory/facts?page=1&size=20&importance_min=7"
 {"code":0,"msg":"ok","data":{"items":[{"id":12,"content":"止损不超过2%","importance":8,"source_type":"rule","source_id":3,"created_at":"2026-08-11T05:00:00Z"}],"total":1,"page":1,"size":20}}
 ```
 
-## 5. 删除单条记忆（V0.2 阶段六 6.4）
+## 6. 删除单条记忆（V0.2 阶段六 6.4）
 
 - **接口名称**：删除单条记忆
 - **请求 Method**：DELETE
@@ -965,7 +1031,7 @@ curl -X DELETE "http://127.0.0.1:8000/api/v1/memory/facts/12" -H "Authorization:
 {"code":0,"msg":"已删除","data":null}
 ```
 
-## 6. 清空全部记忆（V0.2 阶段六 6.4）
+## 7. 清空全部记忆（V0.2 阶段六 6.4）
 
 - **接口名称**：清空全部记忆
 - **请求 Method**：DELETE

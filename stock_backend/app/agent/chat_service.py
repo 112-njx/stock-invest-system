@@ -23,12 +23,14 @@ from app.agent.memory import memory_service
 from app.agent.prompts import build_system_prompt as default_system_prompt
 from app.agent.research_graph import run_research_graph
 from app.agent.sse import cache_delta, cache_done, clear_delta_cache
+from app.agent.strategy_gen import generate_strategy
+from app.agent.token_budget import estimate_messages_tokens, estimate_tokens, fit_window_to_budget
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.models.agent import UserAgent
 from app.repositories import agent_repo, conversation_repo
-from app.services import conversation_service, indicator_service, market_service
-from app.services.llm import LLMService, get_llm_service
+from app.services import conversation_service, indicator_service, market_service, strategy_service
+from app.services.llm import LLMError, LLMService, get_llm_service
 from app.services.llm.llm_service import classify_llm_error
 from app.utils.db import SessionLocal
 
@@ -45,6 +47,121 @@ _AGENT_ROLE = {
     "risk_manager": "manager",
     "trader": "trader",
 }
+
+# 阶段八 8.1：长会话滑动窗口摘要
+_SUMMARY_PROMPT = """请将以下对话历史压缩为不超过200字的摘要，保留关键信息（用户交易偏好/规则、已讨论的标的、重要结论与待办）。只输出摘要正文，不要任何前缀或说明。
+
+对话：
+{conversation}
+"""
+
+
+def _assemble_history(all_msgs: list[dict], summary: str | None, max_history: int = MAX_HISTORY) -> list[dict]:
+    """组装消息历史：最近 max_history 条完整 + 可选会话摘要替代早期对话（阶段八 8.1）。"""
+    history = all_msgs[-max_history:]
+    if summary:
+        history = [{"role": "system", "content": f"之前对话摘要：{summary}"}] + history
+    return history
+
+
+def _estimate_tools_tokens(tools: list) -> int:
+    """粗略估算工具描述 token（阶段八 8.2：工具名 + description）。"""
+    total = 0
+    for t in tools:
+        name = getattr(t, "name", "") or t.__class__.__name__
+        desc = getattr(t, "description", "") or ""
+        total += estimate_tokens(str(name)) + estimate_tokens(str(desc))
+    return total
+
+
+def _usage_event(prompt_tokens: int, completion_text: str) -> dict:
+    """构造 usage 事件（阶段八 8.2：前端可展示 token 用量）。"""
+    completion = estimate_tokens(completion_text)
+    return {"type": "usage", "prompt": prompt_tokens, "completion": completion, "total": prompt_tokens + completion}
+
+
+async def _generate_conversation_summary(conv_id: int, llm_svc) -> None:
+    """异步生成/更新会话摘要（best-effort：失败不影响主链路，独立 DB 会话）。"""
+    try:
+        if not getattr(llm_svc, "available", False):
+            return
+        db: Session = SessionLocal()
+        try:
+            msgs = conversation_repo.list_messages(db, conv_id)
+            # 只摘要早期轮次（去掉最近 MAX_HISTORY 条 = 最近 10 轮）
+            early = msgs[:-MAX_HISTORY] if len(msgs) > MAX_HISTORY else msgs
+            if not early:
+                return
+            conversation = "\n".join(f"{m.role}: {m.content}" for m in early)
+            result = await llm_svc.ainvoke(
+                [{"role": "user", "content": _SUMMARY_PROMPT.format(conversation=conversation[:8000])}]
+            )
+            summary = (result.text or "").strip()[:200]
+            if summary:
+                conversation_repo.update_summary(db, conv_id, summary)
+                db.commit()
+        finally:
+            db.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("conversation summary failed conv=%s: %s", conv_id, e)
+
+
+def _schedule_summary_update(conv_id: int, llm_svc) -> None:
+    """每满 10 轮异步更新会话摘要（不阻塞当前响应）。"""
+    try:
+        asyncio.create_task(_generate_conversation_summary(conv_id, llm_svc))
+    except RuntimeError:  # 无运行中事件循环时忽略
+        pass
+
+
+# 阶段八 8.7：会话标题自动生成
+_TITLE_PROMPT = """请为以下对话生成一个简短标题（不超过15个字），概括对话主题。只输出标题正文，不要任何前缀、标点或说明。
+
+对话首条消息：
+{content}
+"""
+
+
+async def _generate_conversation_title(conv_id: int, first_msg: str, llm_svc, queue: "asyncio.Queue | None" = None) -> str | None:
+    """异步生成会话标题（best-effort：失败不影响对话）。可选 queue 推送 title 事件。
+
+    始终在 finally 向队列放入结果/哨兵，避免调用方空等超时。
+    """
+    title: str | None = None
+    try:
+        if not getattr(llm_svc, "available", False):
+            title = None
+        else:
+            result = await llm_svc.ainvoke(
+                [{"role": "user", "content": _TITLE_PROMPT.format(content=first_msg[:500])}]
+            )
+            title = (result.text or "").strip()[:15] or None
+        if title:
+            db: Session = SessionLocal()
+            try:
+                conversation_repo.update_title(db, conv_id, title)
+                db.commit()
+            finally:
+                db.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("conversation title failed conv=%s: %s", conv_id, e)
+        title = None
+    finally:
+        if queue is not None:
+            try:
+                evt = {"type": "title", "title": title, "conversation_id": conv_id} if title else None
+                await queue.put(("title", evt))
+            except Exception:  # noqa: BLE001
+                pass
+    return title
+
+
+def _schedule_title_update(conv_id: int, first_msg: str, llm_svc, queue: "asyncio.Queue | None" = None) -> None:
+    """会话首条消息后异步生成标题（不阻塞当前响应）。"""
+    try:
+        asyncio.create_task(_generate_conversation_title(conv_id, first_msg, llm_svc, queue))
+    except RuntimeError:
+        pass
 
 
 def _fallback_text() -> str:
@@ -113,6 +230,7 @@ async def _run_react(
     tools,
     agent_model,
     llm_svc,
+    prompt_tokens: int = 0,
 ) -> AsyncIterator[dict]:
     """轻量模式：ReAct Agent（工具按需取数）。"""
     from langchain.agents import create_agent
@@ -131,6 +249,7 @@ async def _run_react(
         saved_facts = await _extract_and_save_memory(db, run.user_id, conv.id, user_msg.content, full_text, llm_svc)
         for f in saved_facts:
             yield {"type": "memory_saved", "summary": f["content"], "importance": int(f.get("importance", 5))}
+        yield _usage_event(prompt_tokens, full_text)
         yield {"type": "done", "message_id": assistant_msg.id, "conversation_id": conv.id, "run_id": run.id}
     except Exception as e:  # noqa: BLE001
         logger.exception("agent run failed: %s", e)
@@ -149,26 +268,102 @@ async def _run_deep(
     run_type: str,
     agent_model,
     llm_svc,
+    prompt_tokens: int = 0,
 ) -> AsyncIterator[dict]:
     """深度模式：LangGraph 多智能体研究图（技术分析→多空辩论→风控→决策）。"""
     parts: list[str] = []
+    failed_nodes: list[str] = []
+    started = time.monotonic()
     try:
         async for step in run_research_graph(db, agent_model, symbol=symbol, question=content, run_type=run_type):
-            node, text = step["node"], step["content"]
+            node = step["node"]
+            status = step.get("status", "done")
+            if status == "running":
+                yield {"type": "agent_step", "node": node, "status": "running"}
+                continue
+            text = step.get("content", "")
+            summary = step.get("summary", "")
+            duration_ms = step.get("duration_ms", 0)
+            error = step.get("error")
+            if status == "failed":
+                failed_nodes.append(node)
             parts.append(text)
-            agent_repo.add_step(db, run.id, node, _AGENT_ROLE.get(node, "analyst"), text, {"idx": len(parts)})
+            meta = {"idx": len(parts)}
+            if error:
+                meta["error"] = error
+            agent_repo.add_step(
+                db,
+                run.id,
+                node,
+                _AGENT_ROLE.get(node, "analyst"),
+                text,
+                meta,
+                summary=summary,
+                duration_ms=duration_ms,
+                status=status,
+            )
             yield {"type": "delta", "content": text, "node": node}
+            step_ev = {"type": "agent_step", "node": node, "status": status, "summary": summary, "duration_ms": duration_ms}
+            if error:
+                step_ev["error"] = error
+            yield step_ev
         db.commit()
+        total_duration_ms = int((time.monotonic() - started) * 1000)
         full_text = "\n\n".join(parts).strip() or _fallback_text()
+        # 阶段七 7.2：部分节点异常时在结论标注 + agent_runs 标记，run 仍为 success（图已完成）
+        partial = bool(failed_nodes)
+        if partial:
+            full_text += "\n\n（部分节点异常，结论仅供参考）"
         llm_svc.breaker.on_success()
-        assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, full_text, 0, "success")
+        assistant_msg = _save_result(
+            db, run, user_msg, conv, symbol_id, full_text, 0, "success",
+            duration_ms=total_duration_ms,
+            error=f"部分节点异常: {','.join(failed_nodes)}" if partial else None,
+        )
         saved_facts = await _extract_and_save_memory(db, run.user_id, conv.id, content, full_text, llm_svc)
         for f in saved_facts:
             yield {"type": "memory_saved", "summary": f["content"], "importance": int(f.get("importance", 5))}
-        yield {"type": "done", "message_id": assistant_msg.id, "conversation_id": conv.id, "run_id": run.id}
+        yield _usage_event(prompt_tokens, full_text)
+        done_ev = {"type": "done", "message_id": assistant_msg.id, "conversation_id": conv.id, "run_id": run.id}
+        if partial:
+            done_ev["partial"] = True
+        yield done_ev
     except Exception as e:  # noqa: BLE001
         logger.exception("research graph run failed: %s", e)
         llm_svc.breaker.on_failure()
+        yield _yield_failure(db, run, user_msg, conv, symbol_id, e)
+
+
+async def _run_strategy(db, run, user_msg, conv, symbol_id, content, llm_svc) -> AsyncIterator[dict]:
+    """策略生成分支（阶段八 8.6）：生成→三级校验→重试→保存→push strategy_ready。
+
+    单次长调用（非流式），不走 _stream_with_timeouts 的流式超时（keepalive 由 API 层保证）。
+    """
+    try:
+        out = await generate_strategy(content, llm_svc=llm_svc)
+        params = out.params.model_dump() if hasattr(out.params, "model_dump") else dict(out.params)
+        title = (out.strategy_name or "").strip()[:128] or "未命名策略"
+        strategy = strategy_service.create_strategy(
+            db, run.user_id, title, out.description, out.code, params, "draft"
+        )
+        text = (
+            f"已为你生成策略「{out.strategy_name}」：\n\n"
+            f"{out.description}\n\n"
+            f"```python\n{out.code}\n```\n\n"
+            f"风险提示：{out.risk_warning or '无'}"
+        )
+        assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, text, 0, "success")
+        yield {"type": "delta", "content": text}
+        yield {"type": "strategy_ready", "strategy_id": strategy.id, "auto_backtest": True}
+        yield {"type": "done", "message_id": assistant_msg.id, "conversation_id": conv.id, "run_id": run.id}
+    except LLMError as e:
+        # 生成失败（含重试耗尽）：返回友好提示（含模板库入口）
+        text = str(e) or "策略生成遇到问题，请尝试调整描述或基于模板创建。"
+        assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, text, 0, "failed", str(e))
+        yield {"type": "delta", "content": text}
+        yield {"type": "done", "message_id": assistant_msg.id, "conversation_id": conv.id, "run_id": run.id}
+    except Exception as e:  # noqa: BLE001
+        logger.exception("strategy generation failed: %s", e)
         yield _yield_failure(db, run, user_msg, conv, symbol_id, e)
 
 
@@ -213,6 +408,12 @@ async def stream_chat(
         clear_delta_cache(conv.id)  # 新消息开始：清空旧 delta 断点续传缓存
         yield {"type": "start"}
 
+        # 阶段八 8.7：会话首条用户消息 → 异步生成标题（不阻塞，done 后经队列推送 title 事件）
+        title_queue: asyncio.Queue = asyncio.Queue()
+        is_first_msg = conversation_repo.count_messages(db, conv.id) == 1
+        if is_first_msg and llm_svc.available:
+            _schedule_title_update(conv.id, content, llm_svc, title_queue)
+
         # ---- 上下文组装 ----
         agent = _load_agent(db, user_id, agent_id)
         if agent:
@@ -220,15 +421,27 @@ async def stream_chat(
         else:
             system_prompt = default_system_prompt()
         tools = build_tools(db, include_memory=[memory_service.memory_tool(db, user_id)])
-        history = [
+        _all_msgs = [
             {"role": m.role, "content": m.content}
             for m in conversation_repo.list_messages(db, conv.id)
             if m.id != user_msg.id
-        ][-MAX_HISTORY:]
+        ]
         memory_context = memory_service.retrieve_memory(db, user_id, content)
+        # 阶段八 8.2：按 token 预算裁剪完整轮数；8.1：早期对话用摘要替代
+        tools_tokens = _estimate_tools_tokens(tools)
+        window = fit_window_to_budget(
+            system_prompt=system_prompt,
+            all_history=_all_msgs,
+            summary=conv.summary,
+            user_content=content,
+            memory_context=memory_context or None,
+            tools_tokens=tools_tokens,
+        )
+        history = _assemble_history(_all_msgs, conv.summary, window)
         messages = build_llm_messages(
             system_prompt=system_prompt, history=history, user_content=content, memory_context=memory_context or None
         )
+        prompt_tokens = estimate_messages_tokens(messages) + tools_tokens
         log_context(system_prompt, messages, tools)
 
         # ---- 运行记录 ----
@@ -254,12 +467,29 @@ async def stream_chat(
             yield _yield_failure(db, run, user_msg, conv, symbol_id, e)
             return
         agent_model = model if model is not None else llm_svc.provider.raw_model
-        if run_type in DEEP_RUN_TYPES:
-            gen = _run_deep(db, run, user_msg, conv, symbol_id, symbol, content, run_type, agent_model, llm_svc)
+        if run_type == "strategy":
+            # 阶段八 8.6：策略生成（单次长调用，绕过流式超时，keepalive 由 API 层保证）
+            async for ev in _run_strategy(db, run, user_msg, conv, symbol_id, content, llm_svc):
+                yield ev
         else:
-            gen = _run_react(db, run, user_msg, conv, symbol_id, messages, tools, agent_model, llm_svc)
-        async for ev in _stream_with_timeouts(gen, db, run, user_msg, conv, symbol_id):
-            yield ev
+            if run_type in DEEP_RUN_TYPES:
+                gen = _run_deep(db, run, user_msg, conv, symbol_id, symbol, content, run_type, agent_model, llm_svc, prompt_tokens)
+            else:
+                gen = _run_react(db, run, user_msg, conv, symbol_id, messages, tools, agent_model, llm_svc, prompt_tokens)
+            async for ev in _stream_with_timeouts(gen, db, run, user_msg, conv, symbol_id):
+                yield ev
+        # 阶段八 8.7：done 后短等待推送 title 事件（best-effort）
+        if is_first_msg and llm_svc.available:
+            try:
+                _kind, title_ev = await asyncio.wait_for(title_queue.get(), timeout=settings.TITLE_WAIT_TIMEOUT)
+                if title_ev:
+                    yield title_ev
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+        # 阶段八 8.1：每满 10 轮异步更新会话摘要（不阻塞当前响应）
+        msg_count = conversation_repo.count_messages(db, conv.id)
+        if msg_count >= MAX_HISTORY and msg_count % MAX_HISTORY == 0:
+            _schedule_summary_update(conv.id, llm_svc)
     finally:
         db.close()
 
@@ -306,10 +536,10 @@ async def _extract_and_save_memory(db: Session, user_id: int, source_id: int | N
     return []
 
 
-def _save_result(db, run, user_msg, conv, symbol_id, text, tokens, status, error=None):
+def _save_result(db, run, user_msg, conv, symbol_id, text, tokens, status, error=None, duration_ms=None):
     """保存 assistant 消息 + 更新 run 状态（同事务），返回 assistant 消息。"""
     assistant_msg = conversation_repo.add_message(db, conv.id, "assistant", text, symbol_id=symbol_id, tokens=tokens)
-    agent_repo.finish_run(db, run, status=status, output=text, tokens=tokens, error=error)
+    agent_repo.finish_run(db, run, status=status, output=text, tokens=tokens, duration_ms=duration_ms, error=error)
     db.commit()
     db.refresh(assistant_msg)
     return assistant_msg
@@ -358,7 +588,9 @@ async def _stream_with_timeouts(gen, db, run, user_msg, conv, symbol_id) -> Asyn
                 cache_delta(conv.id, ev)
             elif ev.get("type") == "done":
                 cache_done(conv.id, ev)
-            first = False
+            # 仅内容事件翻转「首字」标记：agent_step(running/done) 等非文本事件不消耗首字超时预算
+            if ev.get("type") in ("delta", "tool_call"):
+                first = False
             yield ev
     except StopAsyncIteration:
         return

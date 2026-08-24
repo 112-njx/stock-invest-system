@@ -1,12 +1,16 @@
-"""多智能体编排（3.8）：LangGraph StateGraph — 技术分析 → 多空研究员辩论 → 风控 → 交易决策。
+"""多智能体编排（3.8 + 阶段七）：LangGraph StateGraph — 技术分析 → 多空研究员辩论 → 风控 → 交易决策。
 
 借鉴 TradingAgents-CN trading_graph 组织架构（分析师团队→研究员团队辩论→风控→交易员），
 深度模式（诊断/交易计划/机会雷达）走此图，agent_steps 记录各节点输出。
+
+阶段七 7.1：改用 astream_events 逐节点推送 running/done 事件（含 summary/duration_ms），供 agent_step SSE + 落库。
 """
 
 import logging
+import time
 from collections.abc import AsyncIterator
-from typing import Any, TypedDict
+from operator import add
+from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
@@ -24,6 +28,28 @@ NODE_FIELD = {
     "trader": "final_decision",
 }
 
+# 各节点失败时的默认中性观点（阶段七 7.2：单节点失败不中断图）
+_NEUTRAL_TEXT = {
+    "technical_analyst": "技术分析暂不可用，默认中性。",
+    "bull_researcher": "看多分析暂不可用，默认中性。",
+    "bear_researcher": "看空分析暂不可用，默认中性。",
+    "risk_manager": "风控评估暂不可用，默认中性。",
+    "trader": "交易决策暂不可用，默认中性（暂不建议操作）。",
+}
+
+
+def _summarize(text: str, limit: int = 200) -> str:
+    """把节点输出压成简短摘要（去多余空白 + 截断，供 summary 字段与 SSE 展示）。"""
+    t = " ".join(str(text).split()).strip()
+    return t[:limit] + ("…" if len(t) > limit else "")
+
+
+def _merge_errors(a: dict, b: dict) -> dict:
+    """节点错误映射的合并 reducer（阶段七 7.2：失败节点名→错误信息）。"""
+    merged = dict(a or {})
+    merged.update(b or {})
+    return merged
+
 
 class ResearchState(TypedDict, total=False):
     symbol: str
@@ -35,6 +61,9 @@ class ResearchState(TypedDict, total=False):
     bear_arg: str
     risk_assessment: str
     final_decision: str
+    # 阶段七 7.2：失败节点累计（Annotated + add reducer 追加，避免覆盖）
+    failed_nodes: Annotated[list[str], add]
+    node_errors: Annotated[dict[str, str], _merge_errors]
 
 
 def _prompt(node: str, state: ResearchState) -> str:
@@ -117,7 +146,12 @@ async def _llm_text(model, prompt: str) -> str:
 
 def _make_node(model: Any, node: str, field: str):
     async def _node(state: ResearchState) -> dict:
-        text = await _llm_text(model, _prompt(node, state))
+        # 阶段七 7.2：单节点失败不中断图，返回默认中性观点并记录失败节点与错误信息
+        try:
+            text = await _llm_text(model, _prompt(node, state))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("research node %s failed: %s", node, e)
+            return {field: _NEUTRAL_TEXT[node], "failed_nodes": [node], "node_errors": {node: str(e)}}
         return {field: text}
 
     return _node
@@ -139,7 +173,13 @@ def build_research_graph(model: Any):
 async def run_research_graph(
     db: Session, model: Any, *, symbol: str | None, question: str, run_type: str = "diagnose"
 ) -> AsyncIterator[dict]:
-    """执行研究图，yield {node, content} 各节点输出（供 agent_steps 记录 + SSE）。"""
+    """执行研究图，逐节点 yield SSE 事件（阶段七 7.1/7.2）：
+
+    - ``{"node": ..., "status": "running"}`` 节点开始
+    - ``{"node": ..., "status": "done"|"failed", "content": ..., "summary": ..., "duration_ms": ..., "error"?}`` 节点完成
+
+    用 ``astream(stream_mode="updates")`` 保证节点按图顺序确定性产出（避免 astream_events 乱序）。
+    """
     context = _build_market_context(db, symbol) if symbol else "（未绑定标的）"
     state: ResearchState = {
         "symbol": symbol or "未指定标的",
@@ -148,9 +188,38 @@ async def run_research_graph(
         "market_context": context,
     }
     graph = build_research_graph(model)
+    nodes = list(NODE_FIELD.keys())
+    if not nodes:
+        return
+
+    # 第一个节点开始
+    started: dict[str, float] = {nodes[0]: time.monotonic()}
+    yield {"node": nodes[0], "status": "running"}
+
+    idx = 0
     async for update in graph.astream(state, stream_mode="updates"):
         for node, delta in update.items():
             field = NODE_FIELD.get(node)
             content = delta.get(field) if field else None
-            if content:
-                yield {"node": node, "content": content}
+            if not content:
+                continue
+            duration_ms = int((time.monotonic() - started.get(node, time.monotonic())) * 1000)
+            is_failed = node in (delta.get("failed_nodes") or [])
+            error = (delta.get("node_errors") or {}).get(node) if is_failed else None
+            evt: dict = {
+                "node": node,
+                "status": "failed" if is_failed else "done",
+                "content": content,
+                "summary": _summarize(content),
+                "duration_ms": duration_ms,
+            }
+            if error:
+                evt["error"] = error
+            yield evt
+
+            # 下一个节点开始（线性图：上一个完成后紧接开始）
+            idx += 1
+            if idx < len(nodes):
+                nxt = nodes[idx]
+                started[nxt] = time.monotonic()
+                yield {"node": nxt, "status": "running"}

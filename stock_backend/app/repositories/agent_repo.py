@@ -88,22 +88,41 @@ def create_run(
     return run
 
 
-def finish_run(db: Session, run: AgentRun, *, status: str, output: str | None = None, tokens: int | None = None, error: str | None = None) -> None:
+def finish_run(db: Session, run: AgentRun, *, status: str, output: str | None = None, tokens: int | None = None, duration_ms: int | None = None, error: str | None = None) -> None:
     run.status = status
     if output is not None:
         run.output = output
     if tokens is not None:
         run.tokens = tokens
+    if duration_ms is not None:
+        run.duration_ms = duration_ms
     if error is not None:
         run.error = error
     db.flush()
 
 
 # ---- agent_runs 查询（5.5 补齐：GET /agent/runs 运行记录）----
-def list_runs(db: Session, user_id: int, limit: int = 50) -> list[AgentRun]:
-    return list(
-        db.scalars(select(AgentRun).where(AgentRun.user_id == user_id).order_by(AgentRun.id.desc()).limit(limit))
-    )
+def list_runs(
+    db: Session,
+    user_id: int,
+    conversation_id: int | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> list[AgentRun]:
+    """分页返回运行记录（阶段七 7.3 支持 conversation_id 筛选）。"""
+    stmt = select(AgentRun).where(AgentRun.user_id == user_id)
+    if conversation_id is not None:
+        stmt = stmt.where(AgentRun.conversation_id == conversation_id)
+    return list(db.scalars(stmt.order_by(AgentRun.id.desc()).offset(offset).limit(limit)))
+
+
+def count_runs(db: Session, user_id: int, conversation_id: int | None = None) -> int:
+    from sqlalchemy import func
+
+    stmt = select(func.count()).select_from(AgentRun).where(AgentRun.user_id == user_id)
+    if conversation_id is not None:
+        stmt = stmt.where(AgentRun.conversation_id == conversation_id)
+    return int(db.scalar(stmt) or 0)
 
 
 def get_run(db: Session, user_id: int, run_id: int) -> AgentRun | None:
@@ -118,8 +137,20 @@ def add_step(
     agent_role: str,
     content: str | None,
     meta: dict | None = None,
+    summary: str | None = None,
+    duration_ms: int | None = None,
+    status: str = "done",
 ) -> AgentStep:
-    step = AgentStep(run_id=run_id, step_name=step_name, agent_role=agent_role, content=content, meta=meta)
+    step = AgentStep(
+        run_id=run_id,
+        step_name=step_name,
+        agent_role=agent_role,
+        content=content,
+        meta=meta,
+        summary=summary,
+        duration_ms=duration_ms,
+        status=status,
+    )
     db.add(step)
     db.flush()
     return step

@@ -90,8 +90,14 @@ def test_research_graph_node_order():
     import asyncio
 
     steps = asyncio.run(_run())
-    assert [s["node"] for s in steps] == ["technical_analyst", "bull_researcher", "bear_researcher", "risk_manager", "trader"]
-    assert "最终决策" in steps[-1]["content"]
+    # 阶段七 7.1：每个节点先 running 再 done（含 summary/duration_ms）
+    running = [s for s in steps if s.get("status") == "running"]
+    done = [s for s in steps if s.get("status") == "done"]
+    assert [s["node"] for s in running] == ["technical_analyst", "bull_researcher", "bear_researcher", "risk_manager", "trader"]
+    assert [s["node"] for s in done] == ["technical_analyst", "bull_researcher", "bear_researcher", "risk_manager", "trader"]
+    assert "最终决策" in done[-1]["content"]
+    assert all(s.get("summary") for s in done)
+    assert all(isinstance(s.get("duration_ms"), int) for s in done)
     assert model.roles_called == [n for n in NODE_FIELD if n != "trader"] + ["trader"]
 
 
@@ -125,15 +131,23 @@ def test_deep_chat_records_agent_steps(client: TestClient):
         deltas = [e for e in events if e["type"] == "delta"]
         assert len(deltas) == 5
         assert events[-1]["type"] == "done"
+        # 阶段七 7.1：每个节点有 running + done 两个 agent_step 事件
+        agent_steps_ev = [e for e in events if e["type"] == "agent_step"]
+        assert len([e for e in agent_steps_ev if e["status"] == "running"]) == 5
+        assert len([e for e in agent_steps_ev if e["status"] == "done"]) == 5
 
-        # agent_steps 已记录各节点输出
+        # agent_steps 已记录各节点输出（含 summary/duration_ms/status）
         db = get_session()
         try:
             run = db.query(AgentRun).filter(AgentRun.conversation_id == conv["id"]).first()
             assert run is not None and run.status == "success"
+            assert run.duration_ms is not None and run.duration_ms >= 0
             steps = db.query(AgentStep).filter(AgentStep.run_id == run.id).all()
             assert [s.step_name for s in steps] == ["technical_analyst", "bull_researcher", "bear_researcher", "risk_manager", "trader"]
             assert "最终决策" in steps[-1].content
+            assert all(s.status == "done" for s in steps)
+            assert all(s.summary for s in steps)
+            assert all(s.duration_ms is not None for s in steps)
             # 清理
             db.query(AgentStep).filter(AgentStep.run_id == run.id).delete()
             db.query(AgentRun).filter(AgentRun.id == run.id).delete()
@@ -155,5 +169,84 @@ def test_light_chat_still_react(client: TestClient):
         events = _run_stream_chat(fake, user_id=user["user"]["id"], conversation_id=None, symbol=None, content="hi", run_type="custom")
         assert any(e["type"] == "delta" for e in events)
         assert events[-1]["type"] == "done"
+    finally:
+        _cleanup_users(uname)
+
+
+# ---- 7.2：节点失败降级 ----
+class _FailRoleModel(_RoleModel):
+    """technical_analyst 节点抛异常，其余节点正常。"""
+
+    async def ainvoke(self, messages):
+        if "技术面分析师" in messages[0]["content"]:
+            raise RuntimeError("technical analysis boom")
+        return await super().ainvoke(messages)
+
+
+def test_research_graph_node_failure_degrades():
+    """单节点抛异常 → 图仍完成，失败节点 status=failed + 默认中性观点 + error。"""
+    model = _FailRoleModel()
+
+    async def _run():
+        return [s async for s in run_research_graph(get_session(), model, symbol=None, question="分析", run_type="diagnose")]
+
+    import asyncio
+
+    steps = asyncio.run(_run())
+    finished = [s for s in steps if s.get("status") in ("done", "failed")]
+    assert [s["node"] for s in finished] == ["technical_analyst", "bull_researcher", "bear_researcher", "risk_manager", "trader"]
+    tech = next(s for s in finished if s["node"] == "technical_analyst")
+    assert tech["status"] == "failed"
+    assert "默认中性" in tech["content"]
+    assert tech.get("error")
+    # 其余节点仍正常完成
+    assert all(s["status"] == "done" for s in finished if s["node"] != "technical_analyst")
+
+
+def test_deep_chat_marks_partial_on_node_failure(client: TestClient):
+    """深度模式某节点失败 → 结论标注部分节点异常，run 仍 success + error 标记。"""
+    uname = _uname()
+    try:
+        user = _register(client, uname)
+        token = user["token"]
+        h = _auth(token)
+        conv = client.post("/api/v1/conversations", json={}, headers=h).json()["data"]
+
+        model = _FailRoleModel()
+        events = []
+
+        async def _run():
+            async for ev in chat_service.stream_chat(
+                user_id=user["user"]["id"],
+                conversation_id=conv["id"],
+                symbol=None,
+                content="帮我诊断",
+                run_type="diagnose",
+                llm_svc=_FakeLLM(model),
+                model=model,
+            ):
+                events.append(ev)
+
+        import asyncio
+
+        asyncio.run(_run())
+        assert events[-1]["type"] == "done"
+        assert events[-1].get("partial") is True
+
+        db = get_session()
+        try:
+            run = db.query(AgentRun).filter(AgentRun.conversation_id == conv["id"]).first()
+            assert run.status == "success"
+            assert "部分节点异常" in (run.error or "")
+            steps = db.query(AgentStep).filter(AgentStep.run_id == run.id).all()
+            failed = [s for s in steps if s.status == "failed"]
+            assert [s.step_name for s in failed] == ["technical_analyst"]
+            assert "默认中性" in failed[0].content
+            # 清理
+            db.query(AgentStep).filter(AgentStep.run_id == run.id).delete()
+            db.query(AgentRun).filter(AgentRun.id == run.id).delete()
+            db.commit()
+        finally:
+            db.close()
     finally:
         _cleanup_users(uname)

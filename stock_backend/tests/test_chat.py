@@ -9,6 +9,7 @@ from app.agent.prompts import build_system_prompt
 from app.models.agent import AgentRun, AgentStep
 from app.models.symbol import Symbol
 from app.models.user import User
+from app.repositories import conversation_repo
 from app.utils.db import get_session
 from fastapi.testclient import TestClient
 from langchain_core.language_models import BaseChatModel
@@ -497,6 +498,199 @@ def test_build_system_prompt_has_tool_failure_annotation():
 
     sp = build_system_prompt()
     assert "行情数据暂时不可用，以下分析基于历史数据" in sp
+
+
+# ---- 8.1：滑动窗口与摘要压缩 ----
+def test_assemble_history_with_and_without_summary():
+    from app.agent import chat_service as cs
+
+    all_msgs = [{"role": "user", "content": f"m{i}"} for i in range(25)]
+    # 无摘要：只取最近 MAX_HISTORY 条
+    hist = cs._assemble_history(all_msgs, None)
+    assert len(hist) == cs.MAX_HISTORY
+    assert hist[0]["content"] == "m5"  # 25 - 20 = 5
+
+    # 有摘要：前置 system 摘要 + 最近 MAX_HISTORY 条
+    hist = cs._assemble_history(all_msgs, "用户偏好短线")
+    assert hist[0] == {"role": "system", "content": "之前对话摘要：用户偏好短线"}
+    assert len(hist) == cs.MAX_HISTORY + 1
+
+
+class _SummaryLLM:
+    available = True
+
+    async def ainvoke(self, messages):
+        return types.SimpleNamespace(text="用户偏好短线，讨论过贵州茅台")
+
+
+def test_generate_conversation_summary_updates_db(client: TestClient):
+    uname = _uname()
+    try:
+        token = _register(client, uname)
+        conv = client.post("/api/v1/conversations", json={}, headers=_auth(token)).json()["data"]
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+
+        db = get_session()
+        try:
+            # 造 25 条消息（> MAX_HISTORY=20），摘要应只取早期 5 条
+            for i in range(25):
+                conversation_repo.add_message(db, conv["id"], "user" if i % 2 == 0 else "assistant", f"msg{i}")
+            db.commit()
+        finally:
+            db.close()
+
+        import asyncio
+
+        asyncio.run(chat_service._generate_conversation_summary(conv["id"], _SummaryLLM()))
+
+        db = get_session()
+        try:
+            c = conversation_repo.get_conversation(db, me["id"], conv["id"])
+            assert c is not None
+            assert c.summary == "用户偏好短线，讨论过贵州茅台"
+        finally:
+            db.close()
+    finally:
+        _cleanup_users(uname)
+
+
+# ---- 8.2：token 预算 + usage 事件 ----
+def test_stream_chat_emits_usage_event(client: TestClient):
+    uname = _uname()
+    try:
+        token = _register(client, uname)
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+        fake = FakeLLMService(FakeChatModel(final_text="分析完成"))
+        events = _run_stream_chat(fake, user_id=me["id"], conversation_id=None, symbol=None, content="hi", run_type="custom")
+        usage = [e for e in events if e["type"] == "usage"]
+        assert usage, f"期望 usage 事件，实际 {[e['type'] for e in events]}"
+        assert usage[0]["prompt"] > 0
+        assert usage[0]["completion"] > 0
+        assert usage[0]["total"] == usage[0]["prompt"] + usage[0]["completion"]
+        assert events[-1]["type"] == "done"
+        assert events[-2]["type"] == "usage"  # usage 在 done 之前
+    finally:
+        _cleanup_users(uname)
+
+
+# ---- 8.6：生成→回测一键流程（strategy 分支）----
+def test_stream_chat_strategy_branch_saves_and_emits_ready(client: TestClient, monkeypatch):
+    from app.agent import chat_service as cs
+    from app.schemas.strategy import StrategyOutput, StrategyParams
+
+    out = StrategyOutput(
+        strategy_name="双均线策略",
+        description="金叉买死叉卖",
+        code="def initialize(context):\n    context.params['fast'] = 5\n\ndef on_bar(bar, context):\n    if bar['close'] > context.params['fast']:\n        context.buy(100)\n",
+        params=StrategyParams(entry={"fast": 5, "slow": 20}),
+        risk_warning="震荡市可能反复止损",
+    )
+
+    async def _fake_gen(description, llm_svc=None, structured_model=None):
+        return out
+
+    monkeypatch.setattr(cs, "generate_strategy", _fake_gen)
+
+    uname = _uname()
+    try:
+        token = _register(client, uname)
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+        fake = FakeLLMService(FakeChatModel(), available=True)
+        events = _run_stream_chat(fake, user_id=me["id"], conversation_id=None, symbol=None, content="双均线策略", run_type="strategy")
+        sr = [e for e in events if e["type"] == "strategy_ready"]
+        assert sr, f"期望 strategy_ready，实际 {[e['type'] for e in events]}"
+        assert sr[0]["strategy_id"] > 0
+        assert sr[0]["auto_backtest"] is True
+        assert events[-1]["type"] == "done"
+        # 策略已保存，可立即用于回测（id 有效）
+        rows = client.get("/api/v1/strategies", headers=_auth(token)).json()["data"]
+        assert any(s["id"] == sr[0]["strategy_id"] and s["title"] == "双均线策略" for s in rows)
+    finally:
+        _cleanup_users(uname)
+
+
+def test_stream_chat_strategy_branch_failure_hint(client: TestClient, monkeypatch):
+    from app.agent import chat_service as cs
+    from app.services.llm import LLMError
+
+    async def _fake_gen(description, llm_svc=None, structured_model=None):
+        raise LLMError("策略生成遇到问题，请尝试调整描述或基于模板创建。")
+
+    monkeypatch.setattr(cs, "generate_strategy", _fake_gen)
+
+    uname = _uname()
+    try:
+        token = _register(client, uname)
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+        fake = FakeLLMService(FakeChatModel(), available=True)
+        events = _run_stream_chat(fake, user_id=me["id"], conversation_id=None, symbol=None, content="生成策略", run_type="strategy")
+        deltas = [e["content"] for e in events if e["type"] == "delta"]
+        assert any("基于模板创建" in d for d in deltas)
+        assert events[-1]["type"] == "done"
+    finally:
+        _cleanup_users(uname)
+
+
+# ---- 8.7：会话标题自动生成 ----
+def test_stream_chat_generates_title_on_first_message(client: TestClient, monkeypatch):
+    from app.agent import chat_service as cs
+
+    async def _fake_title(conv_id, first_msg, llm_svc, queue=None):
+        db = get_session()
+        try:
+            conversation_repo.update_title(db, conv_id, "贵州茅台分析")
+            db.commit()
+        finally:
+            db.close()
+        if queue is not None:
+            await queue.put(("title", {"type": "title", "title": "贵州茅台分析", "conversation_id": conv_id}))
+        return "贵州茅台分析"
+
+    monkeypatch.setattr(cs, "_generate_conversation_title", _fake_title)
+
+    uname = _uname()
+    try:
+        token = _register(client, uname)
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+        fake = FakeLLMService(FakeChatModel(final_text="分析完成"), available=True)
+        events = _run_stream_chat(fake, user_id=me["id"], conversation_id=None, symbol=None, content="分析贵州茅台", run_type="custom")
+        title_evs = [e for e in events if e["type"] == "title"]
+        assert title_evs, f"期望 title 事件，实际 {[e['type'] for e in events]}"
+        assert title_evs[0]["title"] == "贵州茅台分析"
+        assert events[-1]["type"] == "title"  # title 在 done 之后
+        # DB 标题已更新
+        convs = client.get("/api/v1/conversations", headers=_auth(token)).json()["data"]
+        assert any(c["title"] == "贵州茅台分析" for c in convs)
+    finally:
+        _cleanup_users(uname)
+
+
+def test_stream_chat_no_title_on_followup_message(client: TestClient, monkeypatch):
+    from app.agent import chat_service as cs
+
+    called = []
+
+    async def _fake_title(conv_id, first_msg, llm_svc, queue=None):
+        called.append(conv_id)
+        if queue is not None:
+            await queue.put(("title", None))
+        return None
+
+    monkeypatch.setattr(cs, "_generate_conversation_title", _fake_title)
+
+    uname = _uname()
+    try:
+        token = _register(client, uname)
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+        fake = FakeLLMService(FakeChatModel(final_text="分析完成"), available=True)
+        # 第一条消息（新建会话）
+        conv = client.post("/api/v1/conversations", json={}, headers=_auth(token)).json()["data"]
+        _run_stream_chat(fake, user_id=me["id"], conversation_id=conv["id"], symbol=None, content="第一条消息", run_type="custom")
+        # 第二条消息（同会话，非首条）——不触发标题
+        _run_stream_chat(fake, user_id=me["id"], conversation_id=conv["id"], symbol=None, content="第二条消息", run_type="custom")
+        assert len(called) == 1  # 仅首条触发
+    finally:
+        _cleanup_users(uname)
 
 
 # ---- API：SSE 降级 ----

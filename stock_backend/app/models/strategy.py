@@ -15,6 +15,7 @@ class Conversation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title: Mapped[str] = mapped_column(String(128), nullable=False, default="新会话")
+    summary: Mapped[str | None] = mapped_column(Text)  # 长会话滑动窗口摘要（阶段八 8.1，≤200字）
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
 
@@ -30,6 +31,20 @@ class ChatMessage(Base):
     symbol_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("symbols.id", ondelete="SET NULL"))
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tokens: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
+
+
+class StrategyTemplate(Base):
+    """策略模板（阶段八 8.5）：内置经过验证的策略模板，供「基于模板创建」。"""
+
+    __tablename__ = "strategy_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    code: Mapped[str] = mapped_column(Text, nullable=False)
+    params_schema: Mapped[dict | None] = mapped_column(JSON)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
 
 

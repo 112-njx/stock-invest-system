@@ -75,6 +75,16 @@ class Settings(BaseSettings):
     LLM_RATE_LIMIT_RPM: int = 30  # 每分钟限流请求数
     LLM_TEMPERATURE: float = 0.7  # 默认采样温度
 
+    # ---- Token 预算控制（阶段八 8.2：发送前估算 token，超预算自动减轮）----
+    LLM_MAX_TOKENS: int = 65536  # 模型上下文上限（DeepSeek-chat 64K）
+    TOKEN_BUDGET_RATIO: float = 0.8  # 发送前 token 预算占比上限（80%）
+
+    # ---- 策略生成（阶段八 8.4：校验失败自动重试）----
+    STRATEGY_GEN_MAX_RETRIES: int = 2  # 策略校验失败最多重试次数
+
+    # ---- 会话标题自动生成（阶段八 8.7）----
+    TITLE_WAIT_TIMEOUT: float = 3.0  # done 后等待标题生成的最长时间（秒，best-effort）
+
     # ---- SSE 流式稳定性（阶段五：心跳/三级超时/delta 断点续传缓存）----
     SSE_KEEPALIVE_INTERVAL: int = 15  # SSE 空闲时每 N 秒发注释行 :keepalive，防 Nginx proxy_read_timeout
     SSE_FIRST_TOKEN_TIMEOUT: float = 30.0  # 首字超时（LLM 未返回首个输出即超时，秒）

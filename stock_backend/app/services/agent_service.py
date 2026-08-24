@@ -108,8 +108,19 @@ def delete_agent(db: Session, user_id: int, agent_id: int) -> None:
 
 
 # ---- Agent 运行记录 / 记忆文件（5.5 补齐 GET /agent/runs、/memory/files）----
-def list_runs(db: Session, user_id: int) -> list[AgentRun]:
-    return agent_repo.list_runs(db, user_id)
+def list_runs(
+    db: Session,
+    user_id: int,
+    conversation_id: int | None = None,
+    page: int = 1,
+    size: int = 20,
+) -> tuple[list[AgentRun], int]:
+    """分页返回运行记录（阶段七 7.3：支持 conversation_id 筛选），返回 (rows, total)。"""
+    page = max(1, page)
+    size = max(1, min(size, 100))
+    rows = agent_repo.list_runs(db, user_id, conversation_id=conversation_id, offset=(page - 1) * size, limit=size)
+    total = agent_repo.count_runs(db, user_id, conversation_id)
+    return rows, total
 
 
 def get_run(db: Session, user_id: int, run_id: int) -> AgentRun:

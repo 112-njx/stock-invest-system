@@ -1,11 +1,12 @@
-"""Agent 运行记录 / 本地记忆文件 API（阶段五补齐：前端已对接但后端缺失的编排接口）。
+"""Agent 运行记录 / 本地记忆文件 API（阶段五补齐 + 阶段七 7.3 完善）。
 
-- GET /api/v1/agent/runs          运行历史（前端 AgentRunsDialog）
+- GET /api/v1/agent/runs          运行历史（分页 + conversation_id 筛选，前端 AgentRunsDialog）
 - GET /api/v1/agent/runs/{id}     运行详情（内嵌 agent_steps）
+- GET /api/v1/agent/runs/{id}/steps 运行节点步骤（node/status/summary/content/duration_ms）
 - GET /api/v1/memory/files        本地记忆文件列表（前端 MemoryFilesDialog）
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -18,9 +19,22 @@ router = APIRouter(prefix="/api/v1", tags=["agent-ops"])
 
 
 @router.get("/agent/runs")
-def list_agent_runs(current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
-    rows = agent_service.list_runs(db, current.id)
-    return ok(data=[AgentRunOut.model_validate(r).model_dump(mode="json") for r in rows])
+def list_agent_runs(
+    conversation_id: int | None = Query(None, ge=1, description="按会话筛选"),
+    page: int = Query(1, ge=1, description="页码"),
+    size: int = Query(20, ge=1, le=100, description="每页条数"),
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    rows, total = agent_service.list_runs(db, current.id, conversation_id=conversation_id, page=page, size=size)
+    return ok(
+        data={
+            "items": [AgentRunOut.model_validate(r).model_dump(mode="json") for r in rows],
+            "total": total,
+            "page": page,
+            "size": size,
+        }
+    )
 
 
 @router.get("/agent/runs/{run_id}")
@@ -37,6 +51,17 @@ def get_agent_run(
             "steps": [AgentStepOut.model_validate(s).model_dump(mode="json") for s in steps],
         }
     )
+
+
+@router.get("/agent/runs/{run_id}/steps")
+def get_agent_run_steps(
+    run_id: int,
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    run = agent_service.get_run(db, current.id, run_id)  # 校验归属（越权 404）
+    steps = agent_service.list_steps(db, run.id)
+    return ok(data=[AgentStepOut.model_validate(s).model_dump(mode="json") for s in steps])
 
 
 @router.get("/memory/files")

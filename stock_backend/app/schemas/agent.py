@@ -43,7 +43,10 @@ class AgentOut(BaseModel):
 
 
 class AgentRunOut(BaseModel):
-    """Agent 运行记录（GET /agent/runs，供前端 AgentRunsDialog）。"""
+    """Agent 运行记录（GET /agent/runs，供前端 AgentRunsDialog）。
+
+    阶段七 7.3：final_decision 映射 output、total_duration 映射 duration_ms。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -55,6 +58,8 @@ class AgentRunOut(BaseModel):
     status: str
     input: str | None = None
     output: str | None = None
+    final_decision: str | None = Field(None, validation_alias="output", description="最终决策（=output）")
+    total_duration: int | None = Field(None, validation_alias="duration_ms", description="运行总耗时 ms")
     tokens: int | None = None
     error: str | None = None
     created_at: datetime
@@ -62,15 +67,19 @@ class AgentRunOut(BaseModel):
 
 
 class AgentStepOut(BaseModel):
-    """Agent 运行步骤（GET /agent/runs/{id} 内嵌）。"""
+    """Agent 运行步骤（GET /agent/runs/{id}/steps 与详情内嵌）。"""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     run_id: int
     step_name: str
+    node: str = Field(None, validation_alias="step_name", description="节点名（=step_name）")
     agent_role: str
+    status: str = "done"
     content: str | None = None
+    summary: str | None = None
+    duration_ms: int | None = None
     meta: dict[str, Any] | None = None
     created_at: datetime
 

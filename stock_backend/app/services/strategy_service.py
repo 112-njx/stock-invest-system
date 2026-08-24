@@ -3,8 +3,20 @@
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
-from app.models.strategy import TradingStrategy
+from app.models.strategy import StrategyTemplate, TradingStrategy
 from app.repositories import strategy_repo
+
+
+# ---- 策略模板（阶段八 8.5：全局模板，无 user 隔离）----
+def list_templates(db: Session) -> list[StrategyTemplate]:
+    return strategy_repo.list_templates(db)
+
+
+def get_template(db: Session, template_id: int) -> StrategyTemplate:
+    row = strategy_repo.get_template(db, template_id)
+    if row is None:
+        raise ApiError(status_code=404, code=40421, msg="策略模板不存在")
+    return row
 
 
 def create_strategy(db: Session, user_id: int, title: str, description: str | None, code: str | None, params: dict | None, status: str) -> TradingStrategy:

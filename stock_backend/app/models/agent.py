@@ -39,6 +39,7 @@ class AgentRun(Base):
     input: Mapped[str | None] = mapped_column(Text)
     output: Mapped[str | None] = mapped_column(Text)
     tokens: Mapped[int | None] = mapped_column(Integer)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)  # 整次运行总耗时（阶段七 7.3）
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
@@ -52,6 +53,9 @@ class AgentStep(Base):
     step_name: Mapped[str] = mapped_column(String(64), nullable=False)
     agent_role: Mapped[str] = mapped_column(String(32), nullable=False)  # analyst/researcher/manager/trader
     content: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(String(500))  # 节点输出摘要（阶段七 7.1）
+    duration_ms: Mapped[int | None] = mapped_column(Integer)  # 节点耗时（阶段七 7.1）
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="done")  # running/done/failed（阶段七 7.2）
     meta: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
 

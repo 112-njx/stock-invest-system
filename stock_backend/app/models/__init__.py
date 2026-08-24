@@ -5,7 +5,7 @@ from .base import Base
 from .kline import KLINE_MODELS, Kline1d, Kline1mon, Kline1w, Kline15m
 from .ops import SyncTask, TaskLog
 from .snapshot import EtfPremium, IndexValuation, SnapshotRealtime, StockFundamental
-from .strategy import BacktestResult, BacktestTask, ChatMessage, Conversation, TradingStrategy
+from .strategy import BacktestResult, BacktestTask, ChatMessage, Conversation, StrategyTemplate, TradingStrategy
 from .symbol import Symbol
 from .user import SupportResistance, User, UserMemoryFile, UserWatchlist
 
@@ -27,6 +27,7 @@ __all__ = [
     "MemoryChunk",
     "SnapshotRealtime",
     "StockFundamental",
+    "StrategyTemplate",
     "SupportResistance",
     "Symbol",
     "SyncTask",

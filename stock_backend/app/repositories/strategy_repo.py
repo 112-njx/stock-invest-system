@@ -3,7 +3,16 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.strategy import TradingStrategy
+from app.models.strategy import StrategyTemplate, TradingStrategy
+
+
+# ---- strategy_templates（阶段八 8.5）----
+def list_templates(db: Session) -> list[StrategyTemplate]:
+    return list(db.scalars(select(StrategyTemplate).order_by(StrategyTemplate.sort_order, StrategyTemplate.id)))
+
+
+def get_template(db: Session, template_id: int) -> StrategyTemplate | None:
+    return db.get(StrategyTemplate, template_id)
 
 
 def create_strategy(

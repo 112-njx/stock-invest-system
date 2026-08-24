@@ -43,28 +43,73 @@ def test_agent_runs_list_and_detail(client: TestClient):
         uid = user["user"]["id"]
         h = _auth(user["token"])
 
-        # 初始空列表
-        assert client.get("/api/v1/agent/runs", headers=h).json()["data"] == []
+        # 初始空列表（分页信封）
+        assert client.get("/api/v1/agent/runs", headers=h).json()["data"]["items"] == []
 
         # 造一条运行记录 + 步骤
         db = get_session()
         try:
             run = agent_repo.create_run(db, uid, run_type="diagnostic", input_text="分析趋势")
-            agent_repo.add_step(db, run.id, "analyst", "analyst", "技术面看多")
-            agent_repo.finish_run(db, run, status="success", output="结论：持有", tokens=120)
+            agent_repo.add_step(db, run.id, "technical_analyst", "analyst", "技术面看多", summary="趋势看多", duration_ms=2100)
+            agent_repo.finish_run(db, run, status="success", output="结论：持有", tokens=120, duration_ms=3500)
             db.commit()
             run_id = run.id
         finally:
             db.close()
 
-        rows = client.get("/api/v1/agent/runs", headers=h).json()["data"]
-        assert any(r["id"] == run_id and r["status"] == "success" for r in rows)
+        data = client.get("/api/v1/agent/runs", headers=h).json()["data"]
+        assert data["total"] == 1
+        row = next(r for r in data["items"] if r["id"] == run_id)
+        assert row["status"] == "success"
+        assert row["final_decision"] == "结论：持有"  # output 别名
+        assert row["total_duration"] == 3500  # duration_ms 别名
 
         detail = client.get(f"/api/v1/agent/runs/{run_id}", headers=h).json()["data"]
         assert detail["output"] == "结论：持有"
         assert detail["tokens"] == 120
+        assert detail["total_duration"] == 3500
         assert len(detail["steps"]) == 1
-        assert detail["steps"][0]["step_name"] == "analyst"
+        assert detail["steps"][0]["step_name"] == "technical_analyst"
+
+        # 7.3 新增：steps 端点（node/status/summary/content/duration_ms）
+        steps = client.get(f"/api/v1/agent/runs/{run_id}/steps", headers=h).json()["data"]
+        assert len(steps) == 1
+        assert steps[0]["node"] == "technical_analyst"
+        assert steps[0]["status"] == "done"
+        assert steps[0]["summary"] == "趋势看多"
+        assert steps[0]["content"] == "技术面看多"
+        assert steps[0]["duration_ms"] == 2100
+    finally:
+        _cleanup_users(uname)
+
+
+def test_agent_runs_pagination_and_conversation_filter(client: TestClient):
+    uname = _uname()
+    try:
+        user = _register(client, uname)
+        uid = user["user"]["id"]
+        h = _auth(user["token"])
+
+        # 两个会话各造一条 run
+        c1 = client.post("/api/v1/conversations", json={}, headers=h).json()["data"]["id"]
+        c2 = client.post("/api/v1/conversations", json={}, headers=h).json()["data"]["id"]
+        db = get_session()
+        try:
+            r1 = agent_repo.create_run(db, uid, run_type="custom", input_text="x", conversation_id=c1)
+            r2 = agent_repo.create_run(db, uid, run_type="diagnostic", input_text="y", conversation_id=c2)
+            db.commit()
+            r1_id, r2_id = r1.id, r2.id
+        finally:
+            db.close()
+
+        # 按 conversation_id 筛选
+        data = client.get(f"/api/v1/agent/runs?conversation_id={c1}", headers=h).json()["data"]
+        assert data["total"] == 1 and data["items"][0]["id"] == r1_id
+
+        # 分页：page=1&size=1 只返回 1 条，total=2
+        data = client.get("/api/v1/agent/runs?page=1&size=1", headers=h).json()["data"]
+        assert data["total"] == 2 and len(data["items"]) == 1
+        assert data["items"][0]["id"] in (r1_id, r2_id)
     finally:
         _cleanup_users(uname)
 
@@ -84,8 +129,10 @@ def test_agent_runs_ownership_and_auth(client: TestClient):
 
         # 越权访问他人运行记录 404
         assert client.get(f"/api/v1/agent/runs/{run_id}", headers=_auth(u2["token"])).status_code == 404
+        assert client.get(f"/api/v1/agent/runs/{run_id}/steps", headers=_auth(u2["token"])).status_code == 404
         # 未登录 401
         assert client.get("/api/v1/agent/runs").status_code == 401
+        assert client.get("/api/v1/agent/runs/{run_id}/steps").status_code == 401
         assert client.get("/api/v1/memory/files").status_code == 401
     finally:
         _cleanup_users(uname1, uname2)
