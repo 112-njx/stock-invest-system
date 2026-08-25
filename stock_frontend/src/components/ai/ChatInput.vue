@@ -7,11 +7,15 @@
  * ④ 大文本输入框（Enter 发送 / Shift+Enter 换行）
  * ⑤ 底部操作栏：左侧风险提示 + 右侧「发送」
  */
+import { ref } from 'vue'
 import { useAiStore } from '@/stores/ai'
 import SymbolPicker from './SymbolPicker.vue'
+import StrategyTemplatesDialog from './StrategyTemplatesDialog.vue'
 
 const ai = useAiStore()
 const emit = defineEmits<{ (e: 'send'): void }>()
+
+const showTemplates = ref(false)
 
 function onSend() {
   if (!ai.inputText.trim() || ai.streaming || ai.retryCountdown > 0) return
@@ -55,6 +59,7 @@ function closeStrategyModule() {
       <div class="sm__top">
         <span class="sm__icon">▦</span>
         <span class="sm__title">你希望策略怎么交易？</span>
+        <button class="sm__template" @click="showTemplates = true">从模板创建</button>
         <span class="sm__tag">可直接发送</span>
         <button class="sm__close" title="关闭策略模块" @click="closeStrategyModule">×</button>
       </div>
@@ -114,6 +119,18 @@ function closeStrategyModule() {
         {{ ai.retryCountdown > 0 ? `重试（${ai.retryCountdown}s）` : '发送' }}
       </button>
     </div>
+
+    <!-- Token 用量（7.1）：会话累计，悬停看 prompt/completion 分项 -->
+    <div
+      v-if="ai.tokenUsage.total > 0"
+      class="ci-tokens"
+      :title="`prompt: ${ai.tokenUsage.prompt.toLocaleString()} · completion: ${ai.tokenUsage.completion.toLocaleString()}`"
+    >
+      本次对话已用 {{ ai.tokenUsage.total.toLocaleString() }} tokens
+    </div>
+
+    <!-- 策略模板库（7.4） -->
+    <StrategyTemplatesDialog v-if="showTemplates" @close="showTemplates = false" />
   </div>
 </template>
 
@@ -201,6 +218,18 @@ function closeStrategyModule() {
 .sm__title {
   font-size: 13px;
   font-weight: 600;
+}
+.sm__template {
+  height: 22px;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 11px;
+  transition: background-color 0.15s;
+}
+.sm__template:hover {
+  background: var(--accent-soft);
 }
 .sm__tag {
   margin-left: auto;
@@ -311,6 +340,14 @@ function closeStrategyModule() {
 .ci-send.is-disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+/* Token 用量（7.1） */
+.ci-tokens {
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
 }
 /* RATE_LIMITED 黄色提示（4.3） */
 .ci-rate {

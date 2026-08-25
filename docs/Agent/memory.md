@@ -2,7 +2,7 @@
 
 > 每次开启 Agent 先阅读最新记忆内容，快速重新上手。
 
-保存时间：2026-08-22（V0.2 第二波后端阶段五+六完成时更新）
+保存时间：2026-08-25（V0.2 第三波前端阶段六+七完成时更新）
 记忆内容：
 
 1. 项目定位：量化交易软件——选股买卖决策 + DeepSeek Agent 辅助（主观交易经验转量化因子/回测），Agent 记忆本地存储。
@@ -69,7 +69,7 @@
    - 需人工配置：`EMBEDDING_MODEL=minilm`（默认）+ 首次联网下载模型（~118MB）+ 切换后跑 rebuild_embeddings.py（见 roadmap.md 阶段六说明）。
    - 关键决策：roadmap 6.1 原 all-MiniLM-L6-v2 为英文模型中文语义失效（实测相似度全 0.85~1.0），经确认改用多语言 MiniLM-L12（384维、中文语义、118MB，放宽≤50MB 验收为≤120MB）。
 
-12. 当前状态：V0.2 第一波后端+前端已完成，第二波后端（阶段五/六）+ 前端（阶段四/五）已全部完成。下一波（第三波：多智能体/长会话）开发前必须阅读 docs/Agent/enhanced_prompt.md（强制流程）+ docs/Agent/Reference_guide_v0.2.md（波次拓扑）+ docs/Agent/project_constraints_v0.2.md（遗留问题+对接清单）。
+12. 当前状态：V0.2 第一波/第二波/第三波均已全部完成（后端阶段四~八 + 前端阶段一~七）。第四波（全链路联调打磨）待开发。下一波开发前必须阅读 docs/Agent/enhanced_prompt.md（强制流程）+ docs/Agent/Reference_guide_v0.2.md（波次拓扑）+ docs/Agent/project_constraints_v0.2.md（遗留问题+对接清单）。
 
 13. V0.2 第二波前端（AI基础加固）已完成（2026-08-23，typecheck/lint/build 全绿），前端阶段四+五：
    - 前端阶段四（AI流式稳定性）：
@@ -89,3 +89,17 @@
     - 关键决策/修复：① SSE 场景 token 用量用 usage 事件（响应头不可行，经确认）；② run_type=strategy 新增 chat 内深度分支（经确认）；③ roadmap 8.3 的 on_bar 签名"(ctx,bar)"与引擎实际(bar,context)不符，按引擎位置调用只校验参数个数=2；④ RestrictedPython 拒绝 `_` 前缀函数名，模板 helper 改 ema/rsv；⑤ 修复 astream_events 高负载下 on_chain_end 乱序致 agent_steps 逆序落库，改回 astream(stream_mode="updates") 确定性产出。
     - 需人工配置：LLM_MAX_TOKENS/TOKEN_BUDGET_RATIO/STRATEGY_GEN_MAX_RETRIES/TITLE_WAIT_TIMEOUT（均有默认值，见 roadmap.md 第三波说明）。
     - 后续：前端阶段六（多智能体可视化）+ 阶段七（长会话+策略生成体验）待开发，后端能力对接见 api-docs.md（agent_step/usage/strategy_ready/title 事件 + agent/runs + strategy-templates 端点）。
+
+15. V0.2 第三波前端（AI高级功能）已完成（2026-08-25，typecheck/lint/build 全绿），阶段六 + 阶段七：
+    - 阶段六（多智能体可视化）：
+      - 6.1 深度分析时间线：api/ai.ts 扩展 SSEEvent（agent_step/usage/strategy_ready/title）+ AGENT_NODE_ORDER/LABEL/TimelineNode 类型；stores/ai.ts 新增 timeline 状态（agent_step 事件驱动 running/done/failed，delta 带 node 累积 content）；新增 AgentTimeline.vue 横向 5 节点时间线（等待灰/运行蓝旋转/完成绿勾+耗时/失败红感叹号，连线已完成变绿）；ChatMessages 气泡上方渲染。
+      - 6.2 节点输出展开：完成节点点击展开完整输出（markdown+复制）、失败节点显示 error+「该节点使用默认观点」、结论区全部完成后显示（有失败节点黄色「部分节点异常，结论仅供参考」）。
+      - 6.3 运行历史回看：fetchAgentRuns 改分页 AgentRunPage + 新增 fetchAgentRunSteps；AgentRunsDialog 重构（分页列表含 final_decision 结论/耗时/时间，点击复用 AgentTimeline 回看决策链）。保持弹窗式不改布局。
+    - 阶段七（长会话+策略生成体验）：
+      - 7.1 Token 用量：SSE usage 事件累计到 store.tokenUsage，ChatInput 底部「本次对话已用 X tokens」悬停看 prompt/completion 分项（后端响应头不可行，经确认用 usage 事件）。
+      - 7.2 会话标题：SSE title 事件按 conversation_id 更新 J 区列表标题，无需刷新。
+      - 7.3 策略校验状态 + 7.5 生成→回测内嵌：strategy_ready 事件 → strategyReady 状态 + 刷新 M 区 + 有标的自动回测（runAutoBacktest：POST /backtest→2s 轮询→取结果）；ChatMessages 策略结果区「生成中→校验通过/失败」+ 内嵌回测结果卡片（胜率/盈亏比/最大回撤/年化 4 数字 + 查看详情）。
+      - 7.4 策略模板库：fetchStrategyTemplates/Template + StrategyTemplatesDialog（5 模板卡片，点击创建草稿→打开 N 区编辑器）；ChatInput 策略模块新增「从模板创建」入口。
+    - 关键决策/修复：① 修复前置 bug——startStreaming 清空 strategyOutput 导致旧策略按钮从未生效（改为 AIView.send 先 clearStrategyOutput）；② 方案A降级——策略校验无逐级重试/错误行号展示（后端单次非流式调用）、无资金曲线缩略图（后端不返回 equity_curve）；③ 运行记录保持弹窗式、标的名称后端仅返回 symbol_id 前端以 input 文本承载；④ 回测区间用后端默认（未传 start/end，非 roadmap「近1年」，与现有 N 区回测一致）。
+    - 遗留待确认：MStrategyPanel.vue 为第二波遗留死文件（已由 SessionSidebar 取代），本轮未删；api/ai.ts 的 generateStrategy()（POST /strategies/generate）本轮起无调用方（策略生成已并入 chat SSE），保留未删。
+    - 第四波（全链路联调打磨）为下一波。

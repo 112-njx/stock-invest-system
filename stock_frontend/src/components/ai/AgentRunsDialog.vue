@@ -1,27 +1,31 @@
 <script setup lang="ts">
 /**
- * 4.8.4 · Agent 运行记录弹窗：
- * 列表展示 GET /api/v1/agent/runs，点击单条可查看完整 agent_steps 各节点原始输出。
- * 后端接口尚待实现（编排缺失，见 fixed.md），请求失败时展示占位说明，接口就绪后自动生效。
+ * 阶段六 6.3 · Agent 运行记录弹窗（M 区「运行记录」菜单项）：
+ * 分页展示 GET /api/v1/agent/runs（标的/结论/耗时/时间），点击单条复用 AgentTimeline
+ * 回看完整 5 节点决策链（历史数据，非 SSE 实时）。
+ * 保持现有弹窗式交互（界面固定约束，不改造为 N 区标签页）。
  */
-import { onMounted, ref } from 'vue'
-import { fetchAgentRunDetail, fetchAgentRuns, type AgentRun, type AgentStep } from '@/api/ai'
+import { computed, onMounted, ref } from 'vue'
+import {
+  fetchAgentRuns,
+  fetchAgentRunSteps,
+  type AgentRun,
+  type AgentStep,
+  type TimelineNode,
+} from '@/api/ai'
+import AgentTimeline from '@/components/ai/AgentTimeline.vue'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const runs = ref<AgentRun[]>([])
 const loading = ref(true)
-const available = ref(true)
-const detail = ref<(AgentRun & { steps?: AgentStep[] }) | null>(null)
-const detailLoading = ref(false)
+const page = ref(1)
+const size = 20
+const total = ref(0)
 
-const NODE_LABEL: Record<string, string> = {
-  technical_analyst: '技术分析师',
-  bull_researcher: '看多研究员',
-  bear_researcher: '看空研究员',
-  risk_manager: '风控经理',
-  trader: '交易决策',
-}
+const detail = ref<AgentRun | null>(null)
+const detailNodes = ref<TimelineNode[]>([])
+const detailLoading = ref(false)
 
 const RUN_TYPE_LABEL: Record<string, string> = {
   diagnose: '诊断符号',
@@ -31,33 +35,63 @@ const RUN_TYPE_LABEL: Record<string, string> = {
   custom: '对话',
 }
 
-const STATUS_TEXT: Record<string, string> = { queued: '排队中', running: '运行中', success: '成功', failed: '失败' }
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size)))
 
-onMounted(async () => {
+async function load() {
+  loading.value = true
   try {
-    runs.value = await fetchAgentRuns()
+    const res = await fetchAgentRuns({ page: page.value, size })
+    runs.value = res.items
+    total.value = res.total
   } catch {
-    available.value = false
+    runs.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
-})
+}
 
-function stepLabel(s: AgentStep): string {
-  if (s.step_name.startsWith('tool:')) return `工具：${s.step_name.slice(5)}`
-  if (s.step_name.startsWith('tool_result:')) return '工具结果'
-  return NODE_LABEL[s.step_name] ?? s.step_name
+function nextPage() {
+  if (page.value >= totalPages.value) return
+  page.value++
+  void load()
+}
+
+function prevPage() {
+  if (page.value <= 1) return
+  page.value--
+  void load()
+}
+
+/** AgentStep → 时间线节点（历史步骤均为 done/failed；error 存于 meta.error） */
+function stepToNode(s: AgentStep): TimelineNode {
+  return {
+    node: s.node || s.step_name,
+    status: s.status === 'failed' ? 'failed' : 'done',
+    summary: s.summary ?? undefined,
+    content: s.content ?? undefined,
+    duration_ms: s.duration_ms ?? undefined,
+    error: typeof s.meta?.error === 'string' ? (s.meta.error as string) : undefined,
+  }
 }
 
 async function openDetail(run: AgentRun) {
+  detail.value = run
+  detailNodes.value = []
   detailLoading.value = true
   try {
-    detail.value = await fetchAgentRunDetail(run.id)
+    const steps = await fetchAgentRunSteps(run.id)
+    detailNodes.value = steps.map(stepToNode)
   } catch {
-    detail.value = { ...run, steps: [] }
+    detailNodes.value = []
   } finally {
     detailLoading.value = false
   }
+}
+
+function formatDuration(ms?: number | null): string {
+  if (ms == null) return '--'
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
 }
 
 function formatTime(iso?: string): string {
@@ -66,6 +100,8 @@ function formatTime(iso?: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
+
+onMounted(() => void load())
 </script>
 
 <template>
@@ -78,42 +114,39 @@ function formatTime(iso?: string): string {
 
       <div class="dialog__body">
         <div v-if="loading" class="dlg-empty">加载中…</div>
-        <div v-else-if="!available" class="dlg-empty">
-          <p>运行记录接口（GET /api/v1/agent/runs）后端尚未实现，暂无可展示内容。</p>
-          <p class="dlg-empty__hint">深度分析（诊断/交易计划/机会雷达）执行的技术分析→多空辩论→风控→决策步骤将记录于此，待后端补齐后自动展示。</p>
-        </div>
         <div v-else-if="!runs.length" class="dlg-empty">暂无运行记录</div>
         <div v-else class="run-list">
           <div v-for="run in runs" :key="run.id" class="run-item" @click="openDetail(run)">
             <div class="run-item__head">
               <span class="run-item__type">{{ RUN_TYPE_LABEL[run.run_type ?? 'custom'] ?? run.run_type }}</span>
-              <span class="run-item__status" :class="`is-${run.status}`">{{ STATUS_TEXT[run.status ?? ''] ?? run.status }}</span>
+              <span v-if="run.final_decision" class="run-item__decision">{{ run.final_decision }}</span>
             </div>
             <div class="run-item__input">{{ run.input }}</div>
             <div class="run-item__meta">
-              {{ formatTime(run.created_at) }}
-              <template v-if="run.tokens"> · {{ run.tokens }} tokens</template>
+              <span>耗时 {{ formatDuration(run.total_duration) }}</span>
+              <span class="run-item__dot-sep">·</span>
+              <span>{{ formatTime(run.created_at) }}</span>
+              <span v-if="run.status === 'failed'" class="run-item__failed">失败</span>
             </div>
           </div>
         </div>
 
-        <!-- 运行详情：agent_steps 时间线 -->
+        <!-- 分页 -->
+        <div v-if="totalPages > 1" class="run-pager">
+          <button class="run-pager__btn" :disabled="page <= 1" @click="prevPage">上一页</button>
+          <span class="run-pager__info">{{ page }} / {{ totalPages }}</span>
+          <button class="run-pager__btn" :disabled="page >= totalPages" @click="nextPage">下一页</button>
+        </div>
+
+        <!-- 详情：复用 AgentTimeline 回看决策链 -->
         <div v-if="detail" class="run-detail">
           <div class="run-detail__bar">
-            <span>节点输出</span>
+            <span>决策链（{{ detailNodes.length }} 节点）</span>
             <button class="run-detail__close" @click="detail = null">收起</button>
           </div>
           <div v-if="detailLoading" class="dlg-empty">加载中…</div>
-          <div v-else-if="!detail.steps?.length" class="dlg-empty">该记录暂无步骤输出</div>
-          <div v-else class="run-steps">
-            <div v-for="(s, i) in detail.steps" :key="i" class="run-step">
-              <span class="run-step__dot" />
-              <div class="run-step__body">
-                <div class="run-step__name">{{ stepLabel(s) }}</div>
-                <pre class="run-step__content">{{ s.content }}</pre>
-              </div>
-            </div>
-          </div>
+          <div v-else-if="!detailNodes.length" class="dlg-empty">该记录暂无步骤输出</div>
+          <AgentTimeline v-else :nodes="detailNodes" />
         </div>
       </div>
     </div>
@@ -131,7 +164,7 @@ function formatTime(iso?: string): string {
   background: rgba(0, 0, 0, 0.45);
 }
 .dialog {
-  width: 560px;
+  width: 640px;
   max-width: 92vw;
   max-height: 82vh;
   display: flex;
@@ -177,10 +210,6 @@ function formatTime(iso?: string): string {
   font-size: 13px;
   color: var(--text-muted);
 }
-.dlg-empty__hint {
-  margin-top: 8px;
-  font-size: 12px;
-}
 .run-list {
   display: flex;
   flex-direction: column;
@@ -204,21 +233,19 @@ function formatTime(iso?: string): string {
 .run-item__type {
   font-size: 12px;
   font-weight: 600;
+  color: var(--text-secondary);
 }
-.run-item__status {
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--bg-panel-2);
-  border-radius: 3px;
-  padding: 0 6px;
-}
-.run-item__status.is-success {
+.run-item__decision {
+  flex: none;
+  max-width: 60%;
+  font-size: 12px;
   color: var(--down);
   background: var(--down-soft);
-}
-.run-item__status.is-failed {
-  color: var(--up);
-  background: var(--up-soft);
+  border-radius: 3px;
+  padding: 1px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .run-item__input {
   margin-top: 4px;
@@ -230,7 +257,48 @@ function formatTime(iso?: string): string {
 }
 .run-item__meta {
   margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
+  color: var(--text-muted);
+}
+.run-item__dot-sep {
+  color: var(--text-muted);
+}
+.run-item__failed {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--up);
+  background: var(--up-soft);
+  border-radius: 3px;
+  padding: 0 6px;
+}
+.run-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.run-pager__btn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+.run-pager__btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.run-pager__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.run-pager__info {
+  font-size: 12px;
   color: var(--text-muted);
 }
 .run-detail {
@@ -249,47 +317,5 @@ function formatTime(iso?: string): string {
 .run-detail__close {
   font-size: 12px;
   color: var(--accent);
-}
-.run-steps {
-  border-left: 2px solid var(--border);
-  padding-left: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.run-step {
-  display: flex;
-  gap: 8px;
-}
-.run-step__dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--down);
-  margin-top: 5px;
-}
-.run-step__body {
-  flex: 1;
-  min-width: 0;
-}
-.run-step__name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-.run-step__content {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  background: var(--bg-panel-2);
-  border-radius: 4px;
-  padding: 8px;
-  margin-top: 4px;
-  max-height: 180px;
-  overflow-y: auto;
-  font-family: inherit;
 }
 </style>

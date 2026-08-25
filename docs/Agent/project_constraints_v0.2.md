@@ -8,48 +8,6 @@
 
 ## 一、已知遗留问题
 
-### 2. K线 ts / 快照 updated_at 列为 timestamp without time zone（naive）
-- **状态**：未解决，代码层用 as_utc 归一规避
-- **影响范围**：所有涉及时间比较、缓存失效、WS增量推送、数据新鲜度计算的开发
-- **说明**：ORM 声明 `tz=True` 但实际 PostgreSQL 列为 naive（迁移 0001 遗留）。当前在比较/序列化边界用 `as_utc()` 归一，未改表结构（改动面大、风险高）。
-- **处理建议**：若后续统一为 timestamptz，需另做迁移评估，涉及所有时间字段的存量数据转换。开发中涉及时间比较时，必须调用 `as_utc()` 归一后再比较，禁止直接比较 naive 和 aware datetime。
-
-### 3. WS 推送未做 updated_at 变化去重
-- **状态**：未解决，当前由订阅集合过滤
-- **影响范围**：前端WS接入、WS优化
-- **说明**：roadmap 2.2 建议"对比 updated_at 变化仅推更新的"，当前实现是 realtime_poll 每轮写入即发布、由订阅集合过滤（每5s一轮，量小可接受）。
-- **处理建议**：如需精确去重，可在 publisher 层加"价格变化才发布"逻辑，或前端收到后自行 diff。当前不影响功能正确性，仅可能有少量冗余推送。
-
-### 4. WS 依赖跨进程桥接（Celery worker 发布，API 进程监听转发）
-- **状态**：设计如此，非bug；前端降级逻辑已实现（V0.2第一波前端阶段二）
-- **影响范围**：前端WS接入、本地开发调试
-- **说明**：realtime_poll 在 Celery worker 进程运行，通过 Redis pub/sub 发布；API 进程监听 Redis 频道后转发给 WebSocket 客户端。单进程本地开发（仅 uvicorn，无 worker/beat）时不会主动产生行情推送。
-- **处理建议**：本地开发WS功能时，必须同时启动 Celery worker + beat，或前端降级为 HTTP 轮询（7s间隔）。前端 wsClient 已实现指数退避重连（1s→30s）+ useSnapshotPolling 自动检测WS连接状态（连上停轮询、断线自动恢复轮询），断线降级已落地。
-
-### 5. catalog_sync 手动端点在无 worker 环境任务停留 queued
-- **状态**：设计如此，非bug
-- **影响范围**：涉及 Celery 任务的开发、本地调试
-- **说明**：`POST /api/v1/admin/catalog/sync` 会真实入队，但如果没有启动 Celery worker，任务会停留在 queued 状态不执行。
-- **处理建议**：本地调试涉及 Celery 异步任务的功能时，必须启动 worker。生产环境 worker 常驻运行，无此问题。
-
-### 6. WS 推送 snapshot 消息仅含价格字段（无元数据）
-- **状态**：未解决，前端采用 merge 策略规避
-- **影响范围**：前端WS接入、快照数据渲染
-- **说明**：后端 WS 推送的 `{"type":"snapshot","data":{"<symbol_id>":{...}}}` 内层对象仅包含12个价格字段（price/change/change_pct/open/high/low/pre_close/volume/amount/turnover/amplitude/updated_at），不包含 code/name/type/extra/data_age_seconds 等元数据字段。前端 wsStore.handleSnapshot 采用 merge 策略：以已有快照为基础，仅更新价格字段，保留元数据。
-- **处理建议**：若后续后端推送完整快照对象，前端可改为直接替换而非 merge。当前 merge 策略在标的首次加载前（snapshots 中无该标的）会丢弃推送数据，需确保 HTTP 首屏加载先于 WS 推送到达（当前架构下 HTTP 加载在 onMounted 同步执行，WS 连接建立有延迟，时序安全）。
-
-### 7. BroadcastChannel 多标签页 leader 选举接管延迟约5秒
-- **状态**：未解决，可接受
-- **影响范围**：多标签页同时打开行情页的场景
-- **说明**：wsClient 采用 BroadcastChannel + localStorage 标记实现多标签页单 WS 连接：leader 标签页持有真实 WS 连接并通过 BroadcastChannel 广播消息，follower 标签页仅监听 BroadcastChannel。leader 标签页通过 localStorage 心跳标记（每3s更新），follower 检测到心跳超过5s未更新则接管成为新 leader。leader 标签页异常关闭（如浏览器崩溃、进程被杀）时，其他标签页需等待约5s才能检测到并接管，期间无实时推送（但 HTTP 轮询降级已兜底）。
-- **处理建议**：5s 接管延迟在多标签页场景下可接受（HTTP 轮询兜底），无需优化。若需更快接管，可缩短心跳检测间隔，但会增加 localStorage 写入频率。
-
-### 8. 关注列表同步失败无专用重试端点
-- **状态**：未解决，前端采用重新添加（幂等）规避
-- **影响范围**：前端阶段三关注列表同步状态展示
-- **说明**：后端关注列表添加时自动触发 kline_init 异步任务，sync_status 可能为 failed（如数据源熔断、K线写入失败）。后端未提供专用的"重试同步"端点（如 POST /watchlist/{id}/retry）。前端 WatchlistPanel.retrySync 采用重新调用 `addWatchlist(code)`（POST /watchlist）的方式触发 kline_init，该接口幂等（已存在则返回现有记录并重新触发同步任务）。
-- **处理建议**：若后续后端新增专用重试端点，前端可改为调用该端点。当前重新添加方案在功能上等价，但语义不够清晰（用户看到的是"重试"而非"重新添加"）。
-
 ---
 
 ## 二、已确认的技术决策

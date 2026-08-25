@@ -9,12 +9,18 @@ import {
   fetchStrategy,
   resumeChat,
   streamChat,
+  createBacktest,
+  fetchBacktestResults,
+  fetchBacktestTask,
+  AGENT_NODE_ORDER,
   type AgentConfig,
   type AgentStep,
+  type BacktestResult,
   type ChatMessage,
   type Conversation,
   type SSEEvent,
   type Strategy,
+  type TimelineNode,
 } from '@/api/ai'
 
 /** 卡片类型：创建交易策略 / 诊断符号 / 交易计划 / 机会雷达 */
@@ -52,6 +58,10 @@ export interface StrategyOutputInfo {
   description: string
   /** 是否选择标的（未选择时按钮文案为「保存该交易策略到回测页面」） */
   hasSymbol: boolean
+  /** 发送时选中的标的 id（7.5 自动回测用） */
+  symbolId?: number | null
+  /** 发送时选中的标的代码（7.5 查看详情跳转用） */
+  symbolCode?: string | null
 }
 
 export const useAiStore = defineStore('ai', {
@@ -89,10 +99,19 @@ export const useAiStore = defineStore('ai', {
     /* ---------- 流式 ---------- */
     streaming: false,
     streamingContent: '',
-    /** 深度模式多智能体步骤（4.8.2） */
+    /** 深度模式多智能体步骤（4.8.2，ReAct 工具步骤） */
     streamingSteps: [] as AgentStep[],
+    /** 深度模式 5 节点时间线（阶段六 6.1：agent_step 事件驱动，live 与完成后回看共用） */
+    timeline: [] as TimelineNode[],
     /** 策略模式输出结束后的按钮信息（4.5） */
     strategyOutput: null as StrategyOutputInfo | null,
+    /** 策略生成校验通过信息（阶段八 7.3/7.5：strategy_ready 事件） */
+    strategyReady: null as { strategyId: number; autoBacktest: boolean } | null,
+    /** 策略生成后自动回测状态（阶段八 7.5） */
+    autoBacktestStatus: 'idle' as 'idle' | 'running' | 'success' | 'failed',
+    autoBacktestTaskId: null as number | null,
+    autoBacktestResult: null as BacktestResult | null,
+    autoBacktestError: null as string | null,
 
     /* ---------- 流式（阶段四增强：稳定性与错误体验） ---------- */
     /** 已收到的最后 delta seq（断点续传断点） */
@@ -115,6 +134,8 @@ export const useAiStore = defineStore('ai', {
     lastPayload: null as StreamChatPayload | null,
     /** 断线自动重连已尝试次数（超过 3 次转手动） */
     reconnectAttempt: 0,
+    /** 会话 token 累计用量（阶段八 7.1：usage 事件累计，切换会话重置） */
+    tokenUsage: { prompt: 0, completion: 0, total: 0 } as { prompt: number; completion: number; total: number },
   }),
   actions: {
     /* ---------- 会话 ---------- */
@@ -126,11 +147,15 @@ export const useAiStore = defineStore('ai', {
       this.conversations.unshift(conv)
       this.activeConversationId = conv.id
       this.messages = []
+      this.timeline = []
+      this.tokenUsage = { prompt: 0, completion: 0, total: 0 }
       return conv
     },
     async openConversation(id: number) {
       this.activeConversationId = id
       this.messages = await fetchMessages(id)
+      this.timeline = []
+      this.tokenUsage = { prompt: 0, completion: 0, total: 0 }
     },
     removeConversation(id: number) {
       this.conversations = this.conversations.filter((c) => c.id !== id)
@@ -162,7 +187,9 @@ export const useAiStore = defineStore('ai', {
       this.activeConversationId = null
       this.streamingContent = ''
       this.streamingSteps = []
+      this.timeline = []
       this.strategyOutput = null
+      this.tokenUsage = { prompt: 0, completion: 0, total: 0 }
     },
 
     /* ---------- Agent ---------- */
@@ -193,18 +220,21 @@ export const useAiStore = defineStore('ai', {
       this.streaming = true
       this.streamingContent = ''
       this.streamingSteps = []
-      this.strategyOutput = null
+      // 注意：strategyOutput 在 send 时已由调用方 set（先于 streamSend），此处不再清空，
+      // 否则会清掉本次策略输出的按钮信息（bug：setStrategyOutput 在 streamSend 之前）。
+      this.strategyReady = null
+      this.autoBacktestStatus = 'idle'
+      this.autoBacktestTaskId = null
+      this.autoBacktestResult = null
+      this.autoBacktestError = null
+      this.timeline = AGENT_NODE_ORDER.map((node) => ({ node, status: 'waiting' as const }))
     },
     appendStreamContent(text: string, node?: string) {
       this.streamingContent += text
       if (node) {
-        // 深度模式：同一节点增量追加，节点名变化时新起一步
-        const last = this.streamingSteps[this.streamingSteps.length - 1]
-        if (last && last.step_name === node) {
-          last.content += text
-        } else {
-          this.streamingSteps.push({ step_name: node, content: text, agent_role: 'assistant' })
-        }
+        // 阶段六：深度模式节点内容改由 timeline 累积，此处不再写 streamingSteps
+        const tl = this.timeline.find((n) => n.node === node)
+        if (tl) tl.content = (tl.content ?? '') + text
       }
     },
     pushToolStep(step: AgentStep) {
@@ -299,6 +329,45 @@ export const useAiStore = defineStore('ai', {
         case 'memory_saved':
           this.setMemorySaved({ summary: ev.summary ?? '', importance: ev.importance ?? 5 })
           break
+        case 'agent_step': {
+          if (!ev.node) break
+          const tl = this.timeline.find((n) => n.node === ev.node)
+          if (!tl) break
+          if (ev.status === 'running') {
+            tl.status = 'running'
+          } else {
+            tl.status = ev.status === 'failed' ? 'failed' : 'done'
+            if (ev.summary) tl.summary = ev.summary
+            if (typeof ev.duration_ms === 'number') tl.duration_ms = ev.duration_ms
+            if (ev.error) tl.error = ev.error
+          }
+          break
+        }
+        case 'usage': {
+          // 阶段八 7.1：单轮 usage 事件（prompt/completion/total）累计到会话级
+          this.tokenUsage.prompt += ev.prompt ?? 0
+          this.tokenUsage.completion += ev.completion ?? 0
+          this.tokenUsage.total += ev.total ?? 0
+          break
+        }
+        case 'title': {
+          // 阶段八 7.2：会话标题自动生成完成后更新 J 区列表，无需刷新
+          if (ev.title && ev.conversation_id) {
+            const conv = this.conversations.find((c) => c.id === ev.conversation_id)
+            if (conv) conv.title = ev.title
+          }
+          break
+        }
+        case 'strategy_ready': {
+          // 阶段八 7.3/7.5：策略校验通过并已保存，刷新 M 区；有标的则自动发起回测
+          const strategyId = ev.strategy_id ?? 0
+          this.strategyReady = { strategyId, autoBacktest: !!ev.auto_backtest }
+          void this.loadStrategies()
+          if (ev.auto_backtest && strategyId && this.strategyOutput?.symbolId) {
+            void this.runAutoBacktest(strategyId, this.strategyOutput.symbolId)
+          }
+          break
+        }
         default:
           break
       }
@@ -391,6 +460,36 @@ export const useAiStore = defineStore('ai', {
       await this.streamSend(this.lastPayload)
     },
 
+    /** 策略生成后自动回测（阶段八 7.5）：POST /backtest → 2s 轮询任务 → 成功后取结果 */
+    async runAutoBacktest(strategyId: number, symbolId: number) {
+      this.autoBacktestStatus = 'running'
+      this.autoBacktestTaskId = null
+      this.autoBacktestResult = null
+      this.autoBacktestError = null
+      try {
+        const task = await createBacktest({ strategy_id: strategyId, symbol: symbolId, period: '1d' })
+        this.autoBacktestTaskId = task.id
+        for (;;) {
+          await sleep(2000)
+          const t = await fetchBacktestTask(task.id)
+          if (t.status === 'success') {
+            const results = await fetchBacktestResults(strategyId)
+            this.autoBacktestResult = results[0] ?? null
+            this.autoBacktestStatus = 'success'
+            break
+          }
+          if (t.status === 'failed') {
+            this.autoBacktestStatus = 'failed'
+            this.autoBacktestError = t.error || '回测失败'
+            break
+          }
+        }
+      } catch (e) {
+        this.autoBacktestStatus = 'failed'
+        this.autoBacktestError = (e as Error).message || '回测失败'
+      }
+    },
+
     /** 中止当前流（切换会话/重置面板/卸载时） */
     abortStream() {
       streamToken++
@@ -406,6 +505,7 @@ export const useAiStore = defineStore('ai', {
       this.streamStatus = 'idle'
       this.streamError = null
       this.retryCountdown = 0
+      this.timeline = []
     },
 
     /** 流结束收尾：把流式增量落为正式消息；降级模式拉取后端已入库内容 */
@@ -423,6 +523,7 @@ export const useAiStore = defineStore('ai', {
         // 其它错误：不展示流式增量，由 UI 按错误类型分级提示
         this.streamingContent = ''
         this.streamingSteps = []
+        this.timeline = []
         this.endStreaming()
         return
       }

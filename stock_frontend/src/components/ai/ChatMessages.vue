@@ -5,20 +5,22 @@
  * - 深度模式：回复下方「查看分析过程」折叠面板（4.8.3）
  * - 创建交易策略模式：输出结束下方「保存交易策略 / 回测显示」（4.5）
  */
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAiStore } from '@/stores/ai'
-import { createStrategy, generateStrategy } from '@/api/ai'
+import { updateStrategy } from '@/api/ai'
 import { renderMarkdown } from '@/utils/markdown'
 import { toast } from '@/utils/toast'
 import MessageBubble from '@/components/ai/MessageBubble.vue'
 import AgentStepsPanel from '@/components/ai/AgentStepsPanel.vue'
+import AgentTimeline from '@/components/ai/AgentTimeline.vue'
 
 const ai = useAiStore()
 const router = useRouter()
 const scrollEl = ref<HTMLElement | null>(null)
-/** 本次策略输出已保存的 strategy_id（未保存时回测先自动保存） */
-const savedStrategyId = ref<number | null>(null)
+
+/** 深度分析时间线是否可见（任一节点已非等待态，即收到过 agent_step 事件） */
+const showTimeline = computed(() => ai.timeline.some((n) => n.status !== 'waiting'))
 
 /** 降级模式内容检测：后端降级文案统一以「AI服务暂时不可用」开头 */
 function isDegradedContent(text?: string): boolean {
@@ -50,54 +52,38 @@ watch(
   }
 )
 
-/** 确保策略已保存：AI 生成代码/参数（容错）→ 入库 → 返回 id */
-async function ensureSaved(): Promise<number> {
-  if (savedStrategyId.value) return savedStrategyId.value
-  const description = ai.strategyOutput?.description || ai.streamingContent || 'AI 生成策略'
-  const title = description.split('\n')[0].slice(0, 24) || 'AI 生成策略'
-  let code: string | undefined
-  let params: Record<string, unknown> | undefined
-  try {
-    const gen = await generateStrategy(description, ai.selectedSymbol?.id)
-    code = gen.code || undefined
-    params = gen.params || undefined
-  } catch {
-    /* 生成失败仅保存描述，N 区代码留空 */
-  }
-  const s = await createStrategy({ title, description, code, params, status: 'active' })
-  savedStrategyId.value = s.id
-  void ai.loadStrategies()
-  return s.id
-}
-
+/** 保存策略（7.3）：策略已由后端生成校验并落库（draft），此处确认保存为 active */
 async function onSaveStrategy() {
+  if (!ai.strategyReady) return
   try {
-    const id = await ensureSaved()
+    await updateStrategy(ai.strategyReady.strategyId, { status: 'active' })
     toast.success('交易策略已保存')
-    // 未选择标的：文案为「保存该交易策略到回测页面」，保存后跳转 N 区便于回测
-    if (ai.strategyOutput && !ai.strategyOutput.hasSymbol) {
-      await ai.openStrategy(id)
-    }
+    void ai.loadStrategies()
   } catch {
     /* 错误已 toast */
   }
 }
 
-async function onBacktest() {
-  try {
-    const id = await ensureSaved()
-    // 双向标的联动：携带发送时选中的标的代码，行情第一层据此切换 K 线标的
-    const sym = ai.selectedSymbol
+/** 查看详情（7.5）：跳转行情详情页 D 区策略指标（携带标的代码）；无标的则打开 N 区 */
+function onViewDetail() {
+  if (!ai.strategyReady) return
+  const code = ai.strategyOutput?.symbolCode
+  if (code) {
     router.push({
       path: '/market/detail',
-      query: {
-        strategy_id: String(id),
-        ...(sym ? { symbol: sym.code } : {}),
-      },
+      query: { strategy_id: String(ai.strategyReady.strategyId), symbol: code },
     })
-  } catch {
-    /* 错误已 toast */
+  } else {
+    void ai.openStrategy(ai.strategyReady.strategyId)
   }
+}
+
+/** 百分比 / 数值格式化（7.5 回测结果卡片） */
+function pct(v?: number | null): string {
+  return v == null ? '--' : `${(v * 100).toFixed(2)}%`
+}
+function num(v?: number | null): string {
+  return v == null ? '--' : v.toFixed(2)
 }
 </script>
 
@@ -109,6 +95,9 @@ async function onBacktest() {
     </div>
 
     <MessageBubble v-for="m in ai.messages" :key="m.id" :message="m" />
+
+    <!-- 深度分析时间线（6.1/6.2）：流式时在气泡上方，完成后保留在消息下方供回看 -->
+    <AgentTimeline v-if="showTimeline" :nodes="ai.timeline" :running="ai.streaming" />
 
     <!-- 流式增量（打字机） -->
     <div v-if="ai.streaming" class="chat-msg chat-msg--assistant">
@@ -159,13 +148,52 @@ async function onBacktest() {
       <span class="sse-memory__dot" />已记住：{{ ai.memorySavedNotice.summary }}
     </div>
 
-    <!-- 策略模式输出结束后的操作栏（4.5）：保存交易策略 / 回测显示 -->
-    <div v-if="!ai.streaming && ai.strategyOutput" class="strategy-actions">
-      <span class="strategy-actions__tip">AI 已给出交易策略建议</span>
-      <button class="chat-msg__btn chat-msg__btn--primary" @click="onSaveStrategy">
-        {{ ai.strategyOutput.hasSymbol ? '保存交易策略' : '保存该交易策略到回测页面' }}
-      </button>
-      <button class="chat-msg__btn" @click="onBacktest">回测显示</button>
+    <!-- 策略生成校验状态（7.3）+ 自动回测结果内嵌（7.5） -->
+    <div v-if="ai.strategyOutput" class="strategy-result">
+      <!-- 生成中（流式期间） -->
+      <div v-if="ai.streaming" class="sr-status">
+        <span class="sr-status__loading">正在生成策略…</span>
+      </div>
+
+      <!-- 校验结果（流结束） -->
+      <template v-else>
+        <div v-if="ai.strategyReady" class="sr-status">
+          <span class="sr-status__ok">✓ 校验通过</span>
+          <button class="chat-msg__btn chat-msg__btn--primary" @click="onSaveStrategy">保存策略</button>
+        </div>
+        <div v-else class="sr-status">
+          <span class="sr-status__fail">生成失败，请调整描述或使用模板</span>
+        </div>
+
+        <!-- 自动回测（7.5，有标的时） -->
+        <div v-if="ai.strategyReady && ai.strategyOutput.hasSymbol" class="sr-backtest">
+          <div v-if="ai.autoBacktestStatus === 'running'" class="sr-bt__progress">回测中…</div>
+          <div v-else-if="ai.autoBacktestStatus === 'failed'" class="sr-bt__fail">
+            回测失败{{ ai.autoBacktestError ? '：' + ai.autoBacktestError : '' }}
+          </div>
+          <div v-else-if="ai.autoBacktestStatus === 'success' && ai.autoBacktestResult" class="sr-bt__result">
+            <div class="sr-bt__metrics">
+              <div class="sr-metric">
+                <span class="sr-metric__label">胜率</span>
+                <span class="sr-metric__value">{{ pct(ai.autoBacktestResult.win_rate) }}</span>
+              </div>
+              <div class="sr-metric">
+                <span class="sr-metric__label">盈亏比</span>
+                <span class="sr-metric__value">{{ num(ai.autoBacktestResult.profit_loss_ratio) }}</span>
+              </div>
+              <div class="sr-metric">
+                <span class="sr-metric__label">最大回撤</span>
+                <span class="sr-metric__value">{{ pct(ai.autoBacktestResult.max_drawdown) }}</span>
+              </div>
+              <div class="sr-metric">
+                <span class="sr-metric__label">年化收益</span>
+                <span class="sr-metric__value">{{ pct(ai.autoBacktestResult.annual_return) }}</span>
+              </div>
+            </div>
+            <button class="chat-msg__btn" @click="onViewDetail">查看详情</button>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -308,15 +336,67 @@ async function onBacktest() {
   border-radius: 50%;
   background: var(--down);
 }
-.strategy-actions {
+.strategy-result {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.sr-status {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 0 8px;
-}
-.strategy-actions__tip {
+  gap: 10px;
   font-size: 12px;
+}
+.sr-status__loading {
   color: var(--text-muted);
+}
+.sr-status__ok {
+  color: var(--down);
+  font-weight: 600;
+}
+.sr-status__fail {
+  color: var(--up);
+}
+.sr-backtest {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+}
+.sr-bt__progress {
+  color: var(--accent);
+}
+.sr-bt__fail {
+  color: var(--up);
+}
+.sr-bt__result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sr-bt__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.sr-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--bg-panel);
+  border-radius: 4px;
+}
+.sr-metric__label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.sr-metric__value {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .chat-msg__btn {
   height: 30px;

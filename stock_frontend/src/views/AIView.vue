@@ -100,11 +100,14 @@ async function send() {
     created_at: new Date().toISOString(),
   })
   ai.setInputText('')
+  ai.clearStrategyOutput()
   if (runType === 'strategy') {
     ai.setStrategyOutput({
       conversationId: ai.activeConversationId ?? 0,
       description: finalContent,
       hasSymbol: !!symbol,
+      symbolId: symbol?.id ?? null,
+      symbolCode: symbol?.code ?? null,
     })
   }
 

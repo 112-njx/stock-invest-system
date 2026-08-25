@@ -61,15 +61,31 @@ export function sendMessage(
 /* ===================== 流式对话（SSE） ===================== */
 
 /**
- * SSE 事件（V0.2 阶段五协议）：
+ * SSE 事件（V0.2 阶段五 + 阶段七/八协议）：
  * - start / delta(seq+content, 深度模式带 node) / tool_call / tool_result
- * - done（超时截断带 truncated+reason="timeout"）
+ * - done（超时截断带 truncated+reason="timeout"；部分节点异常带 partial）
  * - error（code/message/retryable/retry_after，运行失败时带 message_id/conversation_id/run_id）
  * - resync（断点续传缓存已过期，需重新加载完整消息）
  * - memory_saved（对话中写入了新记忆）
+ * - agent_step（阶段七：深度模式多智能体节点状态 running/done/failed）
+ * - usage（阶段八：token 用量，done 前推送）
+ * - strategy_ready（阶段八：策略生成校验通过并已保存）
+ * - title（阶段八：会话标题自动生成完成）
  */
 export interface SSEEvent {
-  type: 'start' | 'delta' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'resync' | 'memory_saved'
+  type:
+    | 'start'
+    | 'delta'
+    | 'tool_call'
+    | 'tool_result'
+    | 'done'
+    | 'error'
+    | 'resync'
+    | 'memory_saved'
+    | 'agent_step'
+    | 'usage'
+    | 'strategy_ready'
+    | 'title'
   /** delta 递增序号（断点续传断点） */
   seq?: number
   content?: string
@@ -83,14 +99,31 @@ export interface SSEEvent {
   /** done 截断标记（超时返回部分结果） */
   truncated?: boolean
   reason?: string
+  /** done 部分节点异常标记（阶段七 7.2） */
+  partial?: boolean
   /** error 帧 */
   code?: string
   message?: string
   retryable?: boolean
   retry_after?: number
-  /** memory_saved */
+  /** memory_saved / agent_step 节点摘要 */
   summary?: string
   importance?: number
+  /** agent_step 节点状态 */
+  status?: 'running' | 'done' | 'failed'
+  /** agent_step 节点耗时（ms） */
+  duration_ms?: number
+  /** agent_step 节点失败错误信息 */
+  error?: string
+  /** usage 事件 token 分项 */
+  prompt?: number
+  completion?: number
+  total?: number
+  /** strategy_ready 事件 */
+  strategy_id?: number
+  auto_backtest?: boolean
+  /** title 事件 */
+  title?: string
 }
 
 /** 解析 SSE 流：按 \n\n 分帧，回调 data: JSON 帧（忽略 :keepalive 注释行 / 异常帧） */
@@ -289,6 +322,27 @@ export function generateStrategy(description: string, symbol?: string | number) 
   })
 }
 
+/* ===================== 策略模板（阶段八 8.5） ===================== */
+
+/** 策略模板（列表项不含 code，详情含完整 code） */
+export interface StrategyTemplate {
+  id: number
+  name: string
+  description?: string | null
+  params_schema?: Record<string, unknown> | null
+  code?: string
+}
+
+/** 策略模板列表 */
+export function fetchStrategyTemplates() {
+  return request<StrategyTemplate[]>({ url: '/strategy-templates' })
+}
+
+/** 策略模板详情（含完整 code） */
+export function fetchStrategyTemplate(templateId: number) {
+  return request<StrategyTemplate>({ url: `/strategy-templates/${templateId}` })
+}
+
 /* ===================== 定制 Agent ===================== */
 
 export interface AgentConfig {
@@ -394,14 +448,48 @@ export function fetchBacktestResults(strategyId: number) {
   return request<BacktestResult[]>({ url: '/backtest/results', params: { strategy_id: strategyId } })
 }
 
-/* ===================== Agent 运行历史（4.8.4，后端接口待补，占位） ===================== */
+/* ===================== Agent 运行历史（阶段七 7.3：多智能体可观测） ===================== */
+
+/** 深度模式 5 节点固定顺序（与后端 research_graph NODE_FIELD 一致） */
+export const AGENT_NODE_ORDER = [
+  'technical_analyst',
+  'bull_researcher',
+  'bear_researcher',
+  'risk_manager',
+  'trader',
+] as const
+
+export type AgentNodeKey = (typeof AGENT_NODE_ORDER)[number]
+
+/** 节点名 → 中文标签（时间线展示） */
+export const AGENT_NODE_LABEL: Record<string, string> = {
+  technical_analyst: '技术分析师',
+  bull_researcher: '多头研究员',
+  bear_researcher: '空头研究员',
+  risk_manager: '风控经理',
+  trader: '交易决策者',
+}
+
+/** 时间线节点（阶段六 6.1/6.2：live SSE 与历史回看共用） */
+export interface TimelineNode {
+  node: string
+  status: 'waiting' | 'running' | 'done' | 'failed'
+  summary?: string
+  content?: string
+  duration_ms?: number
+  error?: string
+}
 
 export interface AgentStep {
   id?: number
   run_id?: number
   step_name: string
+  node?: string
   agent_role?: string
-  content: string
+  status?: string
+  content?: string | null
+  summary?: string | null
+  duration_ms?: number | null
   meta?: Record<string, unknown> | null
   created_at?: string
 }
@@ -415,22 +503,37 @@ export interface AgentRun {
   status?: string
   input?: string | null
   output?: string | null
+  /** 最终决策（后端 output 别名） */
+  final_decision?: string | null
+  /** 运行总耗时（ms，后端 duration_ms 别名） */
+  total_duration?: number | null
   tokens?: number | null
   error?: string | null
   created_at?: string
+  updated_at?: string
 }
 
-/**
- * Agent 运行历史列表。后端 GET /api/v1/agent/runs 尚待实现（编排缺失，见 fixed.md），
- * 前端先按约定接入，接口 404 时由调用方展示空态占位。
- */
-export function fetchAgentRuns() {
-  return request<AgentRun[]>({ url: '/agent/runs', silent: true })
+/** Agent 运行历史分页返回 */
+export interface AgentRunPage {
+  items: AgentRun[]
+  total: number
+  page: number
+  size: number
+}
+
+/** Agent 运行历史列表（分页，可按会话筛选） */
+export function fetchAgentRuns(params: { conversation_id?: number; page?: number; size?: number } = {}) {
+  return request<AgentRunPage>({ url: '/agent/runs', params, silent: true })
 }
 
 /** Agent 运行详情（含 agent_steps） */
 export function fetchAgentRunDetail(runId: number) {
   return request<AgentRun & { steps?: AgentStep[] }>({ url: `/agent/runs/${runId}`, silent: true })
+}
+
+/** Agent 运行节点步骤（按执行顺序） */
+export function fetchAgentRunSteps(runId: number) {
+  return request<AgentStep[]>({ url: `/agent/runs/${runId}/steps`, silent: true })
 }
 
 /* ===================== 记忆文件（4.6，后端接口待补，占位） ===================== */

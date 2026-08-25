@@ -120,3 +120,21 @@ Agent的前端编码记录,你需要按照：
 
 编码时间：2026-08-23
 编码内容（描述）：V0.2 阶段五 5.2 记忆写入反馈——复用阶段四 SSE 事件框架：store _handleSSEEvent 新增 memory_saved 分支 → setMemorySaved（{summary,importance}，setTimeout 2s 自动清除，不打断对话）；ChatMessages 消息底部渲染轻量提示「已记住：{摘要}」（绿色圆点 + muted 文案），非阻塞式。SSE 事件字段 summary/importance 已入 SSEEvent 类型。typecheck 通过。（注：真实对话触发 memory_saved 需后端记忆抽取成功，本次 curl 测试中后端 aextract_facts 返回空、未见 memory_saved 事件，属后端行为观察，已在总结中记录。）
+
+编码时间：2026-08-24
+编码内容（描述）：V0.2 阶段六 6.1 深度分析进度时间线——api/ai.ts 扩展 SSEEvent 增 agent_step/usage/strategy_ready/title 事件及字段（status/duration_ms/error/strategy_id/title 等），新增 AGENT_NODE_ORDER 5 节点常量、AGENT_NODE_LABEL 中文标签、TimelineNode 类型；stores/ai.ts 新增 timeline 状态（startStreaming 初始化为 5 waiting 节点，agent_step 事件驱动 running/done/failed，delta 带 node 时累积 content 到对应节点），abortStream/resetPanel/打开会话均重置；新增 AgentTimeline.vue 横向 5 节点时间线（等待灰/运行蓝旋转/完成绿勾+耗时/失败红感叹号，节点间连线已完成变绿）；ChatMessages 气泡上方渲染。typecheck/lint/build 全绿。
+
+编码时间：2026-08-24
+编码内容（描述）：V0.2 阶段六 6.2 节点输出展开——AgentTimeline.vue 补完成节点点击展开完整输出（renderMarkdown 渲染 + 复制按钮），失败节点展开显示 error 详情 + 「该节点使用默认观点」标注；结论区在全部节点完成后显示：有失败节点时黄色「部分节点异常，结论仅供参考」，否则绿色「分析完成」；仅 done/failed 节点可点击。展开详情单节点面板（content 优先，fallback summary）。typecheck/lint/build 全绿。
+
+编码时间：2026-08-24
+编码内容（描述）：V0.2 阶段六 6.3 运行历史回看——api/ai.ts fetchAgentRuns 改为分页（返回 AgentRunPage{items,total,page,size}，新增 page/size/conversation_id 参数）、新增 fetchAgentRunSteps()、AgentRun 补 final_decision/total_duration 字段、AgentStep 补 node/status/summary/duration_ms；AgentRunsDialog.vue 重构：分页列表（行含 run_type 标签+final_decision 结论徽标+input 问题+耗时+时间+失败标记），上一页/下一页分页；点击复用 AgentTimeline 回看完整 5 节点决策链（AgentStep→TimelineNode 映射，error 取自 meta.error）。保持现有弹窗式交互不改布局。typecheck/lint/build 全绿。
+
+编码时间：2026-08-25
+编码内容（描述）：V0.2 阶段七 7.1 Token用量 + 7.2 会话标题——stores/ai.ts 新增 tokenUsage{prompt/completion/total} 会话级累计状态，_handleSSEEvent 新增 usage 事件分支（累计单轮用量）与 title 事件分支（按 conversation_id 更新 J 区列表标题，无需刷新）；createConversation/openConversation/resetPanel 重置 tokenUsage；ChatInput 底部状态栏「本次对话已用 X tokens」悬停 title 展示 prompt/completion 分项（total>0 才显示）。token 用 SSE usage 事件（后端响应头不可行，经确认），非 roadmap 原「响应头 x-token-usage」。typecheck/lint/build 全绿。
+
+编码时间：2026-08-25
+编码内容（描述）：V0.2 阶段七 7.3 策略校验状态 + 7.5 生成→回测内嵌——stores/ai.ts 新增 strategyReady（strategy_ready 事件）+ autoBacktest 四字段 + runAutoBacktest 动作（POST /backtest→2s 轮询→成功后取 fetchBacktestResults 首条）；_handleSSEEvent 新增 strategy_ready 分支（刷新 M 区策略列表 + 有标的自动回测）；StrategyOutputInfo 补 symbolId/symbolCode，AIView.send 传入。ChatMessages 策略结果区重构：流式期「正在生成策略…」→ 校验通过绿色「✓ 校验通过」+「保存策略」（updateStrategy 置 active）或失败红色「生成失败，请调整描述或使用模板」；有标的自动回测进度「回测中…」→ 内嵌结果卡片（胜率/盈亏比/最大回撤/年化 4 数字 +「查看详情」跳详情页）。修复前置 bug：startStreaming 清空 strategyOutput 导致旧策略按钮从未生效（改由 AIView.send 先 clearStrategyOutput）。方案A：无逐级重试/错误行号展示、无资金曲线缩略图（后端无该数据）。typecheck/lint/build 全绿。
+
+编码时间：2026-08-25
+编码内容（描述）：V0.2 阶段七 7.4 策略模板库——api/ai.ts 新增 StrategyTemplate 类型 + fetchStrategyTemplates()/fetchStrategyTemplate(id)；新增 StrategyTemplatesDialog.vue（5 模板卡片：名称+描述，点击详情拿完整 code → createStrategy 创建草稿 → openStrategy 打开 N 区编辑器）；ChatInput 策略模块顶部新增「从模板创建」入口按钮，弹窗渲染在输入区。参数「高亮可编辑」由 N 区现有 textarea 承载（不引入语法高亮依赖，遵循界面固定约束与避免新依赖）。typecheck/lint/build 全绿。
