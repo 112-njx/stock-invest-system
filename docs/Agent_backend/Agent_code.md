@@ -270,3 +270,8 @@ Agent的后端编码记录,你需要按照：
 编码时间：2026-08-26
 编码内容（描述）：修复策略生成 LLM 400（This response_format type is unavailable now）。根因：strategy_gen.generate_strategy 调 with_structured_output(StrategyOutput) 用 langchain-openai 1.x 默认 method="json_schema"（发 response_format={"type":"json_schema"}），DeepSeek 仅支持 text/json_object、不支持 json_schema 故 400。修复：显式传 method="function_calling"（改走 tools+tool_choice，DeepSeek 原生支持，schema 字段经 tool JSON Schema 传给模型）。验收：test_strategies 7 通过 + test_chat 28 通过。
 
+---
+
+编码时间：2026-08-27
+编码内容（描述）：修复 LLM 非流式输出（审计 bug2）。根因：chat_service._run_react 用 create_agent().astream(stream_mode="updates") 节点级输出，整条 AI 消息作单个 delta 一次性推送，LLM 生成期间前端无任何输出、完成后整段蹦出。修复：改 stream_mode="messages" token 级流式，逐 token 产出 delta；用 isinstance(chunk, AIMessage) 兜住 AIMessageChunk.type="AIMessageChunk"（非 "ai"）的坑；tool_calls/tool_call_chunks 与 ToolMessage 分别转 tool_call/tool_result 事件；新增 _merge_tool_call_chunks/_flush_tool_call_buf/_tool_call_event 合并流式工具调用，删除废弃 _emit_update。验收：流式模型经 _run_react 逐 token 产出 4 个 delta，全库 259 pytest 全绿 + ruff。
+

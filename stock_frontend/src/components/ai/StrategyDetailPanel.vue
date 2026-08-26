@@ -73,7 +73,7 @@ async function runBacktest() {
   try {
     const task = await createBacktest({
       strategy_id: strategy.value.id,
-      symbol: btSymbol.value.id,
+      symbol: String(btSymbol.value.id),
       period: btPeriod.value,
     })
     btTask.value = task

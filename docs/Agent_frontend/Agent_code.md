@@ -147,3 +147,6 @@ Agent的前端编码记录,你需要按照：
 
 编码时间：2026-08-26
 编码内容（描述）：审计修复 问题3（运行记录点击跳转 N 区）——根因是 6.3 原实现为弹窗内联展开，与 roadmap「跳转 N 区」预期不符（且受 422 连带多数 run 无 steps）。改为：stores/ai.ts 新增 runDetail 状态 + openRunDetail()/closeRunDetail()（AgentStep→TimelineNode 映射抽为模块级 agentStepToNode，失败回退 chat）+ AiPanelMode 增 'run'；新增 AgentRunDetailPanel.vue（N 区位置展示运行元信息 + AgentTimeline 决策链）；AIView 增 run 模式渲染；AgentRunsDialog 点击改为 emit('close') + openRunDetail 跳转。typecheck/lint/build 全绿。
+
+编码时间：2026-08-27
+编码内容（描述）：审计修复 策略回测 422（策略详情页 N 区点击「回测」报错 symbol: Input should be a valid string）。根因：StrategyDetailPanel.vue 发起回测时 symbol 发数字（btSymbol.id），后端 BacktestCreateIn.symbol 为 str（Pydantic 2 拒绝 int→str 触发 422），与「添加关注/深度分析 422」同根因。修复：改为 String(btSymbol.value.id)，与 AIView/关注列表统一 symbol 转字符串。typecheck/lint 全绿。

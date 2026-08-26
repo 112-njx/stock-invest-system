@@ -220,6 +220,47 @@ def _load_agent(db: Session, user_id: int, agent_id: int | None) -> UserAgent | 
     return agent_repo.get_agent(db, user_id, agent_id)
 
 
+def _merge_tool_call_chunks(buf: dict, chunks: list) -> None:
+    """累积流式工具调用 chunk（按 index 合并 name/args/id，供 ToolMessage 到达时 flush）。"""
+    for c in chunks or []:
+        idx = (c.get("index") if isinstance(c, dict) else getattr(c, "index", 0)) or 0
+        entry = buf.setdefault(idx, {"name": "", "args": "", "id": ""})
+        if isinstance(c, dict):
+            if c.get("name"):
+                entry["name"] += c["name"]
+            if c.get("id"):
+                entry["id"] = c["id"]
+            if c.get("args"):
+                entry["args"] += c["args"]
+        else:
+            if getattr(c, "name", None):
+                entry["name"] += c.name
+            if getattr(c, "id", None):
+                entry["id"] = c.id
+            if getattr(c, "args", None):
+                entry["args"] += c.args
+
+
+def _flush_tool_call_buf(buf: dict) -> list[dict]:
+    """取出并清空累积的工具调用（按 index 排序）。"""
+    items = [buf[i] for i in sorted(buf)]
+    buf.clear()
+    return items
+
+
+def _tool_call_event(entry: dict) -> dict:
+    """把累积的工具调用转成 tool_call 事件（args 尝试解析 JSON，失败则原样透传）。"""
+    raw_args = (entry.get("args") or "").strip()
+    if raw_args:
+        try:
+            input_ = json.loads(raw_args)
+        except (ValueError, TypeError):
+            input_ = raw_args  # 未完整/非 JSON：原样透传
+    else:
+        input_ = {}
+    return {"type": "tool_call", "tool": entry.get("name") or "?", "input": input_}
+
+
 async def _run_react(
     db: Session,
     run,
@@ -232,17 +273,76 @@ async def _run_react(
     llm_svc,
     prompt_tokens: int = 0,
 ) -> AsyncIterator[dict]:
-    """轻量模式：ReAct Agent（工具按需取数）。"""
+    """轻量模式：ReAct Agent（工具按需取数）。
+
+    用 ``astream(stream_mode="messages")`` 做 token 级流式——AI 文本逐 token 产出
+    （非流式模型则整条消息一次产出）；工具调用（tool_calls/tool_call_chunks）与
+    工具结果（ToolMessage）分别转为 tool_call / tool_result 事件并落 agent_steps。
+    """
     from langchain.agents import create_agent
+    from langchain_core.messages import AIMessage, ToolMessage
 
     compiled = create_agent(agent_model, tools)  # system_prompt 已在 messages 首位
     parts: list[str] = []
     step_idx = 0
+    tool_call_buf: dict[int, dict] = {}  # 流式工具调用 chunk 合并缓冲（按 index）
     try:
-        async for update in compiled.astream({"messages": messages}, stream_mode="updates"):
-            for ev in _emit_update(db, run, update, parts, step_idx):
-                yield ev
-            step_idx += 1
+        async for chunk, _meta in compiled.astream({"messages": messages}, stream_mode="messages"):
+            # 工具结果（ToolMessage）——先 flush 缓冲中已完成的工具调用，再发结果
+            if isinstance(chunk, ToolMessage):
+                for entry in _flush_tool_call_buf(tool_call_buf):
+                    ev = _tool_call_event(entry)
+                    yield ev
+                    agent_repo.add_step(
+                        db, run.id, f"tool:{ev['tool']}", "assistant",
+                        json.dumps(ev.get("input", {}), ensure_ascii=False), {"idx": step_idx},
+                    )
+                preview = str(chunk.content)[:500]
+                yield {"type": "tool_result", "tool": chunk.name, "preview": preview}
+                agent_repo.add_step(db, run.id, f"tool_result:{chunk.name}", "tool", preview, {"idx": step_idx})
+                step_idx += 1
+                continue
+
+            # AI 消息（AIMessage / AIMessageChunk，后者 .type 为类名而非 "ai"，用 isinstance 兜住）
+            if not isinstance(chunk, AIMessage):
+                continue
+            # 1) 文本增量（token 级或整条）
+            content = chunk.content
+            if isinstance(content, str):
+                if content:
+                    parts.append(content)
+                    yield {"type": "delta", "content": content}
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, str):
+                        text = block
+                    elif isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text") or ""
+                    else:
+                        text = ""
+                    if text:
+                        parts.append(text)
+                        yield {"type": "delta", "content": text}
+            # 2) 完整工具调用（非流式模型一次性给出 tool_calls）
+            for tc in getattr(chunk, "tool_calls", None) or []:
+                args = tc.get("args") or {}
+                yield {"type": "tool_call", "tool": tc.get("name", "?"), "input": args}
+                agent_repo.add_step(
+                    db, run.id, f"tool:{tc.get('name', '?')}", "assistant",
+                    json.dumps(args, ensure_ascii=False), {"idx": step_idx},
+                )
+            # 3) 增量工具调用（流式模型 tool_call_chunks，累积待 ToolMessage 时 flush）
+            _merge_tool_call_chunks(tool_call_buf, getattr(chunk, "tool_call_chunks", None) or [])
+
+        # 流结束后 flush 残余工具调用（正常情况 ToolMessage 前已 flush，此处兜底）
+        for entry in _flush_tool_call_buf(tool_call_buf):
+            ev = _tool_call_event(entry)
+            yield ev
+            agent_repo.add_step(
+                db, run.id, f"tool:{ev['tool']}", "assistant",
+                json.dumps(ev.get("input", {}), ensure_ascii=False), {"idx": step_idx},
+            )
+        db.commit()
         full_text = "".join(parts).strip() or _fallback_text()
         llm_svc.breaker.on_success()
         assistant_msg = _save_result(db, run, user_msg, conv, symbol_id, full_text, 0, "success")
@@ -490,36 +590,6 @@ async def stream_chat(
             _schedule_summary_update(conv.id, llm_svc)
     finally:
         db.close()
-
-
-def _emit_update(db: Session, run, update: dict, parts: list[str], idx: int) -> list[dict]:
-    """把一次 LangGraph 节点更新转为 SSE 事件（同步调用，返回事件列表）。"""
-    events: list[dict] = []
-    for _node, state in update.items():
-        msgs = state.get("messages", [])
-        for m in msgs:
-            if getattr(m, "type", "") == "ai":
-                tool_calls = getattr(m, "tool_calls", None) or []
-                if tool_calls:
-                    for tc in tool_calls:
-                        args = tc.get("args") or tc.get("input") or {}
-                        events.append({"type": "tool_call", "tool": tc.get("name", "?"), "input": args})
-                        agent_repo.add_step(
-                            db, run.id, f"tool:{tc.get('name', '?')}", "assistant", json.dumps(args, ensure_ascii=False), {"idx": idx}
-                        )
-                if m.content:
-                    parts.append(m.content)
-                    text = m.content
-                    events.append({"type": "delta", "content": text})
-                    agent_repo.add_step(db, run.id, f"agent:step{idx}", "assistant", text, {"idx": idx})
-            elif getattr(m, "type", "") == "tool":
-                tool_name = getattr(m, "name", "?")
-                preview = str(getattr(m, "content", ""))[:500]
-                events.append({"type": "tool_result", "tool": tool_name, "preview": preview})
-                agent_repo.add_step(db, run.id, f"tool_result:{tool_name}", "tool", preview, {"idx": idx})
-    if events:
-        db.commit()
-    return events
 
 
 async def _extract_and_save_memory(db: Session, user_id: int, source_id: int | None, user_msg: str, assistant_msg: str, llm_svc) -> list[dict]:

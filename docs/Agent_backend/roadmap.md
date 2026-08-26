@@ -45,7 +45,6 @@ v0.2阶段
 # 启动 beat
 .venv\Scripts\celery.exe -A app.worker.celery_app beat -l info
 
-
 - ADMIN_USERNAMES 环境变量（管理端点访问权限）
 - 阶段六 Embedding 升级：生产需在 .env 设 `EMBEDDING_MODEL=minilm`（默认 minilm），首次启动/首次记忆操作会自动从 HuggingFace 下载 `paraphrase-multilingual-MiniLM-L12-v2` int8 量化 ONNX（约 118MB）到 `stock_backend/data/models/`，需联网；下载失败自动回退 `hash` embedding（字符 n-gram 哈希），检索退化但不报错。
 - 阶段六 Embedding 可选配置：`EMBEDDING_MODEL_PATH`（模型本地目录，默认 data/models）、`EMBEDDING_QUANTIZATION`（int8 默认 / fp32）、`EMBEDDING_MODEL_NAME`（HF 模型仓库，默认多语言 MiniLM-L12）。
