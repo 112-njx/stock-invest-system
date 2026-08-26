@@ -125,7 +125,6 @@ async function load() {
       symbol: current.value.id,
       period: market.period,
       names: 'macd,kdj,volume,amount',
-      limit: 200,
     })
   } catch {
     rows.value = []

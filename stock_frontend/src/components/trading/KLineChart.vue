@@ -411,7 +411,6 @@ async function loadKline() {
           symbol: props.symbol.id,
           period: market.period,
           names: 'macd,kdj,volume,amount',
-          limit: 500,
         })
         setIndicatorData()
       } catch { /* 指标失败不阻塞K线 */ }

@@ -22,7 +22,7 @@ from app.utils.redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-_DEFAULT_BACK_DAYS = 365
+_DEFAULT_BACK_DAYS = 7300  # 默认回看窗口：约 20 年，等价"按 limit 取最近 N 根"（与 get_kline 默认区间对齐），避免历史指标缺失
 INDICATOR_NAMES = set(INDICATORS.keys())
 
 

@@ -70,7 +70,11 @@ async def generate_strategy(
 
     await llm_svc.preflight()
     prompt = _GENERATE_PROMPT.format(description=description[:2000])
-    gen = structured_model or llm_svc.provider.raw_model.with_structured_output(StrategyOutput)
+    # 注意：langchain-openai 1.x 默认 method="json_schema"（发 response_format={"type":"json_schema"}），
+    # DeepSeek 不支持该类型（报 "This response_format type is unavailable now"），改用 function calling。
+    gen = structured_model or llm_svc.provider.raw_model.with_structured_output(
+        StrategyOutput, method="function_calling"
+    )
     messages: list[dict] = [{"role": "user", "content": prompt}]
 
     max_retries = max(0, settings.STRATEGY_GEN_MAX_RETRIES)

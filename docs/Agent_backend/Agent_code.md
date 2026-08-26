@@ -265,3 +265,8 @@ Agent的后端编码记录,你需要按照：
 编码时间：2026-08-26
 编码内容（描述）：修复运行记录耗时全为 null 的 bug（审计发现问题2）。根因：agent_runs.duration_ms 仅深度模式 _run_deep 写入，其余路径（ReAct/strategy/失败/降级/超时）不写，落库 NULL，前端 total_duration 显示"--"。修复：stream_chat 创建 run 后记 run._started_monotonic，_save_result 在 duration_ms 未显式传入时按该起始时间统一计算（覆盖所有路径）；同步移除 _run_deep 局部耗时计算以统一「run 创建→结束」口径。验收：新增 2 测试（ReAct 成功路径 + 失败路径均写非空 duration_ms），全库 259 pytest 全绿 + ruff。
 
+---
+
+编码时间：2026-08-26
+编码内容（描述）：修复策略生成 LLM 400（This response_format type is unavailable now）。根因：strategy_gen.generate_strategy 调 with_structured_output(StrategyOutput) 用 langchain-openai 1.x 默认 method="json_schema"（发 response_format={"type":"json_schema"}），DeepSeek 仅支持 text/json_object、不支持 json_schema 故 400。修复：显式传 method="function_calling"（改走 tools+tool_choice，DeepSeek 原生支持，schema 字段经 tool JSON Schema 传给模型）。验收：test_strategies 7 通过 + test_chat 28 通过。
+

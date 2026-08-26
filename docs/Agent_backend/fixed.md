@@ -207,3 +207,19 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 **修复**：把 `_EXTRACT_PROMPT` 中 JSON 示例的花括号转义为 `{{` `}}`（`{{"content": ...}}`），使 `str.format()` 仅把 `{user_msg}`/`{assistant_msg}` 当占位符、JSON 示例原样输出。新增回归测试 `test_aextract_facts_parses_valid_json`（假 LLM 返回合法 JSON → 正确解析出 fact），确保 format 不再抛异常、抽取链路可用。
 
 **教训**：用 `str.format()` 填充含 JSON 示例/花括号的 prompt 模板时，字面花括号必须转义为 `{{`/`}}`；best-effort 分支吞异常会掩盖模板 bug——凡格式化/解析类语句应置于 try/except 内，或对 prompt 模板做单测，避免运行时静默失败。
+
+## 2026-08-26 历史 K 线有数据但无技术指标（2025-08-25 之前）
+
+**现象**：大盘指数、行业指数的历史 K 线（2025-08-25 之前）能正常显示，但同区间下方技术指标（MACD/KDJ/成交量/成交额）全部为空（"--"）。
+
+**根因**：技术指标并非落库，而是每次请求时后端从 K 线实时计算（`indicator_service.compute_indicators` → 拉 K 线 → 计算 → Redis 缓存）。其拉取窗口与 K 线接口不一致：
+1. 后端 `compute_indicators` 在未显式传 `start` 时用 `_DEFAULT_BACK_DAYS=365`，把 K 线窗口截断到**最近 365 天**（今天 2026-08-26 往前 365 天 ≈ 2025-08-25，正好对上现象日期）；
+2. 前端 `KLineChart.vue` 指标请求显式传 `limit:500`、`IndicatorPanel.vue` 传 `limit:200`，而 K 线请求 `fetchKLine` 不传 limit（走后端默认 1000，全历史）。三者叠加导致指标只覆盖最近约 1 年 / 200~500 根，与 K 线全历史脱节。
+
+**修复**：
+1. `app/services/indicator_service.py`：`_DEFAULT_BACK_DAYS` 由 365 改为 7300（约 20 年，等价"按 limit 取最近 N 根"，与 `get_kline` 默认区间对齐），未显式传 start 时不再按固定天数截断；
+2. 前端 `KLineChart.vue` / `IndicatorPanel.vue` 的指标请求删除显式 `limit` 参数，改用后端默认 1000，与 K 线 `fetchKLine` 深度一致。
+
+**验证**：全库 259 pytest 全绿 + ruff 通过；指标默认区间与 K 线默认区间语义对齐。
+
+**教训**：指标（按需计算类数据）的默认拉取窗口必须与 K 线默认深度一致——未显式指定区间时应"按 limit 取最近 N 根"而非固定天数截断；前后端多处请求同一标的时，limit 要统一到同一默认值，避免"K 线全、指标半"的脱节。
