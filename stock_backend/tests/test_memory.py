@@ -78,6 +78,23 @@ def test_parse_facts_markdown_fence_and_bad():
     assert memory_service._parse_facts('{"a":1}') == []
 
 
+async def test_aextract_facts_parses_valid_json():
+    """回归：_EXTRACT_PROMPT 内 JSON 示例花括号已转义，str.format 不再抛 KeyError。"""
+
+    class _FakeLLM:
+        available = True
+
+        async def ainvoke(self, messages, temperature=None):
+            from app.services.llm.providers.base import LLMResult
+
+            return LLMResult(text='[{"content":"止损不超过2%","type":"rule","importance":8}]', model="fake", tokens=5)
+
+    facts = await memory_service.aextract_facts("用户消息", "助手消息", _FakeLLM())
+    assert len(facts) == 1
+    assert facts[0]["content"] == "止损不超过2%"
+    assert facts[0]["importance"] == 8
+
+
 # ---- 保存 + 检索 ----
 def test_save_and_retrieve_memory(client: TestClient, mem_env):
     uname = _uname()

@@ -14,19 +14,19 @@
 
 ### P0-1 双 token + 会话管理
 
-**说明**：当前单 JWT 无刷新机制、无吊销、无活跃会话管理。token 被盗无法吊销，过期强制重登录，多设备无法管理，无"退出登录"后端端点。
+**说明**：当前单 JWT 无刷新机制、无吊销、无活跃会话管理。token 被盗无法吊销，过期强制重登录，无"退出登录"后端端点。
 
 **优化方案**：
 - **双 token 机制**：access token（JWT，15min 有效期）+ refresh token（随机字符串，7d 有效期，HttpOnly Secure Cookie 存储）
 - **refresh token 轮换**：每次刷新签发新 refresh token，旧 token 加入 Redis 黑名单（TTL=剩余有效期）；同一 refresh token 被使用两次时吊销该用户所有 refresh token（复用检测，疑似被盗）
 - **access token 黑名单**：Redis SET `token_blacklist:{jti}`，登出/踢出/改密时加入，TTL=access token 剩余有效期
-- **user_sessions 表**：记录活跃设备（user_id, refresh_token_hash, user_agent, ip, last_active_at, created_at）
 - **新增端点**：
   - `POST /api/v1/auth/refresh` — 刷新 token（Cookie 携带 refresh token）
   - `POST /api/v1/auth/logout` — 当前设备登出（吊销 access+refresh）
   - `GET /api/v1/auth/sessions` — 活跃设备列表
   - `DELETE /api/v1/auth/sessions/{id}` — 踢出指定设备
-- **前端**：token 存储从 localStorage 改为 HttpOnly Cookie（配合 P0-7），axios `withCredentials=true`，401 时自动调 refresh 接口，refresh 失败跳登录页；个人设置页增加"登录设备管理"入口
+- **前端**：token 存储从 localStorage 改为 HttpOnly Cookie（配合 P0-7），axios `withCredentials=true`，401 时自动调 refresh 接口，refresh 失败跳登录页；
+- 个人设置页增加"登录设备管理"入口
 
 ---
 

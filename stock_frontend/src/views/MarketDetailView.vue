@@ -10,6 +10,7 @@ import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchSymbols } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
+import { useWsStore } from '@/stores/wsStore'
 import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
 import { useSnapshotPolling } from '@/composables/useSnapshotPolling'
 import KLineChart from '@/components/trading/KLineChart.vue'
@@ -20,6 +21,7 @@ import StrategyMetricsPanel from '@/components/trading/StrategyMetricsPanel.vue'
 const router = useRouter()
 const route = useRoute()
 const market = useMarketStore()
+const ws = useWsStore()
 
 /** 回测显示跳转：带 strategy_id 时 D 区替换为策略指标面板（4.5） */
 const strategyId = computed(() => (route.query.strategy_id ? Number(route.query.strategy_id) : null))
@@ -56,6 +58,9 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   await ensureDefaultSymbol()
   await resolveSymbolParam()
+  // V0.2：初始化 WS 实时行情（直接刷新/直达详情页时保证连接）
+  ws.init()
+  ws.syncSubscriptions()
   start()
 })
 onBeforeUnmount(() => {

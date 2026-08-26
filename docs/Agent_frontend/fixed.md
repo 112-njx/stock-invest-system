@@ -287,3 +287,10 @@ desc:空心轮廓云
 
 ## 时间：2026-08-19
 ## 修复bug内容（描述）：v0.1 优化8 实现——AI策略页聊天/策略 tab 切换时右侧重置为默认页面：① ai store 新增 resetPanel() action，重置 mode='chat'、activeStrategy=null、messages=[]、activeConversationId=null、流式状态清空，使右侧回到 K+L 区（WelcomeHeader+QuickCards+ChatInput 默认欢迎页）；② SessionSidebar 新增 switchTab() 函数，切换 tab 时若目标不同则调用 ai.resetPanel()，模板中两个 tab 按钮从直接赋值 tab='chat'/'strategy' 改为 @click="switchTab(...)"；③ 策略模式下「返回聊天」菜单也走 switchTab('chat') 确保重置；④ 原 tab 仅为组件本地 ref，切换只改左侧列表不影响右侧，导致打开聊天记录/策略详情后切 tab 右侧保持原页面，现已修复。需重启 dev 或重新 build 生效。
+
+
+---
+v0.2 bug修复
+
+
+---

@@ -170,3 +170,40 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 2. **计算结果增量更新**：当前每次缓存失效都重算全部历史指标。可改为仅对最新一根 K 线增量计算 MACD/KDJ（指标递推公式），历史结果复用缓存，降低计算量。
 3. **批量指标接口**：当前前端每次只查一个标的，可新增 POST /api/v1/indicators/batch 支持一次查多个标的，减少首页 F 区切换标的时的请求次数。
 
+---
+
+## 2026-08-25 前端 WS 完全未连接 + 添加关注 422（V0.2 全波次审计发现）
+
+**现象**：审计 V0.2 第一波至第三波全部开发后发现两个严重问题：
+1. **WS 完全未连接**：`wsClient` 已加载（模块单例已实例化），但 Network 面板无任何 `ws://` 连接，实时行情全靠 HTTP 轮询（7s/4s）兜底。
+2. **添加关注 422**：`POST /api/v1/watchlist` 返回 422 `symbol: Input should be a valid string`。
+
+**根因**（前端两处）：
+1. **WS leader 选举死锁**：`wsClient.ts` 构造函数里的 `tryBecomeLeader()` 用 localStorage `stock_ws_leader` 键做多标签页 leader 选举，但**无过期检测、无心跳续约**——只要残留旧键（标签页被强杀/浏览器崩溃未触发 `beforeunload` 清理），后续所有新标签页都判定自己是 follower，`connect()` 里 `if (!this.isLeader) return` 直接提前返回，**永远没有标签页真正发起 WS 连接**。5s 轮询也只查"键是否存在"而非"是否过期"，死锁永久持续。浏览器现场证据：`stock_ws_leader` 键存在但 ws store `connected:false`。
+2. **MarketDetailView 未初始化 WS**：详情页 `onMounted` 只调 `useSnapshotPolling`（HTTP 轮询），未调 `ws.init()`。SPA 导航（/market→/market/detail）下单例保留 WS 仍有效，但**直接刷新/直达详情页时 WS 永不连接**。
+3. **添加关注传参类型不符**：后端 `WatchlistAddIn.symbol: str`（schemas/user.py）期望字符串代码；前端 `WatchlistPanel.onPickSuggestion` 传 `s.id`（数字 symbol_id）→ Pydantic 422。同文件 `retrySync` 用 `item.code`（正确），两处不一致。
+
+**修复**（全部前端文件，无后端改动）：
+1. **`src/utils/wsClient.ts` leader 选举重构**：
+   - 不在构造函数竞选，改为首次 `connect()` 按需抢占（避免登录页等未真正需要 WS 的页面占用 leader）；
+   - `claimLeadership()`：localStorage 键不存在或时间戳超过 `LEADER_TIMEOUT_MS=8s` 视为可抢占，写回后二次确认所有权（防多标签页竞态双 leader）；
+   - leader 每 2s 心跳续约时间戳，`beforeunload` 释放；follower 每 2s 检测 leader 超时失效则抢占并建立连接；
+   - `disconnect()` 释放 leader（登出场景）。
+2. **`src/views/MarketDetailView.vue`**：`onMounted` 补充 `ws.init()` + `ws.syncSubscriptions()`（保证直达/刷新详情页 WS 连接）。
+3. **`src/components/trading/WatchlistPanel.vue`**：`onPickSuggestion` 改传 `s.code`（字符串代码）。
+4. **`src/api/market.ts`**：`addWatchlist` 请求体统一 `String(symbol)` 强转，杜绝再传数字触发 422（防御性兜底）。
+
+**验证**：`vue-tsc -b --noEmit` 全绿；浏览器实测 /market 与 /market/detail 两页 WS 均 `connected:true`、订阅 49 个固定指数、控制台 0 错误；添加关注「贵州茅台 600519」成功（sync_status:done），无 422。
+
+**教训**：localStorage 标记型多标签页 leader 选举必须有"心跳续约 + 超时抢占"机制，仅"键存在与否"判定会导致陈旧键死锁；凡有实时数据需求的页面都应初始化 WS 基础设施，不能只依赖 SPA 导航下单例的"侥幸存活"；前端调用后端字段类型必须与 Pydantic schema 严格对齐（`str` 就传字符串），API 层对入参做类型强转可有效兜底。
+
+
+## 2026-08-25 记忆写入反馈缺失（aextract_facts 返回空，对话后无「已记住」提示）
+
+**现象**：AI 对话完成后前端始终收不到 `memory_saved` 事件，无「已记住」轻提示；后端日志出现 `memory extract/save failed: '"content"'`，记忆抽取从未真正执行。
+
+**根因**：`app/agent/memory/memory_service.py` 的 `_EXTRACT_PROMPT` 模板内嵌 JSON 示例时使用了字面 `{` `}` 花括号（`{"content": "一句话事实", ...}`），而 `aextract_facts` 用 `_EXTRACT_PROMPT.format(user_msg=..., assistant_msg=...)` 填充模板。Python 的 `str.format()` 把 `{` `}` 当占位符，`{"content"` 被解析为字段名 → 抛 `KeyError: '"content"'`。且该 `format()` 调用位于 `aextract_facts` 的 `try/except` 之外，异常向上抛到 `chat_service._extract_and_save_memory` 的 `except`（best-effort 吞掉）→ 返回空，导致无 memory_saved 事件。
+
+**修复**：把 `_EXTRACT_PROMPT` 中 JSON 示例的花括号转义为 `{{` `}}`（`{{"content": ...}}`），使 `str.format()` 仅把 `{user_msg}`/`{assistant_msg}` 当占位符、JSON 示例原样输出。新增回归测试 `test_aextract_facts_parses_valid_json`（假 LLM 返回合法 JSON → 正确解析出 fact），确保 format 不再抛异常、抽取链路可用。
+
+**教训**：用 `str.format()` 填充含 JSON 示例/花括号的 prompt 模板时，字面花括号必须转义为 `{{`/`}}`；best-effort 分支吞异常会掩盖模板 bug——凡格式化/解析类语句应置于 try/except 内，或对 prompt 模板做单测，避免运行时静默失败。

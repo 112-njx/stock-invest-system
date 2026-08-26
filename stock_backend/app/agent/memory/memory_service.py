@@ -22,7 +22,7 @@ settings = get_settings()
 _EXTRACT_PROMPT = """你是记忆抽取助手。从下面的对话中抽取「值得长期复用」的用户交易事实（交易体系、交易规则、风险偏好、关键持仓、操作习惯），忽略闲聊与一次性分析结论。
 
 输出严格的 JSON 数组（不要 markdown 代码块），每个元素格式：
-{"content": "一句话事实", "type": "rule|preference|experience|strategy", "importance": 1-10}
+{{"content": "一句话事实", "type": "rule|preference|experience|strategy", "importance": 1-10}}
 要求：
 - importance 表示对后续决策的价值，1-10 分，低于 5 分不要输出
 - 只保留可复用于未来决策的事实

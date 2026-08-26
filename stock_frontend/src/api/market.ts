@@ -132,9 +132,9 @@ export function fetchWatchlist() {
   return request<WatchlistItem[]>({ url: '/watchlist' })
 }
 
-/** 添加关注（symbol 为代码或 symbol_id） */
+/** 添加关注（后端 symbol 字段为 string：代码或 symbol_id 字符串；统一转字符串避免 422） */
 export function addWatchlist(symbol: string | number) {
-  return request<WatchlistItem>({ url: '/watchlist', method: 'post', data: { symbol } })
+  return request<WatchlistItem>({ url: '/watchlist', method: 'post', data: { symbol: String(symbol) } })
 }
 
 /** 删除关注（按 watchlist 记录 id） */

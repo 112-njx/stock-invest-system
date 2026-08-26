@@ -33,6 +33,11 @@ const RECONNECT_BASE = 1000
 const RECONNECT_MAX = 30000
 const HEARTBEAT_TIMEOUT = 30000
 const CHANNEL_NAME = 'stock-market-ws'
+const LEADER_KEY = 'stock_ws_leader'
+/** leader 心跳写入间隔（ms） */
+const LEADER_HEARTBEAT_MS = 2000
+/** leader 超时阈值（ms）：时间戳超过该值视为 leader 已死，可抢占 */
+const LEADER_TIMEOUT_MS = 8000
 
 function buildWsUrl(): string {
   const user = useUserStore()
@@ -56,40 +61,74 @@ class WsClient {
   private channel: BroadcastChannel | null = null
   private isLeader = false
   private manualClose = false
+  private leaderHeartbeat: ReturnType<typeof setInterval> | null = null
+  private leaderWatch: ReturnType<typeof setInterval> | null = null
 
   constructor() {
     if (typeof BroadcastChannel !== 'undefined') {
       this.channel = new BroadcastChannel(CHANNEL_NAME)
       this.channel.onmessage = (e) => this.onChannelMessage(e.data)
-      // 竞选 leader：第一个标签页成为 leader，负责真实 WS 连接
-      this.tryBecomeLeader()
+      // 不在构造时竞选 leader：等首次 connect() 按需抢占，
+      // 避免登录页等未真正需要 WS 的页面占用 leader 导致行情页沦为 follower
     } else {
       this.isLeader = true
     }
   }
 
-  private tryBecomeLeader() {
-    // 简单 leader 选举：设置 localStorage 标记，其他标签页检测到已有 leader 则不连接
-    const leaderKey = 'stock_ws_leader'
-    const existing = localStorage.getItem(leaderKey)
-    if (!existing) {
-      this.isLeader = true
-      localStorage.setItem(leaderKey, String(Date.now()))
-      window.addEventListener('beforeunload', () => {
-        if (this.isLeader) localStorage.removeItem(leaderKey)
-      })
-    } else {
-      this.isLeader = false
-      // 定期检查 leader 是否还活着（每 5s）
-      setInterval(() => {
-        const leader = localStorage.getItem(leaderKey)
-        if (!leader) {
-          this.isLeader = true
-          localStorage.setItem(leaderKey, String(Date.now()))
-          this.connect()
-        }
-      }, 5000)
+  /**
+   * 尝试成为 leader（负责真实 WS 连接）。
+   * - localStorage 键不存在、或时间戳超过 LEADER_TIMEOUT_MS 视为可抢占
+   * - 抢占成功后二次确认所有权（防止多标签页同时写入导致双 leader）
+   */
+  private claimLeadership(): boolean {
+    const now = Date.now()
+    const existing = localStorage.getItem(LEADER_KEY)
+    if (existing && now - Number(existing) <= LEADER_TIMEOUT_MS) {
+      return false // 存在活跃 leader，让出
     }
+    localStorage.setItem(LEADER_KEY, String(now))
+    if (localStorage.getItem(LEADER_KEY) !== String(now)) {
+      return false // 竞态：被其他标签页覆盖，让出
+    }
+    this.isLeader = true
+    this.startLeaderHeartbeat()
+    window.addEventListener('beforeunload', this.releaseLeadership)
+    return true
+  }
+
+  /** leader 心跳：每 2s 刷新时间戳，供其他标签页探测存活 */
+  private startLeaderHeartbeat() {
+    if (this.leaderHeartbeat) return
+    this.leaderHeartbeat = setInterval(() => {
+      if (this.isLeader) localStorage.setItem(LEADER_KEY, String(Date.now()))
+    }, LEADER_HEARTBEAT_MS)
+  }
+
+  private stopLeaderHeartbeat() {
+    if (this.leaderHeartbeat) {
+      clearInterval(this.leaderHeartbeat)
+      this.leaderHeartbeat = null
+    }
+  }
+
+  /** 释放 leader：清心跳与 localStorage 键 */
+  private releaseLeadership = () => {
+    if (!this.isLeader) return
+    this.isLeader = false
+    this.stopLeaderHeartbeat()
+    localStorage.removeItem(LEADER_KEY)
+  }
+
+  /** follower 监视：每 2s 检查 leader 是否超时失效，失效则抢占并建立连接 */
+  private watchLeader() {
+    if (this.leaderWatch) return
+    this.leaderWatch = setInterval(() => {
+      if (this.isLeader) return
+      if (this.claimLeadership()) {
+        if (this.leaderWatch) { clearInterval(this.leaderWatch); this.leaderWatch = null }
+        this.connect()
+      }
+    }, LEADER_HEARTBEAT_MS)
   }
 
   private onChannelMessage(data: { type: string; payload?: unknown }) {
@@ -102,7 +141,13 @@ class WsClient {
   }
 
   connect() {
-    if (!this.isLeader) return
+    if (!this.isLeader) {
+      // 仅在实际需要 WS 的页面抢占 leader；抢占失败说明存在活跃 leader，作为 follower 等待接管
+      if (!this.claimLeadership()) {
+        this.watchLeader()
+        return
+      }
+    }
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return
     this.manualClose = false
     this.clearReconnectTimer()
@@ -159,6 +204,7 @@ class WsClient {
 
   disconnect() {
     this.manualClose = true
+    this.releaseLeadership()
     this.clearReconnectTimer()
     this.clearHeartbeat()
     if (this.ws) {

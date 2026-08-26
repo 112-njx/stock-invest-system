@@ -125,7 +125,7 @@ watch(query, (q) => {
 
 async function onPickSuggestion(s: SymbolInfo) {
   try {
-    const item = await addWatchlist(s.id)
+    const item = await addWatchlist(s.code)
     market.addWatchlistItem(item)
     query.value = ''
     suggestions.value = []
