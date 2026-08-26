@@ -261,3 +261,7 @@ Agent的后端编码记录,你需要按照：
 编码时间：2026-08-26
 编码内容（描述）：修复实时快照缺失（续）。⑤工厂按资产类型路由：factory.fetch_realtime 重写为按 asset_type 分组逐类型走优先级链（首个含 available 结果即采用，全 unavailable/异常/熔断降级），使 sina(股票+指数)+ths(行业) 在东财限流时分别兜底而非整批截断；_provider_params 识别 BK/881 前缀（同花顺行业代码）避免回填破坏行业路由。⑥K线推导兜底：sync_service 增 derive_snapshot_from_kline（最新日K收盘推导全字段，updated_at=K线时间标注 data_age_seconds）；run_realtime_poll 对 unavailable 标生成兜底快照；run_fixed_indices_sync 同步K线后直接生成快照（预同步完成即有空快照）。⑦一次性接口 POST /api/v1/fetch-all 免鉴权同步执行全量同步。验收：全库 257 pytest 全绿 + ruff，api-docs 已补。
 
+---
+编码时间：2026-08-26
+编码内容（描述）：修复运行记录耗时全为 null 的 bug（审计发现问题2）。根因：agent_runs.duration_ms 仅深度模式 _run_deep 写入，其余路径（ReAct/strategy/失败/降级/超时）不写，落库 NULL，前端 total_duration 显示"--"。修复：stream_chat 创建 run 后记 run._started_monotonic，_save_result 在 duration_ms 未显式传入时按该起始时间统一计算（覆盖所有路径）；同步移除 _run_deep 局部耗时计算以统一「run 创建→结束」口径。验收：新增 2 测试（ReAct 成功路径 + 失败路径均写非空 duration_ms），全库 259 pytest 全绿 + ruff。
+

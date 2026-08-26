@@ -1,31 +1,22 @@
 <script setup lang="ts">
 /**
  * 阶段六 6.3 · Agent 运行记录弹窗（M 区「运行记录」菜单项）：
- * 分页展示 GET /api/v1/agent/runs（标的/结论/耗时/时间），点击单条复用 AgentTimeline
- * 回看完整 5 节点决策链（历史数据，非 SSE 实时）。
- * 保持现有弹窗式交互（界面固定约束，不改造为 N 区标签页）。
+ * 分页展示 GET /api/v1/agent/runs（结论/耗时/时间），点击单条关闭弹窗并跳转 N 区
+ * （AgentRunDetailPanel + AgentTimeline）回看完整决策链。
  */
 import { computed, onMounted, ref } from 'vue'
-import {
-  fetchAgentRuns,
-  fetchAgentRunSteps,
-  type AgentRun,
-  type AgentStep,
-  type TimelineNode,
-} from '@/api/ai'
-import AgentTimeline from '@/components/ai/AgentTimeline.vue'
+import { useAiStore } from '@/stores/ai'
+import { fetchAgentRuns, type AgentRun } from '@/api/ai'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+
+const ai = useAiStore()
 
 const runs = ref<AgentRun[]>([])
 const loading = ref(true)
 const page = ref(1)
 const size = 20
 const total = ref(0)
-
-const detail = ref<AgentRun | null>(null)
-const detailNodes = ref<TimelineNode[]>([])
-const detailLoading = ref(false)
 
 const RUN_TYPE_LABEL: Record<string, string> = {
   diagnose: '诊断符号',
@@ -63,30 +54,10 @@ function prevPage() {
   void load()
 }
 
-/** AgentStep → 时间线节点（历史步骤均为 done/failed；error 存于 meta.error） */
-function stepToNode(s: AgentStep): TimelineNode {
-  return {
-    node: s.node || s.step_name,
-    status: s.status === 'failed' ? 'failed' : 'done',
-    summary: s.summary ?? undefined,
-    content: s.content ?? undefined,
-    duration_ms: s.duration_ms ?? undefined,
-    error: typeof s.meta?.error === 'string' ? (s.meta.error as string) : undefined,
-  }
-}
-
-async function openDetail(run: AgentRun) {
-  detail.value = run
-  detailNodes.value = []
-  detailLoading.value = true
-  try {
-    const steps = await fetchAgentRunSteps(run.id)
-    detailNodes.value = steps.map(stepToNode)
-  } catch {
-    detailNodes.value = []
-  } finally {
-    detailLoading.value = false
-  }
+/** 点击运行记录：关闭弹窗并跳转 N 区展示完整决策链（6.3） */
+function openDetail(run: AgentRun) {
+  emit('close')
+  void ai.openRunDetail(run.id)
 }
 
 function formatDuration(ms?: number | null): string {
@@ -137,17 +108,6 @@ onMounted(() => void load())
           <span class="run-pager__info">{{ page }} / {{ totalPages }}</span>
           <button class="run-pager__btn" :disabled="page >= totalPages" @click="nextPage">下一页</button>
         </div>
-
-        <!-- 详情：复用 AgentTimeline 回看决策链 -->
-        <div v-if="detail" class="run-detail">
-          <div class="run-detail__bar">
-            <span>决策链（{{ detailNodes.length }} 节点）</span>
-            <button class="run-detail__close" @click="detail = null">收起</button>
-          </div>
-          <div v-if="detailLoading" class="dlg-empty">加载中…</div>
-          <div v-else-if="!detailNodes.length" class="dlg-empty">该记录暂无步骤输出</div>
-          <AgentTimeline v-else :nodes="detailNodes" />
-        </div>
       </div>
     </div>
   </div>
@@ -164,7 +124,7 @@ onMounted(() => void load())
   background: rgba(0, 0, 0, 0.45);
 }
 .dialog {
-  width: 640px;
+  width: 560px;
   max-width: 92vw;
   max-height: 82vh;
   display: flex;
@@ -300,22 +260,5 @@ onMounted(() => void load())
 .run-pager__info {
   font-size: 12px;
   color: var(--text-muted);
-}
-.run-detail {
-  margin-top: 12px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
-.run-detail__bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-bottom: 8px;
-}
-.run-detail__close {
-  font-size: 12px;
-  color: var(--accent);
 }
 </style>

@@ -15,6 +15,7 @@ import ChatMessages from '@/components/ai/ChatMessages.vue'
 import QuickCards from '@/components/ai/QuickCards.vue'
 import ChatInput from '@/components/ai/ChatInput.vue'
 import StrategyDetailPanel from '@/components/ai/StrategyDetailPanel.vue'
+import AgentRunDetailPanel from '@/components/ai/AgentRunDetailPanel.vue'
 
 const ai = useAiStore()
 const market = useMarketStore()
@@ -114,7 +115,8 @@ async function send() {
   await ai.streamSend({
     content: finalContent,
     conversation_id: ai.activeConversationId,
-    symbol: symbol ? symbol.id : null,
+    // 后端 ChatIn.symbol 为 str，需转字符串避免 422（与关注列表 addWatchlist 一致）
+    symbol: symbol ? String(symbol.id) : null,
     agent_id: ai.selectedAgentId || null,
     run_type: runType,
   })
@@ -143,9 +145,10 @@ onUnmounted(() => {
       <SessionSidebar />
     </aside>
 
-    <!-- 右侧主区：K+L（默认）与 N 区互斥切换 -->
+    <!-- 右侧主区：K+L（默认）与 N 区/运行详情互斥切换 -->
     <main class="ai-main">
       <StrategyDetailPanel v-if="ai.mode === 'strategy'" @back="ai.closeStrategy()" />
+      <AgentRunDetailPanel v-else-if="ai.mode === 'run'" @back="ai.closeRunDetail()" />
       <div v-else class="ai-main__chat">
         <!-- K 区标题 + L 区功能卡片：仅在无消息（新会话/未发送）时显示，发送后隐藏避免遮挡聊天（bug4-2） -->
         <WelcomeHeader v-if="!ai.messages.length && !ai.streaming" />

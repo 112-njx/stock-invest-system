@@ -273,7 +273,6 @@ async def _run_deep(
     """深度模式：LangGraph 多智能体研究图（技术分析→多空辩论→风控→决策）。"""
     parts: list[str] = []
     failed_nodes: list[str] = []
-    started = time.monotonic()
     try:
         async for step in run_research_graph(db, agent_model, symbol=symbol, question=content, run_type=run_type):
             node = step["node"]
@@ -308,7 +307,6 @@ async def _run_deep(
                 step_ev["error"] = error
             yield step_ev
         db.commit()
-        total_duration_ms = int((time.monotonic() - started) * 1000)
         full_text = "\n\n".join(parts).strip() or _fallback_text()
         # 阶段七 7.2：部分节点异常时在结论标注 + agent_runs 标记，run 仍为 success（图已完成）
         partial = bool(failed_nodes)
@@ -317,7 +315,6 @@ async def _run_deep(
         llm_svc.breaker.on_success()
         assistant_msg = _save_result(
             db, run, user_msg, conv, symbol_id, full_text, 0, "success",
-            duration_ms=total_duration_ms,
             error=f"部分节点异常: {','.join(failed_nodes)}" if partial else None,
         )
         saved_facts = await _extract_and_save_memory(db, run.user_id, conv.id, content, full_text, llm_svc)
@@ -448,6 +445,7 @@ async def stream_chat(
         run = agent_repo.create_run(
             db, user_id, run_type, content, agent_id=agent_id, conversation_id=conv.id, symbol_id=symbol_id
         )
+        run._started_monotonic = time.monotonic()  # 运行起始（供 _save_result 统一计算 duration_ms）
         db.commit()
 
         # ---- LLM 不可用降级 ----
@@ -537,7 +535,15 @@ async def _extract_and_save_memory(db: Session, user_id: int, source_id: int | N
 
 
 def _save_result(db, run, user_msg, conv, symbol_id, text, tokens, status, error=None, duration_ms=None):
-    """保存 assistant 消息 + 更新 run 状态（同事务），返回 assistant 消息。"""
+    """保存 assistant 消息 + 更新 run 状态（同事务），返回 assistant 消息。
+
+    阶段八修复：duration_ms 未显式传入时按 run 创建时刻统一计算，保证所有路径
+    （ReAct/strategy/失败/降级/超时）都写入非空耗时。
+    """
+    if duration_ms is None:
+        started = getattr(run, "_started_monotonic", None)
+        if started is not None:
+            duration_ms = int((time.monotonic() - started) * 1000)
     assistant_msg = conversation_repo.add_message(db, conv.id, "assistant", text, symbol_id=symbol_id, tokens=tokens)
     agent_repo.finish_run(db, run, status=status, output=text, tokens=tokens, duration_ms=duration_ms, error=error)
     db.commit()

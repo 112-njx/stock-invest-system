@@ -138,3 +138,12 @@ Agent的前端编码记录,你需要按照：
 
 编码时间：2026-08-25
 编码内容（描述）：V0.2 阶段七 7.4 策略模板库——api/ai.ts 新增 StrategyTemplate 类型 + fetchStrategyTemplates()/fetchStrategyTemplate(id)；新增 StrategyTemplatesDialog.vue（5 模板卡片：名称+描述，点击详情拿完整 code → createStrategy 创建草稿 → openStrategy 打开 N 区编辑器）；ChatInput 策略模块顶部新增「从模板创建」入口按钮，弹窗渲染在输入区。参数「高亮可编辑」由 N 区现有 textarea 承载（不引入语法高亮依赖，遵循界面固定约束与避免新依赖）。typecheck/lint/build 全绿。
+
+编码时间：2026-08-26
+编码内容（描述）：审计修复 问题1（深度分析 HTTP 422）——根因是前端把 symbol 作为数字（symbol.id）发送，后端 ChatIn.symbol 为 str（Pydantic 2.13 拒绝 int→str 触发 422）；AIView.send 改为 `symbol: symbol ? String(symbol.id) : null`，与关注列表 addWatchlist 的「统一转字符串避免 422」一致。此 422 影响所有带标的的对话（非仅深度分析）。typecheck/lint/build 全绿。
+
+编码时间：2026-08-26
+编码内容（描述）：审计修复 问题5（新会话残留旧错误）——根因是 openConversation/createConversation 只重置了 messages/timeline/tokenUsage，未清 streamError 等瞬时态，上一会话的 422（NETWORK_ERROR）错误条残留到新会话。stores/ai.ts 抽 resetTransientState()（清 streamError/truncatedNotice/degradedBanner/memorySavedNotice/strategyOutput/strategyReady/autoBacktest/timeline/tokenUsage），在 openConversation/createConversation 调用，resetPanel 也复用。typecheck/lint/build 全绿。
+
+编码时间：2026-08-26
+编码内容（描述）：审计修复 问题3（运行记录点击跳转 N 区）——根因是 6.3 原实现为弹窗内联展开，与 roadmap「跳转 N 区」预期不符（且受 422 连带多数 run 无 steps）。改为：stores/ai.ts 新增 runDetail 状态 + openRunDetail()/closeRunDetail()（AgentStep→TimelineNode 映射抽为模块级 agentStepToNode，失败回退 chat）+ AiPanelMode 增 'run'；新增 AgentRunDetailPanel.vue（N 区位置展示运行元信息 + AgentTimeline 决策链）；AIView 增 run 模式渲染；AgentRunsDialog 点击改为 emit('close') + openRunDetail 跳转。typecheck/lint/build 全绿。

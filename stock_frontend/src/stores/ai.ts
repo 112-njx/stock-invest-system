@@ -10,10 +10,12 @@ import {
   resumeChat,
   streamChat,
   createBacktest,
+  fetchAgentRunDetail,
   fetchBacktestResults,
   fetchBacktestTask,
   AGENT_NODE_ORDER,
   type AgentConfig,
+  type AgentRun,
   type AgentStep,
   type BacktestResult,
   type ChatMessage,
@@ -25,8 +27,8 @@ import {
 
 /** 卡片类型：创建交易策略 / 诊断符号 / 交易计划 / 机会雷达 */
 export type QuickCardType = 'create' | 'diagnose' | 'plan' | 'radar'
-/** 对话区展示模式：chat=聊天(K+L)，strategy=N区策略详情 */
-export type AiPanelMode = 'chat' | 'strategy'
+/** 对话区展示模式：chat=聊天(K+L)，strategy=N区策略详情，run=运行记录详情 */
+export type AiPanelMode = 'chat' | 'strategy' | 'run'
 /** 流式连接状态：idle / streaming（正常接收）/ reconnecting（断线自动重连）/ manual（需点击继续） */
 export type StreamStatus = 'idle' | 'streaming' | 'reconnecting' | 'manual'
 
@@ -50,6 +52,18 @@ let retryTimer: number | null = null
 let memoryTimer: number | null = null
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** AgentStep → 时间线节点（历史步骤均为 done/failed；error 存于 meta.error） */
+function agentStepToNode(s: AgentStep): TimelineNode {
+  return {
+    node: s.node || s.step_name,
+    status: s.status === 'failed' ? 'failed' : 'done',
+    summary: s.summary ?? undefined,
+    content: s.content ?? undefined,
+    duration_ms: s.duration_ms ?? undefined,
+    error: typeof s.meta?.error === 'string' ? (s.meta.error as string) : undefined,
+  }
+}
 
 /** AI 策略输出后的操作信息（4.5：保存交易策略 / 回测显示） */
 export interface StrategyOutputInfo {
@@ -75,6 +89,8 @@ export const useAiStore = defineStore('ai', {
     mode: 'chat' as AiPanelMode,
     /** 当前展示的策略（N 区） */
     activeStrategy: null as Strategy | null,
+    /** 当前展示的运行记录详情（run 模式，6.3 跳转 N 区） */
+    runDetail: null as { run: AgentRun; steps: TimelineNode[] } | null,
 
     /* ---------- 策略 / Agent ---------- */
     strategies: [] as Strategy[],
@@ -142,20 +158,33 @@ export const useAiStore = defineStore('ai', {
     async loadConversations() {
       this.conversations = await fetchConversations()
     },
+    /** 清空流式瞬时态（错误/超时/降级/记忆提示/策略结果/时间线/token），避免上一会话残留 */
+    resetTransientState() {
+      this.streamError = null
+      this.truncatedNotice = false
+      this.degradedBanner = false
+      this.memorySavedNotice = null
+      this.strategyOutput = null
+      this.strategyReady = null
+      this.autoBacktestStatus = 'idle'
+      this.autoBacktestTaskId = null
+      this.autoBacktestResult = null
+      this.autoBacktestError = null
+      this.timeline = []
+      this.tokenUsage = { prompt: 0, completion: 0, total: 0 }
+    },
     async createConversation() {
       const conv = await apiCreateConversation()
       this.conversations.unshift(conv)
       this.activeConversationId = conv.id
       this.messages = []
-      this.timeline = []
-      this.tokenUsage = { prompt: 0, completion: 0, total: 0 }
+      this.resetTransientState()
       return conv
     },
     async openConversation(id: number) {
       this.activeConversationId = id
       this.messages = await fetchMessages(id)
-      this.timeline = []
-      this.tokenUsage = { prompt: 0, completion: 0, total: 0 }
+      this.resetTransientState()
     },
     removeConversation(id: number) {
       this.conversations = this.conversations.filter((c) => c.id !== id)
@@ -178,18 +207,34 @@ export const useAiStore = defineStore('ai', {
       this.activeStrategy = null
       this.mode = 'chat'
     },
+    /** 打开运行记录详情（6.3：点击运行记录跳转 N 区展示完整决策链） */
+    async openRunDetail(runId: number) {
+      try {
+        const detail = await fetchAgentRunDetail(runId)
+        const steps = (detail.steps ?? []).map(agentStepToNode)
+        this.runDetail = { run: detail, steps }
+        this.mode = 'run'
+      } catch {
+        // 拉取失败：回到聊天，弹窗已由调用方关闭
+        this.runDetail = null
+        this.mode = 'chat'
+      }
+    },
+    closeRunDetail() {
+      this.runDetail = null
+      this.mode = 'chat'
+    },
     /** 切换聊天/策略 tab 时重置右侧为默认页面（K+L区：空会话+欢迎页+功能卡片） */
     resetPanel() {
       this.abortStream()
+      this.resetTransientState()
       this.mode = 'chat'
       this.activeStrategy = null
+      this.runDetail = null
       this.messages = []
       this.activeConversationId = null
       this.streamingContent = ''
       this.streamingSteps = []
-      this.timeline = []
-      this.strategyOutput = null
-      this.tokenUsage = { prompt: 0, completion: 0, total: 0 }
     },
 
     /* ---------- Agent ---------- */

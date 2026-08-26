@@ -693,6 +693,47 @@ def test_stream_chat_no_title_on_followup_message(client: TestClient, monkeypatc
         _cleanup_users(uname)
 
 
+# ---- 修复：非深度路径也写入 agent_runs.duration_ms ----
+def test_stream_chat_non_deep_writes_duration(client: TestClient):
+    """ReAct（custom）路径运行结束后 agent_runs.duration_ms 非空。"""
+    uname = _uname()
+    try:
+        token = _register(client, uname)
+        conv = client.post("/api/v1/conversations", json={}, headers=_auth(token)).json()["data"]
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+        fake = FakeLLMService(FakeChatModel(final_text="普通分析结果"))
+        _run_stream_chat(fake, user_id=me["id"], conversation_id=conv["id"], symbol=None, content="分析", run_type="custom")
+        db = get_session()
+        try:
+            run = db.query(AgentRun).filter(AgentRun.conversation_id == conv["id"]).first()
+            assert run is not None and run.status == "success"
+            assert run.duration_ms is not None and run.duration_ms >= 0
+        finally:
+            db.close()
+    finally:
+        _cleanup_users(uname)
+
+
+def test_stream_chat_failure_writes_duration(client: TestClient):
+    """失败路径（LLM 异常）运行结束后 agent_runs.duration_ms 非空。"""
+    uname = _uname()
+    try:
+        token = _register(client, uname)
+        me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
+        fake = FakeLLMService(FakeErrorChatModel(), available=True)
+        events = _run_stream_chat(fake, user_id=me["id"], conversation_id=None, symbol=None, content="hi", run_type="custom")
+        assert any(e["type"] == "error" for e in events)
+        db = get_session()
+        try:
+            run = db.query(AgentRun).order_by(AgentRun.id.desc()).first()
+            assert run is not None and run.status == "failed"
+            assert run.duration_ms is not None and run.duration_ms >= 0
+        finally:
+            db.close()
+    finally:
+        _cleanup_users(uname)
+
+
 # ---- API：SSE 降级 ----
 def test_chat_api_stream_and_requires_token(client: TestClient, monkeypatch):
     uname = _uname()
