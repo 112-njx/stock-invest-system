@@ -115,6 +115,26 @@ curl "http://127.0.0.1:8000/api/v1/sync-status?scope=fixed_indices"
 
 （无进行中同步时返回 `{"status":"done","progress":100,"total":0,"message":"无进行中的同步"}`）
 
+## 6. 一次性全量同步
+
+- **接口名称**：一次性全量同步
+- **请求 Method**：POST
+- **请求 Path**：/api/v1/fetch-all
+- **接口作用**：免鉴权，同步执行固定指数K线+快照 + 全量实时快照（本地测试无 Celery/beat 时一次性补齐数据）。
+- **请求 Body**：无
+
+**请求示例（curl）**
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/fetch-all"
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"全量同步完成","data":{"fixed_indices":{"000001":{"1d":1,"1w":1,"1mon":1}},"realtime":{"synced":49}}}
+```
+
 # 用户鉴权 API（Auth）
 
 ## 1. 用户注册

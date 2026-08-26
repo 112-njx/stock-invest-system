@@ -252,3 +252,12 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-08-23
 编码内容（描述）：V0.2 阶段八 8.7 会话标题自动生成。chat_service 增 _TITLE_PROMPT/_generate_conversation_title（异步 LLM 生成≤15字标题，更新 conversations.title，始终在 finally 向队列放结果/哨兵避免空等）/ _schedule_title_update；stream_chat 首条消息（count_messages==1）且 llm 可用时 create_task 触发，done 后 wait_for(TITLE_WAIT_TIMEOUT=3s) 从队列取 title 事件 push {"type":"title","title","conversation_id"}（失败/超时静默）。config 增 TITLE_WAIT_TIMEOUT。验收：首条消息生成标题并 push title 事件+落库、第二条不触发、无 3s 空等，全库 250 pytest 全绿 + ruff。
+
+---
+编码时间：2026-08-26
+编码内容（描述）：修复第一波实时快照大面积缺失。①降频规避限流：REALTIME_POLL_INTERVAL 默认 5→15（config.py/.env/.env.example 三处），降低东财风控触发概率。②新浪实时降级源：SinaProvider 实现 fetch_realtime（A股 stock_zh_a_spot + 指数 stock_zh_index_spot_sina，代码去 sh/sz 前缀匹配），can_fetch_realtime=True、can_fetch_realtime_type 限 stock/index。③同花顺实时降级源：THSProvider 实现 fetch_realtime（行业一览表 stock_board_industry_summary_ths，均价近似现价+涨跌幅/量/额）+ resolve_index_code（stock_board_industry_name_ths 名称→881xxx 板块代码，TTL 缓存），can_fetch_realtime=True。④base.py 增 can_fetch_realtime_type 默认委托。验收：sina/ths 实时与回填 4 单测。
+
+---
+编码时间：2026-08-26
+编码内容（描述）：修复实时快照缺失（续）。⑤工厂按资产类型路由：factory.fetch_realtime 重写为按 asset_type 分组逐类型走优先级链（首个含 available 结果即采用，全 unavailable/异常/熔断降级），使 sina(股票+指数)+ths(行业) 在东财限流时分别兜底而非整批截断；_provider_params 识别 BK/881 前缀（同花顺行业代码）避免回填破坏行业路由。⑥K线推导兜底：sync_service 增 derive_snapshot_from_kline（最新日K收盘推导全字段，updated_at=K线时间标注 data_age_seconds）；run_realtime_poll 对 unavailable 标生成兜底快照；run_fixed_indices_sync 同步K线后直接生成快照（预同步完成即有空快照）。⑦一次性接口 POST /api/v1/fetch-all 免鉴权同步执行全量同步。验收：全库 257 pytest 全绿 + ruff，api-docs 已补。
+

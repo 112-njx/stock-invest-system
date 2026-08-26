@@ -137,12 +137,24 @@ def test_realtime_poll_industry_fills_from_kline():
     db.add_all(
         [
             Kline1d(
-                symbol_id=sym.id, ts=now - timedelta(days=2),
-                open=2900, high=2950, low=2880, close=2920, volume=1000, amount=1e6,
+                symbol_id=sym.id,
+                ts=now - timedelta(days=2),
+                open=2900,
+                high=2950,
+                low=2880,
+                close=2920,
+                volume=1000,
+                amount=1e6,
             ),
             Kline1d(
-                symbol_id=sym.id, ts=now - timedelta(days=1),
-                open=2950, high=3050, low=2930, close=3000, volume=1200, amount=1.2e6,
+                symbol_id=sym.id,
+                ts=now - timedelta(days=1),
+                open=2950,
+                high=3050,
+                low=2930,
+                close=3000,
+                volume=1200,
+                amount=1.2e6,
             ),
         ]
     )
@@ -150,9 +162,20 @@ def test_realtime_poll_industry_fills_from_kline():
     db.close()
 
     quote = RealtimeQuote(
-        code="BK0426", name="测试油气开采", asset_type="industry_index",
-        price=3000.0, change=5.0, change_pct=0.17, turnover=0.9,
-        open=None, high=None, low=None, pre_close=None, volume=None, amount=None, amplitude=None,
+        code="BK0426",
+        name="测试油气开采",
+        asset_type="industry_index",
+        price=3000.0,
+        change=5.0,
+        change_pct=0.17,
+        turnover=0.9,
+        open=None,
+        high=None,
+        low=None,
+        pre_close=None,
+        volume=None,
+        amount=None,
+        amplitude=None,
         available=True,
     )
     with patch("app.services.sync_service.get_provider", return_value=_realtime_mock(quote=quote)):
@@ -174,9 +197,16 @@ def test_realtime_poll_stock_upserts_fundamentals():
     """个股快照同步时落 stock_fundamentals（总市值/PE）。"""
     sym = _make_symbol()
     quote = RealtimeQuote(
-        code="600519", name="测试贵州茅台", asset_type="stock",
-        price=102.0, change=1.0, change_pct=0.99, volume=1200, amount=1.2e6,
-        available=True, extra={"market_cap": 1.7e12, "pe": 25.3},
+        code="600519",
+        name="测试贵州茅台",
+        asset_type="stock",
+        price=102.0,
+        change=1.0,
+        change_pct=0.99,
+        volume=1200,
+        amount=1.2e6,
+        available=True,
+        extra={"market_cap": 1.7e12, "pe": 25.3},
     )
     with patch("app.services.sync_service.get_provider", return_value=_realtime_mock(quote=quote)):
         result = sync_service.run_realtime_poll(symbol_id=sym.id)
@@ -198,8 +228,13 @@ def test_realtime_poll_index_upserts_valuation():
     db.refresh(sym)
     db.close()
     quote = RealtimeQuote(
-        code="000300", name="测试沪深300", asset_type="index",
-        price=4200.0, change=20.0, change_pct=0.48, available=True,
+        code="000300",
+        name="测试沪深300",
+        asset_type="index",
+        price=4200.0,
+        change=20.0,
+        change_pct=0.48,
+        available=True,
     )
     with patch(
         "app.services.sync_service.get_provider",
@@ -224,9 +259,15 @@ def test_realtime_poll_index_volume_none_stored_null():
     db.refresh(sym)
     db.close()
     quote = RealtimeQuote(
-        code="DJI", name="测试道琼斯", asset_type="index",
-        price=40000.0, change=100.0, change_pct=0.25,
-        volume=None, amount=None, available=True,
+        code="DJI",
+        name="测试道琼斯",
+        asset_type="index",
+        price=40000.0,
+        change=100.0,
+        change_pct=0.25,
+        volume=None,
+        amount=None,
+        available=True,
     )
     with patch(
         "app.services.sync_service.get_provider",
@@ -239,4 +280,80 @@ def test_realtime_poll_index_volume_none_stored_null():
     assert snap is not None
     assert snap.volume is None
     assert snap.amount is None
+    db.close()
+
+
+def test_realtime_poll_kline_fallback_when_all_unavailable():
+    """实时源全部不可用：用最新日K收盘价推导快照（页面不显示 '--'）。"""
+    db = get_session()
+    sym = Symbol(code="600519", name="测试茅台兜底", type="stock", market="SSE")
+    db.add(sym)
+    db.commit()
+    db.refresh(sym)
+    now = datetime.now(UTC)
+    db.add_all(
+        [
+            Kline1d(
+                symbol_id=sym.id,
+                ts=now - timedelta(days=2),
+                open=100,
+                high=102,
+                low=99,
+                close=101,
+                volume=1000,
+                amount=1e6,
+            ),
+            Kline1d(
+                symbol_id=sym.id,
+                ts=now - timedelta(days=1),
+                open=101,
+                high=103,
+                low=100,
+                close=102,
+                volume=1200,
+                amount=1.2e6,
+            ),
+        ]
+    )
+    db.commit()
+    db.close()
+
+    quote = RealtimeQuote(code="600519", name="测试茅台兜底", asset_type="stock", available=False)
+    with patch("app.services.sync_service.get_provider", return_value=_realtime_mock(quote=quote)):
+        result = sync_service.run_realtime_poll(symbol_id=sym.id)
+    assert result["synced"] == 1
+    db = get_session()
+    snap = db.get(SnapshotRealtime, sym.id)
+    assert snap is not None
+    assert float(snap.price) == 102.0  # 最新日K close
+    assert float(snap.pre_close) == 101.0  # 前一根 close
+    assert float(snap.change) == 1.0
+    assert snap.volume == 1200
+    db.close()
+
+
+def test_fixed_indices_sync_generates_snapshot():
+    """预同步完成后固定指数有快照记录（K线推导兜底）。"""
+    db = get_session()
+    sym = Symbol(code="000001", name="测试上证指数", type="index", market="SSE", is_fixed_index=True)
+    db.add(sym)
+    db.commit()
+    db.refresh(sym)
+    db.close()
+
+    provider = MagicMock()
+    provider.resolve_index_code.return_value = None
+    now = datetime.now(UTC)
+    provider.fetch_kline.return_value = [
+        KlineBar(ts=now - timedelta(days=1), open=3880, high=3940, low=3870, close=3896, volume=1000, amount=1e8)
+    ]
+    with (
+        patch("app.services.sync_service.get_provider", return_value=provider),
+        patch("app.services.sync_service.symbol_repo.list_fixed_indices", return_value=[sym]),
+    ):
+        sync_service.run_fixed_indices_sync()
+    db = get_session()
+    snap = db.get(SnapshotRealtime, sym.id)
+    assert snap is not None
+    assert float(snap.price) == 3896.0
     db.close()

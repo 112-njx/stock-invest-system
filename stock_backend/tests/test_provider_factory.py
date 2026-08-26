@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-from app.data_providers.base import BaseDataProvider, KlineBar, RealtimeSymbol, unavailable_quote
+from app.data_providers.base import BaseDataProvider, KlineBar, RealtimeQuote, RealtimeSymbol, unavailable_quote
 from app.data_providers.eastmoney import EastMoneyProvider
 from app.data_providers.factory import DataProviderFactory, ProviderCircuit, reset_provider
 from app.data_providers.sina import SinaProvider, to_sina_index
@@ -39,6 +39,58 @@ def _df_ths():
     )
 
 
+def _df_sina_spot():
+    return pd.DataFrame(
+        {
+            "代码": ["sh600519", "sz000001"],
+            "名称": ["贵州茅台", "平安银行"],
+            "最新价": [1350.6, 12.3],
+            "涨跌额": [10.2, 0.1],
+            "涨跌幅": [0.71, 0.82],
+            "昨收": [1340.4, 12.2],
+            "今开": [1345.0, 12.1],
+            "最高": [1355.0, 12.4],
+            "最低": [1338.0, 12.0],
+            "成交量": [50000, 90000],
+            "成交额": [7.2e9, 1.1e9],
+        }
+    )
+
+
+def _df_sina_index_spot():
+    return pd.DataFrame(
+        {
+            "代码": ["sh000001", "sz399001"],
+            "名称": ["上证指数", "深证成指"],
+            "最新价": [3896.49, 11000.0],
+            "涨跌额": [39.69, 20.0],
+            "涨跌幅": [1.02, 0.18],
+            "昨收": [3856.8, 10980.0],
+            "今开": [3880.0, 10990.0],
+            "最高": [3940.0, 11020.0],
+            "最低": [3870.0, 10970.0],
+            "成交量": [1000, 2000],
+            "成交额": [1e8, 2e8],
+        }
+    )
+
+
+def _df_ths_summary():
+    return pd.DataFrame(
+        {
+            "板块": ["半导体", "证券"],
+            "涨跌幅": [1.01, -0.66],
+            "总成交量": [1000, 2000],
+            "总成交额": [1e8, 2e8],
+            "均价": [2000.0, 1500.0],
+        }
+    )
+
+
+def _df_ths_name():
+    return pd.DataFrame({"name": ["半导体", "证券"], "code": ["881121", "881157"]})
+
+
 # ---- 4.1 独立 Provider ----
 def test_eastmoney_contains_no_sina_ths():
     src = inspect.getsource(EastMoneyProvider)
@@ -58,9 +110,15 @@ def test_sina_provider_scope_and_fetch():
     assert p.can_fetch_kline("index", "1d") is True
     assert p.can_fetch_kline("stock", "1d") is False  # 仅 A 股指数
     assert p.can_fetch_kline("index", "15m") is False
-    assert p.can_fetch_realtime() is False
+    assert p.can_fetch_realtime() is True  # 新浪实时降级源
+    assert p.can_fetch_realtime_type("stock") is True
+    assert p.can_fetch_realtime_type("index") is True
+    assert p.can_fetch_realtime_type("industry_index") is False  # 新浪不覆盖行业指数
     # 范围外直接返回空，不调外部源
-    assert p.fetch_kline("600519", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 8, 20, tzinfo=UTC), "stock") == []
+    assert (
+        p.fetch_kline("600519", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 8, 20, tzinfo=UTC), "stock")
+        == []
+    )
     p._ak.stock_zh_index_daily.assert_not_called()
     # 范围内正常拉取
     bars = p.fetch_kline("000001", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 8, 20, tzinfo=UTC), "index")
@@ -73,9 +131,52 @@ def test_ths_provider_scope_and_fetch():
     p._ak = MagicMock(stock_board_industry_index_ths=MagicMock(return_value=_df_ths()))
     assert p.can_fetch_kline("industry_index", "1d") is True
     assert p.can_fetch_kline("index", "1d") is False
-    assert p.fetch_kline("000001", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 8, 20, tzinfo=UTC), "index") == []
-    bars = p.fetch_kline("半导体", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 8, 20, tzinfo=UTC), "industry_index")
+    assert (
+        p.fetch_kline("000001", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 8, 20, tzinfo=UTC), "index")
+        == []
+    )
+    bars = p.fetch_kline(
+        "半导体", "1d", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 8, 20, tzinfo=UTC), "industry_index"
+    )
     assert len(bars) == 2 and bars[0].close == 101.0
+
+
+def test_ths_provider_realtime_and_resolve():
+    p = THSProvider()
+    p._ak = MagicMock(
+        stock_board_industry_summary_ths=MagicMock(return_value=_df_ths_summary()),
+        stock_board_industry_name_ths=MagicMock(return_value=_df_ths_name()),
+    )
+    assert p.can_fetch_realtime() is True
+    assert p.can_fetch_realtime_type("industry_index") is True
+    assert p.can_fetch_realtime_type("stock") is False
+    # 实时：行业板块映射（均价近似现价，无涨跌额/OHLC）
+    quotes = p.fetch_realtime([RealtimeSymbol(name="半导体", asset_type="industry_index")])
+    assert quotes[0].available is True
+    assert quotes[0].price == 2000.0  # 均价
+    assert quotes[0].change_pct == 1.01
+    assert quotes[0].volume == 1000
+    assert quotes[0].change is None
+    # code 回填：名称 → 881xxx
+    assert p.resolve_index_code("半导体") == "881121"
+    assert p.resolve_index_code("不存在") is None
+
+
+def test_sina_provider_realtime_stock_and_index():
+    p = SinaProvider()
+    p._ak = MagicMock(
+        stock_zh_a_spot=MagicMock(return_value=_df_sina_spot()),
+        stock_zh_index_spot_sina=MagicMock(return_value=_df_sina_index_spot()),
+    )
+    symbols = [
+        RealtimeSymbol(code="600519", name="贵州茅台", asset_type="stock"),
+        RealtimeSymbol(code="000001", name="上证指数", asset_type="index"),
+        RealtimeSymbol(code="", name="半导体", asset_type="industry_index"),
+    ]
+    quotes = p.fetch_realtime(symbols)
+    assert quotes[0].available and quotes[0].price == 1350.6  # 去 sh/sz 前缀按代码匹配
+    assert quotes[1].available and quotes[1].price == 3896.49
+    assert quotes[2].available is False  # 新浪不覆盖行业指数
 
 
 # ---- 4.2 工厂优先级链 / 熔断 ----
@@ -191,6 +292,55 @@ def test_factory_realtime_all_fail_returns_unavailable():
     f = _factory(p1, p2)
     quotes = f.fetch_realtime([RealtimeSymbol(code="600519", name="贵州茅台", asset_type="stock")])
     assert len(quotes) == 1 and quotes[0].available is False  # 对齐请求契约
+
+
+def test_factory_realtime_routes_per_type():
+    """按资产类型分别降级：sina 覆盖 stock/index、ths 覆盖 industry_index，避免整批截断。"""
+
+    class _StockIndexProvider(BaseDataProvider):
+        name = "sina"
+
+        def can_fetch_realtime_type(self, atype):
+            return atype in ("stock", "index")
+
+        def fetch_kline(self, *a, **k):
+            return []
+
+        def fetch_realtime(self, symbols):
+            return [
+                RealtimeQuote(code=s.code, name=s.name, asset_type=s.asset_type, price=1.0, available=True)
+                for s in symbols
+            ]
+
+        def resolve_index_code(self, name):
+            return None
+
+    class _IndustryProvider(BaseDataProvider):
+        name = "ths"
+
+        def can_fetch_realtime_type(self, atype):
+            return atype == "industry_index"
+
+        def fetch_kline(self, *a, **k):
+            return []
+
+        def fetch_realtime(self, symbols):
+            return [
+                RealtimeQuote(code=s.code, name=s.name, asset_type=s.asset_type, price=2.0, available=True)
+                for s in symbols
+            ]
+
+        def resolve_index_code(self, name):
+            return None
+
+    f = _factory(_StockIndexProvider(), _IndustryProvider())
+    symbols = [
+        RealtimeSymbol(code="600519", name="贵州茅台", asset_type="stock"),
+        RealtimeSymbol(code="", name="半导体", asset_type="industry_index"),
+    ]
+    quotes = f.fetch_realtime(symbols)
+    assert quotes[0].available and quotes[0].price == 1.0  # stock 由 sina
+    assert quotes[1].available and quotes[1].price == 2.0  # industry 由 ths
 
 
 def test_factory_health_shape():

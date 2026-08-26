@@ -7,7 +7,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from app.core.config import get_settings
-from app.data_providers.base import RealtimeSymbol
+from app.data_providers.base import RealtimeQuote, RealtimeSymbol
 from app.data_providers.factory import get_provider
 from app.models.kline import KLINE_MODELS
 from app.models.symbol import Symbol
@@ -31,9 +31,12 @@ def is_market_open(now: datetime | None = None) -> bool:
 
 
 def _provider_params(sym: Symbol) -> tuple[str, str]:
-    """返回 (provider symbol 参数, asset_type)。行业指数（code 空/BK开头）用名称走行业板块。"""
+    """返回 (provider symbol 参数, asset_type)。行业指数（code 空/BK/881 开头）用名称走行业板块。
+
+    BKxxxx=东财板块代码、881xxx=同花顺行业代码（东财被限流时由 THS resolve_index_code 兜底回填）。
+    """
     if sym.type == "index":
-        if not sym.code or sym.code.startswith("BK"):
+        if not sym.code or sym.code.startswith(("BK", "881")):
             return sym.name, "industry_index"
         return sym.code, "index"
     return sym.code, sym.type
@@ -128,10 +131,15 @@ def run_fixed_indices_sync() -> dict:
             ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
             _mark_watchlist_synced(db, sym.id, "done")
             progress = int(i / total * 100)
-            ops_repo.upsert_sync_status(
-                db, "fixed_indices", "running", progress, total, f"已同步 {i}/{total}"
-            )
+            ops_repo.upsert_sync_status(db, "fixed_indices", "running", progress, total, f"已同步 {i}/{total}")
             db.commit()
+            # 预同步内直接生成快照（K线推导兜底），避免"预同步完成但快照仍空"
+            snap = derive_snapshot_from_kline(db, sym)
+            if snap is not None:
+                snap.extra["symbol_id"] = sym.id
+                snapshot_repo.upsert_snapshot(db, snap)
+                _cache_snapshot(sym.id, snap)
+                db.commit()
             results[sym.code or sym.name] = counts
         ops_repo.upsert_sync_status(
             db, "fixed_indices", "done", 100, total, "固定指数预同步完成", finished_at=datetime.now(UTC)
@@ -163,9 +171,8 @@ def run_catalog_sync() -> dict:
         etf_count = symbol_repo.count_type(db, "etf")
         partial = stock_count < 4800 or etf_count < 500
         status = "partial" if partial else "done"
-        message = (
-            f"A股 {stock_count} 只 / ETF {etf_count} 只，本次新增 stock={added_stocks} etf={added_etfs}"
-            + ("，未达标待 1h 后重试" if partial else "")
+        message = f"A股 {stock_count} 只 / ETF {etf_count} 只，本次新增 stock={added_stocks} etf={added_etfs}" + (
+            "，未达标待 1h 后重试" if partial else ""
         )
         ops_repo.upsert_sync_status(
             db, "catalog", status, 100, stock_count + etf_count, message, finished_at=datetime.now(UTC)
@@ -208,9 +215,7 @@ def warmup_fixed_indices_cache() -> dict:
         for sym in symbols:
             bars = kline_repo.latest_bars(db, "1d", sym.id, 500)
             if bars:
-                market_cache.set_kline_cache(
-                    sym.id, "1d", 500, [market_cache.kline_bar_to_dict(b) for b in bars]
-                )
+                market_cache.set_kline_cache(sym.id, "1d", 500, [market_cache.kline_bar_to_dict(b) for b in bars])
                 kline_warmed += 1
             snap = snapshot_repo.get_snapshot(db, sym.id)
             if snap:
@@ -305,7 +310,9 @@ def run_realtime_poll(symbol_id: int | None = None) -> dict:
 
         # 指数 PE：乐咕 best-effort（仅覆盖可取 A 股指数，其余 None 留空），失败不阻塞主链路
         index_names = [
-            sym.name for sym, q in zip(symbols, quotes, strict=True) if _provider_params(sym)[1] == "index" and q.available
+            sym.name
+            for sym, q in zip(symbols, quotes, strict=True)
+            if _provider_params(sym)[1] == "index" and q.available
         ]
         index_pe: dict[str, float | None] = {}
         if index_names:
@@ -317,7 +324,11 @@ def run_realtime_poll(symbol_id: int | None = None) -> dict:
         synced = 0
         for sym, quote in zip(symbols, quotes, strict=True):
             if not quote.available or quote.price is None:
-                continue
+                # 实时源全部不可用 → K线推导兜底快照（updated_at 为K线时间，页面据 data_age_seconds 标注而非显示 '--'）
+                derived = derive_snapshot_from_kline(db, sym)
+                if derived is None:
+                    continue
+                quote = derived
             atype = _provider_params(sym)[1]
             quote.extra["symbol_id"] = sym.id
             if atype == "industry_index":
@@ -330,13 +341,9 @@ def run_realtime_poll(symbol_id: int | None = None) -> dict:
 
             publisher.publish_snapshot(sym.id, market_cache.snapshot_to_cache_dict(quote))
             # 特殊字段表：个股总市值/PE、ETF净值/溢价、指数PE（best-effort，任一字段非 None 才写避免覆盖旧值）
-            if atype == "stock" and (
-                quote.extra.get("market_cap") is not None or quote.extra.get("pe") is not None
-            ):
+            if atype == "stock" and (quote.extra.get("market_cap") is not None or quote.extra.get("pe") is not None):
                 snapshot_repo.upsert_fundamentals(db, sym.id, quote.extra.get("market_cap"), quote.extra.get("pe"))
-            elif atype == "etf" and (
-                quote.extra.get("nav") is not None or quote.extra.get("premium") is not None
-            ):
+            elif atype == "etf" and (quote.extra.get("nav") is not None or quote.extra.get("premium") is not None):
                 snapshot_repo.upsert_etf_premium(db, sym.id, quote.extra.get("nav"), quote.extra.get("premium"))
             elif atype == "index" and quote.extra.get("pe") is not None:
                 snapshot_repo.upsert_index_valuation(db, sym.id, quote.extra.get("pe"))
@@ -384,6 +391,51 @@ def _fill_industry_quote_from_kline(db, sym: Symbol, quote) -> None:
             quote.amplitude = (quote.high - quote.low) / quote.pre_close * 100 if quote.pre_close else None
     except Exception:  # noqa: BLE001 K线推导失败不影响该行其余字段
         logger.warning("industry kline fill failed: symbol_id=%s", sym.id, exc_info=True)
+
+
+def derive_snapshot_from_kline(db, sym: Symbol) -> RealtimeQuote | None:
+    """实时源全部不可用时，用最新日K收盘价推导全字段快照（updated_at=K线时间，前端据 data_age_seconds 标注）。
+
+    price=最新日K close，change/change_pct=与前一 close 差，OHLC/量/额取最新根，振幅=(high-low)/pre_close。
+    返回 None 表示无K线可推导（诚实留空），不硬造快照。
+    """
+    try:
+        end = datetime.now(UTC)
+        start = end - timedelta(days=30)
+        bars = kline_repo.get_bars(db, "1d", sym.id, start, end, limit=2)
+        if not bars:
+            return None
+        latest = bars[-1]
+        prev = bars[-2] if len(bars) >= 2 else None
+        pre_close = float(prev.close) if prev else float(latest.close)
+        change = float(latest.close) - pre_close
+        change_pct = (change / pre_close * 100) if pre_close else None
+        amplitude = (
+            (float(latest.high) - float(latest.low)) / pre_close * 100
+            if pre_close and latest.high is not None and latest.low is not None
+            else None
+        )
+        return RealtimeQuote(
+            code=sym.code,
+            name=sym.name,
+            asset_type=_provider_params(sym)[1],
+            price=float(latest.close),
+            change=change,
+            change_pct=change_pct,
+            open=float(latest.open),
+            high=float(latest.high),
+            low=float(latest.low),
+            pre_close=pre_close,
+            volume=int(latest.volume) if latest.volume is not None else None,
+            amount=float(latest.amount) if latest.amount is not None else None,
+            turnover=None,
+            amplitude=amplitude,
+            updated_at=latest.ts,
+            available=True,
+        )
+    except Exception:  # noqa: BLE001 K线推导失败不影响主链路
+        logger.warning("derive snapshot from kline failed: symbol_id=%s", sym.id, exc_info=True)
+        return None
 
 
 def _cache_snapshot(symbol_id: int, quote) -> None:

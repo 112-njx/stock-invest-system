@@ -109,6 +109,24 @@ def test_sync_status_no_record_returns_done(client: TestClient):
     assert data["status"] == "done" and data["progress"] == 100 and "message" in data
 
 
+def test_fetch_all_no_token(client: TestClient):
+    """一次性全量同步接口：免鉴权、同步执行（mock 掉网络同步逻辑）。"""
+    from unittest.mock import patch
+
+    with (
+        patch("app.services.sync_service.run_fixed_indices_sync", return_value={"000001": {"1d": 1}}) as m_fixed,
+        patch("app.services.sync_service.run_realtime_poll", return_value={"synced": 1}) as m_rt,
+    ):
+        resp = client.post("/api/v1/fetch-all")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 0
+    assert body["data"]["fixed_indices"]["000001"]["1d"] == 1
+    assert body["data"]["realtime"]["synced"] == 1
+    m_fixed.assert_called_once()
+    m_rt.assert_called_once()
+
+
 def test_sync_status_returns_latest_record(client: TestClient):
     from datetime import UTC, datetime
 
@@ -119,8 +137,12 @@ def test_sync_status_returns_latest_record(client: TestClient):
     try:
         db.add(
             SyncStatus(
-                scope="fixed_indices", status="running", progress=35, total=49,
-                message="已同步 35/49", started_at=datetime.now(UTC),
+                scope="fixed_indices",
+                status="running",
+                progress=35,
+                total=49,
+                message="已同步 35/49",
+                started_at=datetime.now(UTC),
             )
         )
         db.commit()

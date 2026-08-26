@@ -100,3 +100,14 @@ def get_sync_status(
             "message": row.message,
         }
     )
+
+
+@router.post("/fetch-all")
+def fetch_all() -> dict:
+    """一次性全量同步（免鉴权，本地测试/运维用）：固定指数K线+快照 + 全量实时快照，同步执行不依赖 Celery/beat。
+
+    用于本地无法触发定时任务时一次性补齐大盘/行业指数数据，返回固定指数同步结果与实时轮询结果。
+    """
+    fixed = sync_service.run_fixed_indices_sync()
+    realtime = sync_service.run_realtime_poll()
+    return ok(data={"fixed_indices": fixed, "realtime": realtime}, msg="全量同步完成")

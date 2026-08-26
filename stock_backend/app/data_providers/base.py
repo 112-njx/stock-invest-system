@@ -132,6 +132,10 @@ class BaseDataProvider(ABC):
         """是否支持实时快照。"""
         return True
 
+    def can_fetch_realtime_type(self, asset_type: str) -> bool:
+        """是否支持该资产类型的实时快照（工厂按类型路由降级用；默认委托 can_fetch_realtime）。"""
+        return self.can_fetch_realtime()
+
     @abstractmethod
     def fetch_kline(
         self,

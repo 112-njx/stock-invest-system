@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     PROVIDER_CIRCUIT_COOLDOWN: int = 60  # Provider 熔断冷却（秒），冷却后半开探测
     PROVIDER_PROBE_INTERVAL: int = 60  # 熔断中 Provider 后台探测间隔（秒）
     KLINE_INIT_DAYS: int = 730  # 首次全量拉取天数（约2年）
-    REALTIME_POLL_INTERVAL: int = 5  # 实时轮询间隔（秒）
+    REALTIME_POLL_INTERVAL: int = 15  # 实时轮询间隔（秒），降频规避东财风控（原 5s 触发限流）
     SYNC_INCREMENTAL_HOUR: int = 16  # 每日增量同步时刻（本地时区小时）
     SYNC_INCREMENTAL_MINUTE: int = 30
     SYNC_TIMEOUT: int = 30  # 数据源请求超时（秒）

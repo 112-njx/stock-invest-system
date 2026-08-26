@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.config import get_settings
 
-from .base import BaseDataProvider, unavailable_quote
+from .base import BaseDataProvider, RealtimeQuote, RealtimeSymbol, unavailable_quote
 from .eastmoney import EastMoneyProvider
 from .sina import SinaProvider
 from .ths import THSProvider
@@ -125,11 +125,55 @@ class DataProviderFactory:
         return result or []
 
     def fetch_realtime(self, symbols) -> list:
-        result = self._iter_chain("fetch_realtime", (symbols,), {}, scope=lambda p: p.can_fetch_realtime())
-        if result:
-            return result
+        """实时快照：按资产类型分组逐类型走优先级链（首个含 available 结果的 Provider 覆盖该类型）。
+
+        单一 Provider 可能只覆盖部分类型（sina 覆盖 stock/index、ths 覆盖 industry_index），
+        若按整批请求取"第一个非空结果"，sina 会截断 ths 导致行业指数无兜底；
+        故按类型分别降级，使优先级链 [eastmoney, sina, ths] 真正生效。
+        """
+        by_type: dict[str, list[RealtimeSymbol]] = {}
+        order: list[str] = []
+        for s in symbols:
+            if s.asset_type not in by_type:
+                by_type[s.asset_type] = []
+                order.append(s.asset_type)
+            by_type[s.asset_type].append(s)
+
+        quote_map: dict[tuple[str, str, str], RealtimeQuote] = {}
+        for atype in order:
+            items = by_type[atype]
+            quotes = self._fetch_realtime_type(atype, items)
+            for s, q in zip(items, quotes, strict=True):
+                quote_map[(s.code, s.name, s.asset_type)] = q
         # 全部失败：返回对齐请求的不可用快照，保持调用方 zip 对齐契约（run_realtime_poll 不抛错）
-        return [unavailable_quote(s) for s in symbols]
+        return [quote_map[(s.code, s.name, s.asset_type)] for s in symbols]
+
+    def _fetch_realtime_type(self, atype: str, items: list[RealtimeSymbol]) -> list:
+        """单资产类型走优先级链：熔断跳过、异常降级、全 unavailable 视作未覆盖继续降级。"""
+        now = time.time()
+        for p in self._providers:
+            if not p.can_fetch_realtime_type(atype):
+                continue
+            circuit = self._circuits[p.name]
+            with self._lock:
+                allow = circuit.allow(now)
+            if not allow:
+                logger.info(
+                    "[provider] %s open (cooldown %ds), skip %s", p.name, int(circuit.cooldown_until - now), atype
+                )
+                continue
+            try:
+                result = p.fetch_realtime(items)
+                if result and any(getattr(q, "available", False) for q in result):
+                    with self._lock:
+                        circuit.record_success(now)
+                    return result
+                logger.warning("[provider] %s no available realtime (%s), fallback", p.name, atype)
+            except Exception as exc:  # noqa: BLE001
+                with self._lock:
+                    circuit.record_failure(now)
+                logger.warning("[provider] %s realtime failed (%s), fallback", p.name, str(exc)[:120], exc_info=False)
+        return [unavailable_quote(s) for s in items]
 
     def resolve_index_code(self, name: str) -> str | None:
         """行业指数名称 → 板块代码（best-effort，仅东方财富提供）。"""
