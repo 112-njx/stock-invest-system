@@ -53,7 +53,8 @@
 | 生成→回测内嵌 | 未测试（深度分析422+模板按钮挂起，无法走完策略生成流程） | 阶段七7.5需端到端验证 |
 | 策略回测发起（N区） [已解决 2026-08-27] | 策略生成成功后，在策略详情页选择标的点击「回测」报错 `symbol: Input should be a valid string`（HTTP 422），回测任务未提交 | 前端 StrategyDetailPanel.vue 发送 symbol 为数字（btSymbol.id），后端 BacktestCreateIn.symbol 为 str（Pydantic 2 拒绝 int→str 触发 422）；与「添加关注 422」「深度分析 422」同根因，前端未统一 symbol 转字符串 |
 | LLM 流式输出 [已解决 2026-08-27] | 发送提示词后前端长时间显示「AI思考中」，无逐字打字机效果；LLM 生成完成后整段结果一次性出现，等待体验差 | 后端 LLM 输出从未走 token 级流式：普通对话走 create_agent().astream(stream_mode="updates")（节点级，整条 AI 消息作单个 delta）、深度模式节点用 ainvoke、策略生成用 ainvoke；llm_svc.astream（逐 token）已存在但 chat_service 未调用 → 生成期间零输出、完成后整段一次性推送 |
-
+|在AI策略页点击回测，系统一直显示任务 #326 · queued · 进度 0%卡死| 
+|当前对话消耗的 token 数|
 ---
 
 ## 二、已确认的技术决策

@@ -38,9 +38,9 @@ v0.1阶段
 - 数据库迁移命令：在后端根目录下使用命令.\.venv\Scripts\alembic.exe upgrade head，可以直接调用依赖链使当前数据库更新到最新版本。
 
 v0.2阶段
-- WS 实时数据推送需要同时启动 Celery worker + beat，否则 WS 连接正常但无数据推送,启动命令：
+- WS 实时数据推送需要同时启动 Celery worker + beat，否则 WS 连接正常但无数据推送；worker 必须显式消费 backtest/sync/ai 三个队列（`-Q backtest,sync,ai`），否则回测/AI 任务进队后无人消费、永远停留 queued。启动命令：
 - # 启动 worker
-.venv\Scripts\celery.exe -A app.worker.celery_app worker --pool=solo -l info
+.venv\Scripts\celery.exe -A app.worker.celery_app worker -Q backtest,sync,ai --pool=solo --concurrency=1 -l info
 
 # 启动 beat
 .venv\Scripts\celery.exe -A app.worker.celery_app beat -l info
