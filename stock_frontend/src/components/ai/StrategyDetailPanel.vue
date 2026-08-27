@@ -31,6 +31,8 @@ watch(strategy, (s) => {
 /* ---------- 回测结果 ---------- */
 const results = ref<BacktestResult[]>([])
 const resultsLoading = ref(false)
+/** 展示最新一条结果（对齐 StrategyMetricsPanel 的 latest()，避免历史结果整组重复） */
+const latest = computed<BacktestResult | null>(() => results.value[0] ?? null)
 
 async function loadResults() {
   if (!strategy.value) return
@@ -142,38 +144,36 @@ onMounted(() => void loadResults())
       <section class="sd__section">
         <h3 class="sd__h3">回测结果</h3>
         <div v-if="resultsLoading" class="sd__hint">加载中…</div>
-        <div v-else-if="!results.length" class="sd__hint">暂未保存回测结果，可在下方发起回测</div>
+        <div v-else-if="!latest" class="sd__hint">暂未保存回测结果，可在下方发起回测</div>
         <div v-else class="sd__metrics">
-          <template v-for="r in results" :key="r.id">
-            <div class="metric">
-              <span class="metric__label">胜率</span>
-              <span class="metric__value">{{ pct(r.win_rate) }}</span>
-            </div>
-            <div class="metric">
-              <span class="metric__label">盈亏比</span>
-              <span class="metric__value">{{ num(r.profit_loss_ratio) }}</span>
-            </div>
-            <div class="metric">
-              <span class="metric__label">夏普比率</span>
-              <span class="metric__value">{{ num(r.sharpe) }}</span>
-            </div>
-            <div class="metric">
-              <span class="metric__label">累计买入</span>
-              <span class="metric__value">{{ r.total_buys ?? '--' }}</span>
-            </div>
-            <div class="metric">
-              <span class="metric__label">累计卖出</span>
-              <span class="metric__value">{{ r.total_sells ?? '--' }}</span>
-            </div>
-            <div class="metric">
-              <span class="metric__label">年化收益率</span>
-              <span class="metric__value">{{ pct(r.annual_return) }}</span>
-            </div>
-            <div class="metric">
-              <span class="metric__label">最大回撤</span>
-              <span class="metric__value">{{ pct(r.max_drawdown) }}</span>
-            </div>
-          </template>
+          <div class="metric">
+            <span class="metric__label">胜率</span>
+            <span class="metric__value">{{ pct(latest.win_rate) }}</span>
+          </div>
+          <div class="metric">
+            <span class="metric__label">盈亏比</span>
+            <span class="metric__value">{{ num(latest.profit_loss_ratio) }}</span>
+          </div>
+          <div class="metric">
+            <span class="metric__label">夏普比率</span>
+            <span class="metric__value">{{ num(latest.sharpe) }}</span>
+          </div>
+          <div class="metric">
+            <span class="metric__label">累计买入</span>
+            <span class="metric__value">{{ latest.total_buys ?? '--' }}</span>
+          </div>
+          <div class="metric">
+            <span class="metric__label">累计卖出</span>
+            <span class="metric__value">{{ latest.total_sells ?? '--' }}</span>
+          </div>
+          <div class="metric">
+            <span class="metric__label">年化收益率</span>
+            <span class="metric__value">{{ pct(latest.annual_return) }}</span>
+          </div>
+          <div class="metric">
+            <span class="metric__label">最大回撤</span>
+            <span class="metric__value">{{ pct(latest.max_drawdown) }}</span>
+          </div>
         </div>
       </section>
 
