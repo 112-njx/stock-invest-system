@@ -512,7 +512,8 @@ export const useAiStore = defineStore('ai', {
       this.autoBacktestResult = null
       this.autoBacktestError = null
       try {
-        const task = await createBacktest({ strategy_id: strategyId, symbol: symbolId, period: '1d' })
+        // 后端 BacktestCreateIn.symbol 为 str（Pydantic 2 拒 int→str），统一转字符串避免 422
+        const task = await createBacktest({ strategy_id: strategyId, symbol: String(symbolId), period: '1d' })
         this.autoBacktestTaskId = task.id
         for (;;) {
           await sleep(2000)

@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from operator import add
 from typing import Annotated, Any, TypedDict
 
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
 
@@ -139,16 +140,25 @@ def _build_market_context(db: Session, symbol: str) -> str:
     return "\n".join(lines) if lines else "（无可用行情数据，请明确说明不可用）"
 
 
-async def _llm_text(model, prompt: str) -> str:
-    resp = await model.ainvoke([{"role": "system", "content": prompt}, {"role": "user", "content": "请给出分析。"}])
-    return resp.content if isinstance(resp.content, str) else str(resp.content)
+async def _stream_llm_text(model, prompt: str, node: str) -> str:
+    """逐 token 流式产出节点文本：经 stream_writer 推送带 node 的 delta，返回完整文本。"""
+    writer = get_stream_writer()
+    parts: list[str] = []
+    async for chunk in model.astream(
+        [{"role": "system", "content": prompt}, {"role": "user", "content": "请给出分析。"}]
+    ):
+        text = chunk.content if isinstance(chunk.content, str) else str(chunk.content)
+        if text:
+            parts.append(text)
+            writer({"type": "delta", "node": node, "content": text})
+    return "".join(parts)
 
 
 def _make_node(model: Any, node: str, field: str):
     async def _node(state: ResearchState) -> dict:
         # 阶段七 7.2：单节点失败不中断图，返回默认中性观点并记录失败节点与错误信息
         try:
-            text = await _llm_text(model, _prompt(node, state))
+            text = await _stream_llm_text(model, _prompt(node, state), node)
         except Exception as e:  # noqa: BLE001
             logger.warning("research node %s failed: %s", node, e)
             return {field: _NEUTRAL_TEXT[node], "failed_nodes": [node], "node_errors": {node: str(e)}}
@@ -197,8 +207,13 @@ async def run_research_graph(
     yield {"node": nodes[0], "status": "running"}
 
     idx = 0
-    async for update in graph.astream(state, stream_mode="updates"):
-        for node, delta in update.items():
+    async for mode, data in graph.astream(state, stream_mode=["updates", "custom"]):
+        # custom：节点内 stream_writer 推送的 token 级 delta，逐字透传
+        if mode == "custom":
+            yield data
+            continue
+        # updates：节点完成（顺序确定性），继续按原逻辑产出 done/failed 事件
+        for node, delta in data.items():
             field = NODE_FIELD.get(node)
             content = delta.get(field) if field else None
             if not content:

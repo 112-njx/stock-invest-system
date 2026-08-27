@@ -375,6 +375,10 @@ async def _run_deep(
     failed_nodes: list[str] = []
     try:
         async for step in run_research_graph(db, agent_model, symbol=symbol, question=content, run_type=run_type):
+            # token 级 delta（阶段八 8.8：节点内逐字流式），带 node 透传前端累积到对应节点
+            if step.get("type") == "delta":
+                yield {"type": "delta", "content": step["content"], "node": step["node"]}
+                continue
             node = step["node"]
             status = step.get("status", "done")
             if status == "running":
@@ -401,7 +405,6 @@ async def _run_deep(
                 duration_ms=duration_ms,
                 status=status,
             )
-            yield {"type": "delta", "content": text, "node": node}
             step_ev = {"type": "agent_step", "node": node, "status": status, "summary": summary, "duration_ms": duration_ms}
             if error:
                 step_ev["error"] = error
@@ -437,6 +440,8 @@ async def _run_strategy(db, run, user_msg, conv, symbol_id, content, llm_svc) ->
     单次长调用（非流式），不走 _stream_with_timeouts 的流式超时（keepalive 由 API 层保证）。
     """
     try:
+        # 方案A：生成期间先推一条进度 delta，避免长调用（含重试）期间前端空白等待
+        yield {"type": "delta", "content": "正在生成策略代码，请稍候…"}
         out = await generate_strategy(content, llm_svc=llm_svc)
         params = out.params.model_dump() if hasattr(out.params, "model_dump") else dict(out.params)
         title = (out.strategy_name or "").strip()[:128] or "未命名策略"

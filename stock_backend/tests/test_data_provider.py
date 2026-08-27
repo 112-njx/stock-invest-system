@@ -53,6 +53,16 @@ class MockAk:
         )
 
     @staticmethod
+    def stock_info_a_code_name():
+        # 真实 akshare 返回英文列名 code/name（本测试复现线上 bug：硬编码中文列名导致恒空）
+        return pd.DataFrame(
+            {
+                "code": ["600519", "601127", "605006"],
+                "name": ["贵州茅台", "赛力斯", "山东玻纤"],
+            }
+        )
+
+    @staticmethod
     def stock_zh_a_spot_em():
         return pd.DataFrame(
             {
@@ -237,6 +247,22 @@ def test_fetch_realtime_industry_code_match():
     quotes = p.fetch_realtime([RealtimeSymbol(code="BK1036", name="通信设备(名称不一致)", asset_type="industry_index")])
     assert quotes[0].available is True
     assert quotes[0].price == 1500.0
+
+
+def test_fetch_catalog_handles_english_columns():
+    """stock_info_a_code_name 返回英文列名 code/name 时应正确解析 A 股 + ETF（ETF 为中文列名）。"""
+    p = _provider()
+    catalog = p.fetch_catalog()
+    assert catalog["stocks"] == [("600519", "贵州茅台"), ("601127", "赛力斯"), ("605006", "山东玻纤")]
+    assert catalog["etfs"] == [("510300", "沪深300ETF"), ("159915", "创业板ETF")]
+
+
+def test_search_ak_stock_handles_english_columns():
+    """search_ak_stock 应能命中英文列名 code/name（复现线上赛力斯 601127 无法添加关注）。"""
+    p = _provider()
+    hits = p.search_ak_stock("赛力斯")
+    assert hits == [("601127", "赛力斯")]
+    assert p.search_ak_stock("601127") == [("601127", "赛力斯")]  # 代码匹配
 
 
 def test_fetch_index_pe_covered_and_uncovered():

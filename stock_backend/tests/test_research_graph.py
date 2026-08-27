@@ -63,6 +63,11 @@ class _RoleModel:
             return types.SimpleNamespace(content="最终决策：轻仓做多，止损1190")
         return types.SimpleNamespace(content="?")
 
+    async def astream(self, messages):
+        # 非流式假模型：整段一次产出（等价 ainvoke），供 token 级流式路径复用
+        resp = await self.ainvoke(messages)
+        yield resp
+
 
 class _FakeLLM:
     available = True

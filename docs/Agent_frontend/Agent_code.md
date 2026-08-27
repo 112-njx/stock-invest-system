@@ -150,3 +150,12 @@ Agent的前端编码记录,你需要按照：
 
 编码时间：2026-08-27
 编码内容（描述）：审计修复 策略回测 422（策略详情页 N 区点击「回测」报错 symbol: Input should be a valid string）。根因：StrategyDetailPanel.vue 发起回测时 symbol 发数字（btSymbol.id），后端 BacktestCreateIn.symbol 为 str（Pydantic 2 拒绝 int→str 触发 422），与「添加关注/深度分析 422」同根因。修复：改为 String(btSymbol.value.id)，与 AIView/关注列表统一 symbol 转字符串。typecheck/lint 全绿。
+
+编码时间：2026-08-27
+编码内容（描述）：审计修复 策略详情页回测结果整组重复——StrategyDetailPanel.vue 回测结果区用 v-for="r in results" 对每条历史回测记录整组渲染 7 个指标卡片，回测 N 次即 N 组重复。根因：fetchBacktestResults 返回全部历史（后端 id DESC），未收敛最新一条。修复：加 latest=computed(results[0]??null)，模板改单条渲染，对齐 StrategyMetricsPanel 的 latest() 语义；后续空跑记录指标为 null/0 属数据侧真实状态（前端已正确显示 --）。typecheck/lint 全绿。
+
+编码时间：2026-08-27
+编码内容（描述）：修复「除贵州茅台外大部分 A 股无法添加重点关注」——根因在后端 EastMoneyProvider.fetch_catalog/search_ak_stock 硬编码判断中文列名"代码"/"名称"，而 akshare stock_info_a_code_name() 返回英文 code/name，判断恒 False 致外部回退恒空、目录同步 A 股 0 只（茅台本地已入库走精确匹配不受影响）。修复：新增 _pick_col 中英文列名别名解析，两方法改用它；补英文列名回归测试。全库 261 pytest 全绿。
+
+编码时间：2026-08-27
+编码内容（描述）：审计修复 AI 生成策略后立刻回测 422（symbol: Input should be a valid string）。根因：stores/ai.ts runAutoBacktest 直接传数字 symbolId 给 createBacktest，后端 BacktestCreateIn.symbol 为 str（Pydantic 2 拒 int→str 触发 422）；这是「策略详情页 422」「添加关注/深度分析 422」同根因，但 7.5 生成→回测内嵌的自动回测路径此前漏改（只修了 StrategyDetailPanel 手动回测）。修复：改为 symbol: String(symbolId)，与 AIView/关注列表统一 symbol 转字符串。typecheck/lint 全绿。

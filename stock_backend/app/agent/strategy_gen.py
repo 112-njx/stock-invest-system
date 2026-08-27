@@ -29,8 +29,9 @@ def initialize(context):
 
 def on_bar(bar, context):
     \"\"\"每根 K 线回调。bar 含 ts/open/high/low/close/volume/amount；
-    context 提供 pos(当前持仓数)、cash(可用资金)、params(策略参数)，
-    并通过 context.buy()/context.sell() 触发交易。\"\"\"
+    context 提供 pos(当前持仓数)、cash(可用资金)、params(策略参数)、
+    closes(已处理收盘价列表，只读)、is_holding(是否持仓，只读)，
+    通过 context.buy()/context.sell()/context.flat() 触发交易。\"\"\"
     ...
 ```
 
@@ -41,6 +42,13 @@ def on_bar(bar, context):
    值为简洁的 key-value（如 {{"fast": 5, "slow": 20}}）。
 4. strategy_name 简洁命名；description 用中文说明策略逻辑；risk_warning 提示主要风险。
 5. 只依据用户描述设计，数据不足时在 description 说明假设。
+
+## 沙箱约束（必须遵守，违反会导致校验失败、生成失败）
+- 禁止对 context 的属性使用 += / -= / *= 等增强赋值（如 `context.pos += 1` 会编译失败）；
+  仓位变化一律通过 context.buy()/context.sell()/context.flat()。
+- `context.closes`、`context.is_holding` 是只读属性，禁止赋值（如 `context.closes = ...` 会报错），只能读取。
+- 自定义状态变量（均线参数、计数等）在 initialize 中用 `context.xxx = ...` 一次性设置；on_bar 内禁止再对 context 属性赋值。
+- 中间计算结果用局部变量保存，不要写回 context。
 
 用户交易想法：
 {description}

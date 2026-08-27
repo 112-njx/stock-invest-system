@@ -39,6 +39,14 @@ _ROMAN_SUFFIX = re.compile(r"[ⅠⅡⅢⅣⅤ]+$")
 _MIN_INDUSTRY_SCORE = 75
 
 
+def _pick_col(df: pd.DataFrame, *names: str) -> str | None:
+    """返回 df 中第一个存在的列名（兼容 akshare 中英文列名，如 code/代码、name/名称）。"""
+    for n in names:
+        if n in df.columns:
+            return n
+    return None
+
+
 class EastMoneyProvider(BaseDataProvider):
     name = "eastmoney"
 
@@ -235,25 +243,35 @@ class EastMoneyProvider(BaseDataProvider):
         """全A股代码名称 + ETF 列表（akshare），供目录预同步。"""
         stocks: list[tuple[str, str]] = []
         df = self._call(self._ak.stock_info_a_code_name, raise_on_giveup=True)
-        if df is not None and not df.empty and "代码" in df.columns:
-            for _, row in df.iterrows():
-                stocks.append((str(row["代码"]).strip(), str(row["名称"]).strip()))
+        if df is not None and not df.empty:
+            code_col = _pick_col(df, "code", "代码")
+            name_col = _pick_col(df, "name", "名称")
+            if code_col and name_col:
+                for _, row in df.iterrows():
+                    stocks.append((str(row[code_col]).strip(), str(row[name_col]).strip()))
         etfs: list[tuple[str, str]] = []
         df2 = self._call(self._ak.fund_etf_spot_em, raise_on_giveup=True)
-        if df2 is not None and not df2.empty and "代码" in df2.columns:
-            for _, row in df2.iterrows():
-                etfs.append((str(row["代码"]).strip(), str(row["名称"]).strip()))
+        if df2 is not None and not df2.empty:
+            code_col2 = _pick_col(df2, "代码", "code")
+            name_col2 = _pick_col(df2, "名称", "name")
+            if code_col2 and name_col2:
+                for _, row in df2.iterrows():
+                    etfs.append((str(row[code_col2]).strip(), str(row[name_col2]).strip()))
         return {"stocks": stocks, "etfs": etfs}
 
     def search_ak_stock(self, keyword: str, limit: int = 10) -> list[tuple[str, str]]:
         """外部回退：akshare 全A股实时过滤代码/名称，命中返回 (code, name)。"""
         df = self._call(self._ak.stock_info_a_code_name, raise_on_giveup=True)
-        if df is None or df.empty or "代码" not in df.columns:
+        if df is None or df.empty:
             return []
-        mask = df["代码"].astype(str).str.contains(keyword, regex=False) | df["名称"].astype(str).str.contains(
+        code_col = _pick_col(df, "code", "代码")
+        name_col = _pick_col(df, "name", "名称")
+        if code_col is None or name_col is None:
+            return []
+        mask = df[code_col].astype(str).str.contains(keyword, regex=False) | df[name_col].astype(str).str.contains(
             keyword, regex=False
         )
-        return [(str(r["代码"]).strip(), str(r["名称"]).strip()) for _, r in df[mask].head(limit).iterrows()]
+        return [(str(r[code_col]).strip(), str(r[name_col]).strip()) for _, r in df[mask].head(limit).iterrows()]
 
     # ---- 行业指数 code 回填 ----
     def resolve_index_code(self, name: str) -> str | None:

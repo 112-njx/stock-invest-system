@@ -275,3 +275,18 @@ Agent的后端编码记录,你需要按照：
 编码时间：2026-08-27
 编码内容（描述）：修复 LLM 非流式输出（审计 bug2）。根因：chat_service._run_react 用 create_agent().astream(stream_mode="updates") 节点级输出，整条 AI 消息作单个 delta 一次性推送，LLM 生成期间前端无任何输出、完成后整段蹦出。修复：改 stream_mode="messages" token 级流式，逐 token 产出 delta；用 isinstance(chunk, AIMessage) 兜住 AIMessageChunk.type="AIMessageChunk"（非 "ai"）的坑；tool_calls/tool_call_chunks 与 ToolMessage 分别转 tool_call/tool_result 事件；新增 _merge_tool_call_chunks/_flush_tool_call_buf/_tool_call_event 合并流式工具调用，删除废弃 _emit_update。验收：流式模型经 _run_react 逐 token 产出 4 个 delta，全库 259 pytest 全绿 + ruff。
 
+---
+
+编码时间：2026-08-27
+编码内容（描述）：审计修复 策略生成偶发失败（重试耗尽抛「策略生成遇到问题」）。根因：LLM 生成代码违反沙箱约束——RestrictedPython 禁属性增强赋值（context.pos += 1 编译失败「Augmented assignment of attributes is not allowed」）、给只读属性 context.closes 赋值（property 无 setter 报 AttributeError），三级校验拒后重试 2 次仍失败。修复：strategy_gen._GENERATE_PROMPT 增「沙箱约束」段明示红线（禁增强赋值、closes/is_holding 只读禁赋值、仓位仅 buy/sell/flat、自定义状态仅 initialize），接口文档补 closes/is_holding 只读说明。验收：全库 261 pytest 全绿 + ruff。
+
+---
+
+编码时间：2026-08-27
+编码内容（描述）：审计修复 深度模式多空分析非流式（问题3）。根因：research_graph 节点用 model.ainvoke 单次取整段，astream(stream_mode="updates") 仅节点级，每步分析一次性吐出。修复：节点改 _stream_llm_text 用 model.astream 逐 token + get_stream_writer 推带 node 的 delta；run_research_graph 改 stream_mode=["updates","custom"] 透传 token delta 与节点 done（保持顺序确定性）；chat_service._run_deep 转发 token delta（{"type":"delta","node"}）并移除原节点级整段 delta。测试 _RoleModel 补 astream。验收：全库 261 pytest 全绿 + ruff。
+
+---
+
+编码时间：2026-08-27
+编码内容（描述）：审计修复 策略生成无流式反馈（问题3 方案A）。根因：_run_strategy 单次 ainvoke 生成（含三级校验重试）期间零 SSE 输出，前端空白等待、完成后代码整段蹦出。方案A（低风险，保留结构化输出不做逐字）：生成前 yield 一条进度 delta「正在生成策略代码，请稍候…」，让流式气泡从「AI 思考中…」变为有反馈。验收：全库 261 pytest 全绿 + ruff。
+
