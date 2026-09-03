@@ -26,7 +26,9 @@
 
 ## 工作完成后需手动配置 / 日志文件说明
 - 手动配置：.env.docker 需配置 JWT_SECRET_KEY（生产改强随机值）与 DEEPSEEK_API_KEY（容器内用 AI 才需要）。
-- 手动配置：PyPI 默认清华镜像，换源用 `docker compose build --build-arg PIP_INDEX_URL=<镜像>`。
 - 手动配置：开发栈端口默认 API 8000 / 前端 8081，冲突时在 .env.docker 设 DEV_API_PORT / DEV_NGINX_PORT。
-- 日志查看：`docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml logs -f api` 观察后端/热重载日志。
-- 日志查看：多次构建残留多时，先跑 `bash deploy/cleanup_dev.sh`（-f 连数据卷清空）再构建。
+
+## 问题二：
+
+
+## 需要手工配置：

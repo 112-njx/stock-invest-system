@@ -26,8 +26,8 @@ fi
 echo "[cleanup] 1/4 停止并删除开发栈容器、网络与孤儿容器..."
 docker compose --env-file .env.docker -f "${COMPOSE_FILE}" down ${DOWN_ARGS} >/dev/null 2>&1 || true
 
-echo "[cleanup] 2/4 删除开发镜像 stock-backend:dev..."
-docker rmi stock-backend:dev >/dev/null 2>&1 || true
+echo "[cleanup] 2/4 删除开发镜像 stock-invest-dev-*..."
+docker images -q "stock-invest-dev-*" | xargs -r docker rmi >/dev/null 2>&1 || true
 
 echo "[cleanup] 3/4 删除悬空镜像..."
 docker image prune -f >/dev/null 2>&1 || true
