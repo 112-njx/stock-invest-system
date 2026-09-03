@@ -21,5 +21,5 @@ docker compose --env-file .env.docker -f "${SCRIPT_DIR}/docker-compose.dev.yml" 
 
 echo "[start] 完成。"
 echo "  后端 API ：http://127.0.0.1:8000  （uvicorn --reload，改源码自动热重载）"
-echo "  前端页面 ：http://127.0.0.1:8081  （nginx 托管 stock_frontend/dist；改前端先 npm run build）"
+echo "  前端页面 ：http://127.0.0.1:8081  （构建式：node 自动 build → nginx，/api 反代到 api）"
 echo "  查看日志 ：docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml logs -f api"

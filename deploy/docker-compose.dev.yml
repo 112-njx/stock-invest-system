@@ -1,6 +1,6 @@
 # 开发阶段容器编排（区别于 deploy/docker-compose.yml 生产版）：
 #  - 后端源码 bind mount 热挂载 + uvicorn --reload：改代码免重建镜像，不产生容器文件残留；
-#  - 前端 nginx 直接托管宿主 stock_frontend/dist：改前端在宿主 npm run build 后刷新即生效，免重建 node 镜像；
+#  - 前端构建式：node 自动 npm run build 生成 dist → nginx 托管并反代 /api（免手动构建，改前端需重建 frontend 镜像）；
 #  - 去除监控（prometheus/grafana）等生产组件，栈更轻；
 #  - 使用前先跑一键清理：bash deploy/cleanup_dev.sh（或直接 bash deploy/start_dev.sh 一键清理+启动）。
 #
@@ -12,7 +12,7 @@
 #
 # 访问：
 #   后端 API   http://127.0.0.1:8000   （uvicorn --reload，改源码自动热重载）
-#   前端页面   http://127.0.0.1:8081   （nginx 托管 stock_frontend/dist）
+#   前端页面   http://127.0.0.1:8081   （nginx 托管构建产物，/api 反代到 api）
 # 说明：
 #   - 生产版 db/redis 仅内网，本版同样不映射宿主端口（避免与本机 PostgreSQL/Redis 冲突）；
 #     如需用 DBeaver 等直连调试，取消下方 db/redis 的 ports 注释。
@@ -110,11 +110,12 @@ services:
     networks: [backend]
 
   frontend:
-    # 开发阶段免重建 node 镜像：nginx 直接托管宿主构建产物 dist
-    image: nginx:1.27-alpine
-    volumes:
-      - ../stock_frontend/dist:/usr/share/nginx/html:ro
-      - ../stock_frontend/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+    # 开发阶段构建式：node 自动 npm run build 生成 dist（免手动构建），nginx 托管 + 反代 /api。
+    # 改前端代码后需重建镜像：docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d --build frontend
+    build:
+      context: ../stock_frontend
+      dockerfile: Dockerfile
+    image: stock-frontend:dev
     environment:
       NGINX_PROXY_PASS: http://api:8000
     depends_on: [api]
