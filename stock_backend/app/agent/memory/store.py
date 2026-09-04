@@ -5,6 +5,10 @@ Embedding 由 `embedding.get_embedding()` 按配置选择（阶段六 6.1），c
 避免 hash 与 MiniLM 向量混用导致检索失真。
 """
 
+# 惰性求值类型注解：chromadb.PersistentClient 在 1.5.x 为工厂函数（function），
+# Python 3.10-3.13 急切求值 `PersistentClient | None` 会报 TypeError，故统一惰性化（兼容 3.10-3.14）。
+from __future__ import annotations
+
 import logging
 import re
 from pathlib import Path

@@ -97,7 +97,8 @@ services:
     build:
       context: ..
       dockerfile: stock_backend/Dockerfile
-    command: ["celery", "-A", "app.worker.celery_app:celery_app", "beat"]
+    # --schedule 放容器内 /tmp（非挂载）：避免本地 Python3.13+ 的 SQLite dbm 与容器 3.12 dbm 格式冲突导致 "db type could not be determined"
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "beat", "--schedule=/tmp/celerybeat-schedule"]
     environment: *backend_env
     volumes:
       - ../stock_backend:/app

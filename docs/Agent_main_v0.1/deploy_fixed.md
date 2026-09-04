@@ -28,7 +28,48 @@
 - 手动配置：.env.docker 需配置 JWT_SECRET_KEY（生产改强随机值）与 DEEPSEEK_API_KEY（容器内用 AI 才需要）。
 - 手动配置：开发栈端口默认 API 8000 / 前端 8081，冲突时在 .env.docker 设 DEV_API_PORT / DEV_NGINX_PORT。
 
-## 问题二：
+## 问题二：Docker 开发栈 worker / beat 容器启动即崩溃、反复重启
+
+现象：docker compose up 后 api、frontend 正常，但 worker、beat 在 Docker Desktop 里转圈、时开时关（崩溃重启循环）。
+
+问题出现原因（本地 Python 3.14 与容器 Python 3.12 的版本差异，共两处）：
+1. worker：app/agent/memory/store.py 中 `chromadb.PersistentClient | None`，而 chromadb 1.5.x 的 PersistentClient 顶层导出是工厂函数（function）并非类；本地 Python 3.14 默认 PEP649 惰性注解不报错，容器 Python 3.12 急切求值 `function | None` 抛 TypeError，worker 导入即崩。
+2. beat：Python 3.13+ 的 dbm 默认改用 SQLite 后端，本地 3.14 跑 beat 生成 SQLite 格式的 celerybeat-schedule（带 -shm/-wal）；容器 3.12 的 dbm 无 SQLite 后端，经 bind mount 读到该文件报 `db type could not be determined`。
+
+时间：2026-09-03
+修复bug内容（描述）：1) store.py 顶部加 from __future__ import annotations 使注解惰性求值，兼容 Python 3.10-3.14，worker 正常注册 ai/backtest/sync 队列；2) docker-compose.dev.yml 的 beat 命令加 --schedule=/tmp/celerybeat-schedule，把调度状态文件隔离到容器内非挂载目录，并删除宿主 stock_backend 下残留的 celerybeat-schedule/-shm/-wal，beat 不再报 dbm 损坏。
+需要我手动配置（如果有的话）：无；若此前在本地直接跑过 celery beat，手动删除 stock_backend 目录下的 celerybeat-schedule* 残留文件即可。
+
+---
+
+## 工作完成后需手动配置 / 日志文件说明（问题二补充）
+- 观看运行：`docker compose -f deploy/docker-compose.dev.yml ps` 确认 worker、beat 为 Up 且 RestartCount=0；`docker compose -f deploy/docker-compose.dev.yml logs -f worker beat` 应无 TypeError / dbm 报错，worker 打印 ai、backtest、sync 三个队列即正常。
+
+---
+
+## 问题三：Docker 全新空库行情数据拉取长时间未完成
+
+现象：docker compose up 后打开前端，行情同步长时间停在"拉取中"，页面无数据可展示。
+
+问题出现原因（按日志逐条分析，区分系统性 bug 与外部/环境因素）：
+
+系统性 bug（代码/编排层，可修复）：
+1. 多源 Provider 与 akshare 接口不匹配：eastmoney `stock_board_industry_hist_min_em()` 传了当前 akshare 不支持的 `start_date` 参数（参数漂移）；sina `stock_zh_index_daily` 返回缺 `date` 列、ths `stock_board_industry_index_ths` 返回缺板块名列（KeyError）——与"akshare 返回英文列名、代码硬编码中文列名"同源，硬编码与数据源返回格式脱耦，导致东财→新浪→同花顺三级降级链全部打穿。
+2. 启动编排缺陷：api/worker/beat 三容器 entrypoint 各自执行 `alembic upgrade head` 并发建表撞 `pg_type_typname_nsp_index` 唯一约束；presync 在 worker/api 重复触发 fixed indices/catalog（生成两个 task_id）。
+
+外部/环境因素（非代码 bug）：
+3. 东财限流/反爬：`Connection aborted / RemoteDisconnected`，容器出口 IP 更易触发风控，每个接口重试 3 次（2s+4s+8s）后 give up。
+4. 全新空库无兜底：db 全新初始化仅种 49 个 symbol 元数据，无 K 线/快照/账号，数据源失败即空白。
+
+时间：2026-09-04
+修复bug内容（描述）——种子数据引导方案（已确认可行，待落地）：
+在容器首次启动时预置必要数据，页面打开即有内容，不依赖实时拉取。start-dev.bat 在 up -d 且 db ready 后检测空库：① 优先从本地原生库 pg_dump（--data-only）导入容器库（账号/K线/快照/重点关注，需两端 alembic 版本一致）；② 或执行轻量种子 SQL（默认账号+49 指数+常用标的最近 K 线/快照），幂等用 ON CONFLICT DO NOTHING + 卷内 .seeded 标记避免重复导入。同时修复 akshare 参数/列名适配与迁移单点化，增量拉取方可恢复。
+需要我手动配置（如果有的话）：1) 选"从本地库引导"时，本机 Postgres（5432/stock_invest）需运行且 schema 与容器库 alembic 版本一致；2) 首次引导耗时取决于数据量，期间勿重复启动；3) 东财限流需降低同步并发/频次或依赖多源降级。
+
+---
+
+## 工作完成后需手动配置 / 日志文件说明（问题三补充）
+- 观看运行：`docker compose -f deploy/docker-compose.dev.yml logs -f worker` 持续出现 `[provider:eastmoney] ... give up` 说明数据源仍不可用，需等待或调整同步策略。
+- 手动配置：若选择"从本地库引导"，先确保本机 Postgres（5432/stock_invest）运行且数据完整。
 
 
-## 需要手工配置：
