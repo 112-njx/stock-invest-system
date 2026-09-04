@@ -223,3 +223,46 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 **验证**：全库 259 pytest 全绿 + ruff 通过；指标默认区间与 K 线默认区间语义对齐。
 
 **教训**：指标（按需计算类数据）的默认拉取窗口必须与 K 线默认深度一致——未显式指定区间时应"按 limit 取最近 N 根"而非固定天数截断；前后端多处请求同一标的时，limit 要统一到同一默认值，避免"K 线全、指标半"的脱节。
+
+
+## 2026-09-04 Docker 日志审计：catalog_sync 崩溃（1000 ETF 批量插入撞唯一约束）
+
+**现象**：worker 日志 catalog_sync failed（sync_service.py:218 upsert_catalog_symbols），SQLAlchemy executemany 参数含 1000 个 catalog ETF；容器库 symbols 表 ETF 数量=0，全量目录同步从未成功。
+
+**根因**：symbol_repo.upsert_catalog_symbols 按 code 查重（existing = select where code==code），存在则跳过、不存在则新增；但 symbols 表唯一约束是 (type, name)（symbols_type_name_key）。全市场 ETF 中存在同名不同 code 的标的（如不同上市地同名牌），按 code 查不到 → 都新增 → 撞 (type,name) 唯一约束批量回滚。
+
+**修复**：（待定）查重/唯一判定应对齐约束按 (type,name)，或 INSERT ON CONFLICT (type,name) DO NOTHING/DO UPDATE。
+
+**教训**：唯一约束与查重键不一致必然导致幂等 upsert 批量失败；目录同步须按真实唯一键（type+name）判重。
+
+---
+
+## 2026-09-04 Docker 日志审计：新浪 stock_zh_index_daily 仍报 date 列 KeyError
+
+**现象**：日志 [provider:sina] stock_zh_index_daily failed (attempt 1/2/3) 后 give up，多源降级链新浪环节持续打穿。
+
+**根因**：akshare stock_zh_index_daily 返回缺 date 列（列名/格式漂移），sina.py 该调用点的日期列兼容（_pick_col）未覆盖或容器镜像未重建生效，仍按硬编码取列抛 KeyError。
+
+**修复**：（待定）核对 sina.py 该调用点是否走 _pick_col 兼容逻辑、缺列优雅返回空；确认修复已入镜像（docker compose up --build 重建）。
+
+**教训**：外部数据源列名漂移须在 Provider 内统一做列名兼容抽象，且修复后必须重建容器镜像验证，避免修复只落在本地没进容器。
+
+---
+
+## 2026-09-04 重启后仍需重新拉取等待（presync stale 判定 1 天太激进）
+
+**现象**：种子数据已在容器卷中（kline_1d 17368 行、34 个固定指数有日K），但每次 docker 重启后前端仍显示同步中并重新拉取等待。
+
+**根因**：① maybe_presync_fixed_indices 的 stale 判定为最新日K距今超过 1 天或无数据即算 stale，而日K本来就是 T+1 收盘才有，今天盘中看到昨天日K属正常却被判 stale → 每次启动必触发 kline_init_fixed_indices 任务与前端同步提示；② 15 个固定指数（主要为行业指数）无任何日K，数据源不可靠时全量拉取卡等待。
+
+**修复**：（待定）stale 阈值放宽/改为按交易日判定；无日K的行业指数单独增量补齐而非全量阻塞重拉。
+
+**教训**：新鲜度判定要贴合数据本身生成周期（日K T+1），不可用固定 1 天硬阈值导致每次重启误触发全量同步。
+
+---
+
+## 2026-09-04 catalog_sync 全量目录同步拉 1000 ETF（体验问题说明）
+
+**现象**：用户疑问行业指数 ETF 就固定几个、为何启动时拉取 1000 个 ETF；日志显示 catalog_sync 对全市场 ETF（1000+只，养殖/光伏/红利等所有品种）做目录批量 upsert，0/16 tqdm 为 akshare 分页进度。
+
+**说明**：非固定指数拉取。catalog_sync（V0.2 3.1）设计为启动时全量同步 A股+ETF 目录元数据到 symbols 表（供搜索/添加关注），行业指数 ETF 只是目录中极小部分。当前因 (type,name) 约束冲突（见上）1000 ETF 全部入库失败，目录同步未生效。

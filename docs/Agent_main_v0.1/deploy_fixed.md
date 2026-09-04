@@ -118,4 +118,22 @@
 - 观看运行：`docker compose -f deploy/docker-compose.dev.yml logs -f worker` 出现 fixed indices presync done 即正常；若打印 give up 则 sync_status=failed、前端降级展示旧数据。
 - 手动配置：本机跑后端测试时需先启动本地 Redis（127.0.0.1:6379），否则 test_realtime_poll_writes_snapshot_and_redis_cache 环境性失败。
 
+---
 
+## 问题五：nginx 启动竞态（frontend 先于 api 就绪 502）+ 东财容器出口 IP 持续风控
+
+现象：docker compose up 后打开前端，启动初期大量接口 502 Connection refused；worker 日志东财全接口 RemoteDisconnected 持续 give up，多源降级链新浪/同花顺亦部分打穿。
+
+问题出现原因：
+1. frontend（nginx）与 api 容器无 healthcheck / depends_on 编排，frontend 先起、api 未就绪时 nginx 反代全部 502（日志 09:07:39-55 连续 connect() failed，users/me、watchlist、sync-status、symbols 全失败），浏览器重试期首屏白屏。
+2. 东财接口（index_zh_a_hist_min_em / index_zh_a_hist / stock_board_industry_name_em / stock_board_industry_hist_min_em）容器出口 IP 被风控，重试 3 次（2s+4s+8s）后 give up，属外部限流/反爬，非改代码可根治。
+
+时间：2026-09-04
+修复bug内容（描述）：（待定）① compose 为 frontend 配 depends_on: api（condition: service_healthy）+ api 健康检查，或 nginx proxy_next_upstream 对上游 502 重试；② 东财风控靠多源降级+降频缓解，暂无法根治。
+需要我手动配置（如果有的话）：无。
+
+---
+
+## 工作完成后需手动配置 / 日志文件说明（问题五补充）
+- 观看运行：启动后 api 容器日志出现 uvicorn running 后再打开前端，即可避免启动期 502 刷屏。
+- 观看运行：docker compose logs worker 持续打印 [provider:eastmoney] ... give up 说明东财仍被风控，等待冷却或依赖多源降级。

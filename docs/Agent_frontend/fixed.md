@@ -294,3 +294,9 @@ v0.2 bug修复
 
 
 ---
+
+## 时间：2026-09-04
+## 修复bug内容（描述）：v0.2 全量日志审计发现 3 个问题（暂未修复，仅记录现象与根因）：
+1. **monitor/events 持续 404**：前端 utils/monitor.ts 经 api/monitor.ts 持续上报监控事件到后端未实现的 POST /api/v1/monitor/events（日志 32 次 404），静默降级但仍持续打日志刷屏。
+2. **请求泄漏**：MarketView.vue 仅 onMounted 无 onUnmounted 清理，syncTimer（3s 轮询 sync-status）、快照轮询 start()、WS 订阅切页后仍在后台持续请求（日志 sync-status 363 次、snapshot 312 次），浪费带宽与后端连接。
+3. **AI 页"同步行情中"残留**：sync-status 因数据源失败长期非 done 且轮询未随路由清理，从行情页切到 AI 页后顶部"数据同步中"横幅残留/反复出现，体验困惑。
