@@ -26,10 +26,17 @@ const ws = useWsStore()
 const indicesLoading = ref(false)
 const { start } = useSnapshotPolling(4000)
 
+/** 同步超时阈值（毫秒）：running 持续超过该值即降级用库中已有数据渲染，不阻塞页面 */
+const SYNC_TIMEOUT_MS = 30000
+
 /** V0.2：固定指数预同步进度（0-100），null=未在同步 */
 const syncProgress = ref<number | null>(null)
 const syncLabel = ref('')
 let syncTimer: ReturnType<typeof setInterval> | null = null
+/** 本轮进入 running 的时间戳（用于超时降级判断） */
+let syncStartedAt = 0
+/** 是否已超时降级（降级后同步完成仍要刷新最新数据） */
+let syncDegraded = false
 
 async function checkSyncStatus() {
   try {
@@ -37,16 +44,27 @@ async function checkSyncStatus() {
     market.setSyncStatus(s)
     const running = ['pending', 'running', 'queued'].includes(s.status)
     if (running) {
+      if (!syncStartedAt) syncStartedAt = Date.now()
       syncProgress.value = s.total ? Math.round((s.progress / s.total) * 100) : 0
       syncLabel.value = `数据同步中（${s.progress}/${s.total}）`
       indicesLoading.value = true
       if (!syncTimer) syncTimer = setInterval(checkSyncStatus, 3000)
+      // 超时降级：running 超过阈值仍未完成 → 先用库中已有快照渲染，同步完成后自动刷新
+      if (!syncDegraded && Date.now() - syncStartedAt > SYNC_TIMEOUT_MS) {
+        syncDegraded = true
+        indicesLoading.value = false
+        await loadFixedIndices()
+        await ensureDefaultSymbol()
+        start()
+      }
     } else {
       syncProgress.value = null
       syncLabel.value = ''
+      syncStartedAt = 0
+      syncDegraded = false
       if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
-      // 同步完成后加载数据
-      if (indicesLoading.value) {
+      // 同步完成/失败后加载数据（超时降级后仍须刷新为最新结果）
+      if (indicesLoading.value || syncDegraded) {
         indicesLoading.value = false
         await loadFixedIndices()
         await ensureDefaultSymbol()

@@ -19,6 +19,7 @@ from .base import (
     _to_float,
     unavailable_quote,
 )
+from .eastmoney import _pick_col
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +71,15 @@ class SinaProvider(BaseDataProvider):
         df = self._call(self._ak.stock_zh_index_daily, symbol=sina_symbol, raise_on_giveup=True)
         if df is None or df.empty:
             return []
+        # 兼容 akshare 中英文日期列（date/日期），列缺失时优雅返回空，避免 KeyError 打穿降级链
+        date_col = _pick_col(df, "date", "日期")
+        if date_col is None:
+            logger.warning("[sina] stock_zh_index_daily 返回缺日期列, 实际列=%s", list(df.columns))
+            return []
         bars: list[KlineBar] = []
         for _, row in df.iterrows():
             try:
-                ts = pd.to_datetime(row["date"]).to_pydatetime().replace(tzinfo=UTC)
+                ts = pd.to_datetime(row[date_col]).to_pydatetime().replace(tzinfo=UTC)
             except Exception:  # noqa: BLE001
                 continue
             if not (start <= ts <= end):

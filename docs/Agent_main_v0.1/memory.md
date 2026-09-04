@@ -103,3 +103,9 @@
     - 关键决策/修复：① 修复前置 bug——startStreaming 清空 strategyOutput 导致旧策略按钮从未生效（改为 AIView.send 先 clearStrategyOutput）；② 方案A降级——策略校验无逐级重试/错误行号展示（后端单次非流式调用）、无资金曲线缩略图（后端不返回 equity_curve）；③ 运行记录保持弹窗式、标的名称后端仅返回 symbol_id 前端以 input 文本承载；④ 回测区间用后端默认（未传 start/end，非 roadmap「近1年」，与现有 N 区回测一致）。
     - 遗留待确认：MStrategyPanel.vue 为第二波遗留死文件（已由 SessionSidebar 取代），本轮未删；api/ai.ts 的 generateStrategy()（POST /strategies/generate）本轮起无调用方（策略生成已并入 chat SSE），保留未删。
     - 第四波（全链路联调打磨）为下一波。
+
+16. Docker 一键启动落地 + V0.2 行情系统性 bug 修复（2026-09-04，详见 docs/Agent_main_v0.1/deploy_fixed.md 问题三落地报告）：
+    - 启动编排单点化：deploy/docker-compose.dev.yml 抽 x-backend-env 公共锚点，仅 api 置 RUN_MIGRATIONS=1 单点执行 alembic upgrade + seed_fixed_indices + presync；新增 stock_backend/scripts/wait_for_migrations.py，worker/beat 的 docker-entrypoint.sh 轮询等 alembic_version=head(0008) 再启动主进程，消除三容器并发建表撞 pg_type_typname_nsp_index 唯一约束、presync 重复出两个 task_id。
+    - 多源 Provider 适配 akshare 1.18.83：eastmoney._fetch_min_kline 行业分支移除 stock_board_industry_hist_min_em 不支持的 start_date/end_date（该接口仅收 symbol/period，取近期全量后按 start<=ts<=end 过滤）；sina 日K日期列改 _pick_col 兼容 date/日期、缺列优雅返回空，不再 KeyError；ths.fetch_kline 调用前新增 _resolve_board_name（复用 _industry_score 模糊匹配，半导体设备→半导体，无匹配返回空），规避 akshare 内部 code_map[symbol] KeyError。
+    - 种子引导：新增 deploy/seed_from_local.py——宿主 psycopg2 读本机 PG18、经 docker exec -i psql 写容器 PG16（绕开 pg_dump 18→16 版本差）；自动等迁移、users 非空则跳过（幂等，--force 覆盖）、导入前 docker stop worker/beat 防并发写、导完 DO 块 setval 对齐全部自增序列、finally 恢复；start-dev.bat 增 [4/4] 自动调用（保持原 UTF-8/CRLF，仅插入纯 ASCII 行）。实测导入 362 张表（users=13/symbols=52/快照44/K线齐全），root 登录与行情页打开即有数据，6 容器 RestartCount=0。
+    - 关键坑：① COPY 显式 id 后必须 setval 序列到 max(id)，否则 worker 插 task_logs/sync_tasks 撞主键（已在脚本内自动对齐）；② 容器 db 用独立卷 stock-invest-dev_pgdata、不映射宿主 5432，与本机原生库天然隔离；③ 东财 RemoteDisconnected 属外部限流/反爬，非改代码可根治，靠多源降级+降频；④ start-dev.bat 历史中文在转码中损坏成 U+FFFD，只可插入 ASCII 行、勿整体改编码（首行用户注明勿改编码）；⑤ /api/v1/snapshot 的 symbols 参数传 symbol_id（数字）非 code。

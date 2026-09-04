@@ -57,9 +57,15 @@ class THSProvider(BaseDataProvider):
     ) -> list[KlineBar]:
         if not self.can_fetch_kline(asset_type, period):
             return []
+        # 种子行业名 → 同花顺内置板块名（精确/模糊匹配），无对应板块直接返回空，
+        # 避免 akshare 内部 code_map[symbol] 抛 KeyError（如"半导体设备"不在 ths 板块表）
+        ths_symbol = self._resolve_board_name(symbol)
+        if ths_symbol is None:
+            logger.info("[ths] 板块 %s 无同花顺对应板块，跳过日K", symbol)
+            return []
         df = self._call(
             self._ak.stock_board_industry_index_ths,
-            symbol=symbol,
+            symbol=ths_symbol,
             start_date=start.strftime("%Y%m%d"),
             end_date=end.strftime("%Y%m%d"),
             raise_on_giveup=True,
@@ -139,6 +145,26 @@ class THSProvider(BaseDataProvider):
                 mapping[str(row["name"]).strip()] = str(row["code"]).strip()
         self._board_map_cache = (now, mapping)
         return mapping
+
+    def _resolve_board_name(self, symbol: str) -> str | None:
+        """种子行业名 → 同花顺内置板块名：精确命中 > 评分模糊匹配（阈值复用东财 _MIN_INDUSTRY_SCORE）。
+
+        板块表拉取失败（空）时保守回退原名；确无对应板块返回 None（调用方跳过，不触发 akshare KeyError）。
+        """
+        board = self._board_map()
+        names = list(board.keys())
+        if not names:
+            return symbol
+        symbol = symbol.strip()
+        if symbol in names:
+            return symbol
+        best: str | None = None
+        best_score = _MIN_INDUSTRY_SCORE
+        for n in names:
+            score = _industry_score(symbol, n)
+            if score > best_score:
+                best, best_score = n, score
+        return best
 
 
 def _map_ths_industry(df: pd.DataFrame, s: RealtimeSymbol) -> RealtimeQuote:

@@ -108,6 +108,6 @@ def fetch_all() -> dict:
 
     用于本地无法触发定时任务时一次性补齐大盘/行业指数数据，返回固定指数同步结果与实时轮询结果。
     """
-    fixed = sync_service.run_fixed_indices_sync()
+    fixed = sync_service.run_fixed_indices_sync(skip_existing=False)
     realtime = sync_service.run_realtime_poll()
     return ok(data={"fixed_indices": fixed, "realtime": realtime}, msg="全量同步完成")

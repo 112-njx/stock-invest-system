@@ -290,3 +290,19 @@ Agent的后端编码记录,你需要按照：
 编码时间：2026-08-27
 编码内容（描述）：审计修复 策略生成无流式反馈（问题3 方案A）。根因：_run_strategy 单次 ainvoke 生成（含三级校验重试）期间零 SSE 输出，前端空白等待、完成后代码整段蹦出。方案A（低风险，保留结构化输出不做逐字）：生成前 yield 一条进度 delta「正在生成策略代码，请稍候…」，让流式气泡从「AI 思考中…」变为有反馈。验收：全库 261 pytest 全绿 + ruff。
 
+---
+编码时间：2026-09-04
+编码内容（描述）：修复多源 Provider 与 akshare1.18.83 不匹配致降级链打穿。eastmoney._fetch_min_kline 行业分支移除 stock_board_industry_hist_min_em 不支持的 start_date/end_date（该接口仅收 symbol/period，取近期全量后按 start<=ts<=end 过滤）；sina.fetch_kline 日期列改用 _pick_col 兼容 date/日期、缺列返回空，消除 row["date"] KeyError；ths 新增 _resolve_board_name，fetch_kline 前用 _industry_score 归一化板块名（半导体设备→半导体，无匹配返回空），规避 akshare 内部 code_map KeyError。验收：三 provider 正常导入、归一化离线用例通过。
+
+---
+编码时间：2026-09-04
+编码内容（描述）：修复 api/worker/beat 并发迁移竞态。docker-compose.dev.yml 抽 x-backend-env 公共锚点，仅 api 置 RUN_MIGRATIONS=1 单点执行 alembic upgrade+seed+presync；新增 scripts/wait_for_migrations.py（轮询 alembic_version==head 0008，最长120s）；docker-entrypoint.sh 按 RUN_MIGRATIONS 分流，worker/beat 只等 DB 与迁移完成再启动。消除并发建表撞 pg_type_typname_nsp_index、presync 重复出两个 task_id。验收：compose config 通过，日志仅 api 迁移、worker/beat 打印 migrations ready 后启动。
+
+---
+编码时间：2026-09-04
+编码内容（描述）：新增容器种子数据引导 deploy/seed_from_local.py。宿主 psycopg2 读本机 PG18、经 docker exec -i psql 写容器 PG16（绕开 pg_dump 版本差）；以容器表为准自动发现普通表/分区子表（排除分区父表与 alembic_version），等迁移就绪、users 非空即跳过（幂等，--force 覆盖），导入前 stop worker/beat 防并发写，TRUNCATE RESTART IDENTITY CASCADE 后逐表 CSV COPY，DO 块 setval 对齐全部自增序列到 max(id)，finally 恢复容器。验收：导入362表 users=13/symbols=52，nextval 不撞主键。
+
+---
+编码时间：2026-09-04
+编码内容（描述）：start-dev.bat 集成种子引导为 [4/4] 步：up -d --build 后检测后端 venv，存在则调 stock_backend\.venv\Scripts\python.exe deploy\seed_from_local.py，无 venv 则跳过。保持文件原 UTF-8/CRLF 编码与既有字节（历史中文转码已损坏，仅插入纯 ASCII 行避免乱码复发），步骤号 [1/3]~[3/3] 同步改为 /4。验收：双击一键启动后自动引导，重复运行命中“种子数据已存在，跳过”，前端行情页打开即有重点关注/K线/指数快照。
+

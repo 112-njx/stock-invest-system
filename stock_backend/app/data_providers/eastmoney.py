@@ -146,6 +146,10 @@ class EastMoneyProvider(BaseDataProvider):
             fn = ak.index_zh_a_hist_min_em
         elif asset_type == "industry_index":
             fn = ak.stock_board_industry_hist_min_em
+            # akshare 1.18.x 该接口签名仅 (symbol, period)，不接受 start_date/end_date/adjust，
+            # 传入会抛 unexpected keyword argument；移除后返回近期全量分钟数据，由下方 start<=ts<=end 过滤。
+            args.pop("start_date", None)
+            args.pop("end_date", None)
         else:
             logger.warning("[eastmoney] unknown asset_type=%s", asset_type)
             return bars

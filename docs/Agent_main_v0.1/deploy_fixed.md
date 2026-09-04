@@ -72,4 +72,50 @@
 - 观看运行：`docker compose -f deploy/docker-compose.dev.yml logs -f worker` 持续出现 `[provider:eastmoney] ... give up` 说明数据源仍不可用，需等待或调整同步策略。
 - 手动配置：若选择"从本地库引导"，先确保本机 Postgres（5432/stock_invest）运行且数据完整。
 
+---
+
+## 问题三修复落地报告（2026-09-04，两个系统性 bug + 种子引导均已落地并实测）
+
+时间：2026-09-04
+修复bug内容（描述）：
+1) 系统性 bug①多源适配：eastmoney 行业分钟接口 stock_board_industry_hist_min_em 仅收 (symbol,period)，按 asset_type 移除误传的 start_date/end_date（取近期全量后按时间窗过滤）；sina 日K日期列改用 _pick_col 兼容 date/日期、缺列优雅返回空，不再 KeyError 打穿；ths 日K调用前用 _industry_score 把种子行业名归一化到同花顺内置板块（半导体设备→半导体），无匹配返回空，规避 akshare 内部 code_map KeyError。
+2) 系统性 bug②迁移单点化：compose 抽 x-backend-env 公共锚点，仅 api 置 RUN_MIGRATIONS=1 执行 alembic+seed+presync；新增 scripts/wait_for_migrations.py，worker/beat entrypoint 轮询等待 alembic_version=head 再启动，消除并发建表撞 pg_type 唯一约束与 presync 重复触发。
+3) 种子引导：新增 deploy/seed_from_local.py，由 start-dev.bat [4/4] 自动执行——宿主 psycopg2 读本机 PG18、经 docker exec psql 写容器 PG16（绕开 pg_dump 18→16 版本差）；自动等迁移、空库才导（幂等）、导入前停 worker/beat 防并发写、导完 setval 对齐全部自增序列到 max(id) 再恢复。实测导入 362 张表（users=13/symbols=52/快照44/K线齐全），root 登录与行情页打开即有数据，6 容器 RestartCount=0。
+需要我手动配置（如果有的话）：
+1) 种子引导依赖本机原生 PostgreSQL（127.0.0.1:5432/stock_invest，postgres/123456）运行、且两端 alembic 版本一致（当前均 0008）；本机库未运行时脚本自动跳过、不阻断启动（全新机器无本地库则无种子，需另备轻量种子 SQL）。
+2) 需以本机库覆盖容器库时手动执行：stock_backend\.venv\Scripts\python.exe deploy\seed_from_local.py --force。
+3) 东财 RemoteDisconnected 属外部限流/反爬，非改代码可根治，仍靠多源降级与降频缓解。
+
+---
+
+## 工作完成后需手动配置 / 日志文件说明（问题三落地补充）
+- 观看运行：双击 start-dev.bat 看到 [4/4] Seed initial data，出现“共引导 N 张表”或“种子数据已存在，跳过”即正常。
+- 观看运行：docker compose -f deploy/docker-compose.dev.yml logs worker beat 应先打印 migrations ready (current=0008, head=0008) 再启动 celery，且无 pg_type 冲突、无 duplicate key。
+- 手动配置：种子源库账号/密码/端口写在 deploy/seed_from_local.py 顶部 LOCAL_DSN，本机库信息变更时同步修改。
+
+---
+
+## 问题四：start-dev.bat 启动后同步阻塞（前端死等 + presync 全量重拉 + 数据源全挂卡 running）
+
+现象：行情同步中页面一直骨架屏死等不展示数据；已有 K 线数据的库每次重启仍对全部固定指数全量重拉、启动慢；数据源全挂时 fixed_indices 一直 running 不置 failed，前端无从降级。
+
+问题出现原因：
+1. 前端 MarketView.vue checkSyncStatus 把 running 当硬阻塞，无超时兜底，同步失败/极慢即死等。
+2. 后端 run_fixed_indices_sync 对所有 49 个固定指数全周期全量重拉（start=now-730天），与"谁过期"脱耦。
+3. run_fixed_indices_sync 无 except 收尾：fetch_kline raise_on_giveup=True 抛 ProviderError 后 sync_status 永久停留 running。
+
+时间：2026-09-04
+修复bug内容（描述）：
+1) 前端 MarketView.vue：checkSyncStatus 加 SYNC_TIMEOUT_MS=30000 常量，running 持续超阈值即降级 loadFixedIndices+ensureDefaultSymbol+start() 展示库中已有快照，同步完成后自动刷新（syncDegraded 标记保证 done 分支仍刷新）；阈值集中定义便于调整。
+2) 后端 sync_service.run_fixed_indices_sync(skip_existing=True)：已有日K（latest_ts 非空）标的跳过全量重拉并标记已同步，仅无数据标的全量拉；过期数据由每日 16:30 增量任务 run_kline_incremental 兜底。/fetch-all 运维接口传 skip_existing=False 保持全量刷新。
+3) 后端失败收尾：except 中置 sync_status=failed 并 re-raise（失败原因由 Celery 任务层写 task_logs）；全部被拉取标的 0 写入（数据源通但返回空）也收尾 failed 而非假 done，前端据此降级展示已有数据。
+需要我手动配置（如果有的话）：无。
+
+---
+
+## 工作完成后需手动配置 / 日志文件说明（问题四补充）
+- 观看运行：前端打开即展示已有数据，顶部同步进度条超过 30s 不再阻塞页面（降级后完成自动刷新）。
+- 观看运行：`docker compose -f deploy/docker-compose.dev.yml logs -f worker` 出现 fixed indices presync done 即正常；若打印 give up 则 sync_status=failed、前端降级展示旧数据。
+- 手动配置：本机跑后端测试时需先启动本地 Redis（127.0.0.1:6379），否则 test_realtime_poll_writes_snapshot_and_redis_cache 环境性失败。
+
 

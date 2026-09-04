@@ -19,6 +19,18 @@
 #   - 与生产版共用 stock_backend/Dockerfile（已内置国内 PyPI 镜像，pip 不再超时）。
 name: stock-invest-dev
 
+# 后端三服务（api/worker/beat）公共环境变量锚点；仅 api 额外置 RUN_MIGRATIONS=1 单点执行迁移/种子/presync
+x-backend-env: &backend_env
+  APP_ENV: ${APP_ENV:-dev}
+  DATABASE_URL: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-123456}@db:5432/stock_invest
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  MEMORY_DIR: /app/data/memory
+  CHROMA_DIR: /app/data/chroma
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+
 services:
   db:
     image: postgres:16-alpine
@@ -59,16 +71,10 @@ services:
       dockerfile: stock_backend/Dockerfile
     # 开发热重载：改源码免重建镜像
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    environment: &backend_env
-      APP_ENV: ${APP_ENV:-dev}
-      DATABASE_URL: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-123456}@db:5432/stock_invest
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      MEMORY_DIR: /app/data/memory
-      CHROMA_DIR: /app/data/chroma
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    # 仅 api 单点执行 alembic 迁移 + 固定指数种子 + presync，避免三容器并发迁移撞 pg_type 唯一约束、presync 重复触发
+    environment:
+      <<: *backend_env
+      RUN_MIGRATIONS: "1"
     volumes:
       # 热挂载后端源码（数据/memory 等随宿主 stock_backend/data 落盘，与本地开发一致）
       - ../stock_backend:/app

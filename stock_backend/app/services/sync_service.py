@@ -101,8 +101,14 @@ def maybe_presync_fixed_indices() -> dict:
         db.close()
 
 
-def run_fixed_indices_sync() -> dict:
-    """固定指数预同步：49 条固定大盘/行业指数全周期K线，进度写 sync_status（X/49）。"""
+def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
+    """固定指数预同步：补齐固定大盘/行业指数全周期K线，进度写 sync_status（X/49）。
+
+    skip_existing=True（presync 默认）：已有日K数据（latest_ts 非空）的标的跳过阻塞式全量重拉、
+    标记已同步；过期数据由每日增量任务 run_kline_incremental 自愈。仅无数据标的全量拉取。
+    skip_existing=False（/fetch-all 运维接口）：全部强制全量刷新。
+    数据源异常或全部被拉取标的 0 写入时收尾成 failed（而非无限 running），供前端降级展示库中已有数据。
+    """
     db = get_session()
     try:
         provider = get_provider()
@@ -118,7 +124,23 @@ def run_fixed_indices_sync() -> dict:
         )
         db.commit()
         results: dict = {}
+        skipped = 0  # 已有数据跳过拉取的标的数
+        attempted = 0  # 实际发起拉取的标的数
+        written_total = 0  # 全部标的所有周期累计写入条数
         for i, sym in enumerate(symbols, 1):
+            if skip_existing and kline_repo.latest_ts(db, "1d", sym.id) is not None:
+                # 已有日K：跳过全量重拉，标记已同步；过期数据交给每日增量任务兜底
+                skipped += 1
+                ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
+                _mark_watchlist_synced(db, sym.id, "done")
+                progress = int(i / total * 100)
+                ops_repo.upsert_sync_status(
+                    db, "fixed_indices", "running", progress, total, f"已同步 {i}/{total}（{skipped} 个已有数据跳过）"
+                )
+                db.commit()
+                results[sym.code or sym.name] = {"skipped": True}
+                continue
+            attempted += 1
             if sym.type == "index" and not sym.code:  # 行业指数 code 回填
                 code = provider.resolve_index_code(sym.name)
                 if code:
@@ -128,6 +150,7 @@ def run_fixed_indices_sync() -> dict:
                 symbol_param, asset_type = _provider_params(sym)
                 bars = provider.fetch_kline(symbol_param, period, start, end, asset_type)
                 counts[period] = _write_bars(db, period, sym.id, bars)
+                written_total += counts[period]
             ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
             _mark_watchlist_synced(db, sym.id, "done")
             progress = int(i / total * 100)
@@ -141,11 +164,40 @@ def run_fixed_indices_sync() -> dict:
                 _cache_snapshot(sym.id, snap)
                 db.commit()
             results[sym.code or sym.name] = counts
+        if attempted > 0 and written_total == 0:
+            # 数据源通但全部被拉取标的 0 写入（拉不到），收尾 failed 而非假 done
+            ops_repo.upsert_sync_status(
+                db,
+                "fixed_indices",
+                "failed",
+                progress,
+                total,
+                "全量拉取失败：数据源未返回任何K线数据",
+                finished_at=datetime.now(UTC),
+            )
+            db.commit()
+            raise RuntimeError("fixed indices presync: data sources returned no K-line bars at all")
         ops_repo.upsert_sync_status(
             db, "fixed_indices", "done", 100, total, "固定指数预同步完成", finished_at=datetime.now(UTC)
         )
         db.commit()
         return results
+    except Exception as exc:  # noqa: BLE001
+        # 收尾成 failed（前端据 failed 降级展示库中已有数据），失败原因由 Celery 任务层写 task_logs
+        try:
+            ops_repo.upsert_sync_status(
+                db,
+                "fixed_indices",
+                "failed",
+                0,
+                total if "total" in locals() else 0,
+                f"固定指数预同步失败: {exc}",
+                finished_at=datetime.now(UTC),
+            )
+            db.commit()
+        except Exception:  # noqa: BLE001 收尾失败不覆盖原始异常
+            logger.exception("failed to persist fixed_indices failed status")
+        raise
     finally:
         db.close()
 
