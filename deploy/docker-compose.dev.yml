@@ -81,8 +81,13 @@ services:
     ports:
       - "${DEV_API_PORT:-127.0.0.1:8000}:8000"
     depends_on: [db, redis]
-    # dev 为 --reload 多进程，禁用 healthcheck 避免误判重启
-    healthcheck: { disable: true }
+    # dev 为 --reload 多进程：healthcheck 用较长 interval/retries 容忍 reload 子进程重启，避免误判 unhealthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
     restart: unless-stopped
     networks: [backend]
 
@@ -122,7 +127,10 @@ services:
     image: stock-frontend:dev
     environment:
       NGINX_PROXY_PASS: http://api:8000
-    depends_on: [api]
+    # 等 api 健康就绪再启动 nginx，避免启动期全接口 502（nginx 先于 api 监听的竞态）
+    depends_on:
+      api:
+        condition: service_healthy
     ports:
       - "${DEV_NGINX_PORT:-127.0.0.1:8081}:80"
     restart: unless-stopped

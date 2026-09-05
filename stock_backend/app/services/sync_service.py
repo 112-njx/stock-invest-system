@@ -64,9 +64,13 @@ def _mark_watchlist_synced(db, symbol_id: int, status: str) -> None:
 
 # ---- V0.2 1.1 启动预同步 / 缓存预热 ----
 def stale_fixed_index_count(db) -> tuple[int, int]:
-    """固定指数最新日K超过1天或无数据的数量，返回 (stale, total)。"""
+    """固定指数最新日K超过阈值天数或无数据的数量，返回 (stale, total)。
+
+    阈值 7 自然日：日K是 T+1 收盘才有，盘中看昨日日K属正常；7 天覆盖周末+小长假，
+    避免每次重启都误判 stale 触发全量同步（过期数据由每日增量任务自愈）。
+    """
     symbols = symbol_repo.list_fixed_indices(db)
-    threshold = datetime.now(UTC) - timedelta(days=1)
+    threshold = datetime.now(UTC) - timedelta(days=7)
     stale = 0
     for sym in symbols:
         ts = market_cache.as_utc(kline_repo.latest_ts(db, "1d", sym.id))  # DB naive → UTC

@@ -300,3 +300,9 @@ v0.2 bug修复
 1. **monitor/events 持续 404**：前端 utils/monitor.ts 经 api/monitor.ts 持续上报监控事件到后端未实现的 POST /api/v1/monitor/events（日志 32 次 404），静默降级但仍持续打日志刷屏。
 2. **请求泄漏**：MarketView.vue 仅 onMounted 无 onUnmounted 清理，syncTimer（3s 轮询 sync-status）、快照轮询 start()、WS 订阅切页后仍在后台持续请求（日志 sync-status 363 次、snapshot 312 次），浪费带宽与后端连接。
 3. **AI 页"同步行情中"残留**：sync-status 因数据源失败长期非 done 且轮询未随路由清理，从行情页切到 AI 页后顶部"数据同步中"横幅残留/反复出现，体验困惑。
+
+## 时间：2026-09-04（已修复）
+## 修复bug内容（描述）：上述 3 个问题已落地修复：
+1. **monitor 404 停止重试**：utils/monitor.ts flush 捕获 404（`err.response?.status === 404`）后置 backendMissing 标记，本会话不再上报、scheduleFlush 也短路；事件仍留 localStorage 队列（后端实现接口后刷新页面即自动恢复），消除持续 404 刷屏。
+2. **MarketView 请求泄漏**：MarketView.vue 补 onUnmounted——clearInterval(syncTimer) 并重置 syncStartedAt/syncDegraded/syncProgress/syncLabel、market.setSyncStatus(null)；快照轮询由 useSnapshotPolling 内部 onBeforeUnmount(stop) 停止（无需重复处理）；WS 为全局多标签页单例，切页不断开。切页后不再有 sync-status 3s 后台轮询。
+3. **AI 页同步中残留**：随第 2 项同根因解决——卸载清理轮询 + 重置 store.syncStatus，AI 页不再读到残留的 running 状态横幅。npm run typecheck 通过。

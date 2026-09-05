@@ -82,18 +82,32 @@ def update_code(db: Session, symbol_id: int, code: str) -> None:
 
 # ---- 全量目录（V0.2 阶段三）----
 def upsert_catalog_symbols(db: Session, items: list[tuple[str, str, str, str]]) -> int:
-    """目录标的幂等 upsert：新标的 is_catalog=True，已存在保留原状态（已同步K线的不降级）。返回新增数。"""
+    """目录标的幂等 upsert：新标的 is_catalog=True，已存在保留原状态（已同步K线的不降级）。返回新增数。
+
+    三层防撞唯一约束 uq_symbols_type_name：
+    1) 查重按 (type, name) 对齐约束（全市场 ETF 存在同名不同 code 的标的，按 code 查重会全量新增撞约束）；
+    2) seen 集合防同批内同名重复（同批多次出现 (type,name) 时查询不可见已 add 的 pending 行）；
+    3) 每 100 条 flush 一次使 pending 行对后续查询可见（Session autoflush=False，不 flush 则查询看不到已 add 行）。
+    """
     added = 0
-    for code, name, type_, market in items:
+    seen: set[tuple[str, str]] = set()
+    for i, (code, name, type_, market) in enumerate(items, 1):
         if not code:
             continue
-        existing = db.scalar(select(Symbol).where(Symbol.code == code))
+        key = (type_, name)
+        if key in seen:
+            continue
+        existing = db.scalar(select(Symbol).where(Symbol.type == type_, Symbol.name == name))
         if existing:
             if not existing.name:
                 existing.name = name
+            seen.add(key)
             continue
         db.add(Symbol(code=code, name=name, type=type_, market=market or "SSE", is_catalog=True))
+        seen.add(key)
         added += 1
+        if added % 100 == 0:
+            db.flush()
     db.flush()
     return added
 

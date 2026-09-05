@@ -231,7 +231,7 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 
 **根因**：symbol_repo.upsert_catalog_symbols 按 code 查重（existing = select where code==code），存在则跳过、不存在则新增；但 symbols 表唯一约束是 (type, name)（symbols_type_name_key）。全市场 ETF 中存在同名不同 code 的标的（如不同上市地同名牌），按 code 查不到 → 都新增 → 撞 (type,name) 唯一约束批量回滚。
 
-**修复**：（待定）查重/唯一判定应对齐约束按 (type,name)，或 INSERT ON CONFLICT (type,name) DO NOTHING/DO UPDATE。
+**修复**：upsert_catalog_symbols 查重改为按 (type,name) 对齐唯一约束，并加 seen 集合防同批内同名重复（Session autoflush=False 时同批同名仍会重复插入），每 100 条 flush 一次使 pending 行对后续查询可见。实测同名不同 code 3 条 ETF 合并为 1 条、幂等测试通过（test_tmp_p135 验证后已删）。
 
 **教训**：唯一约束与查重键不一致必然导致幂等 upsert 批量失败；目录同步须按真实唯一键（type+name）判重。
 
@@ -243,7 +243,7 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 
 **根因**：akshare stock_zh_index_daily 返回缺 date 列（列名/格式漂移），sina.py 该调用点的日期列兼容（_pick_col）未覆盖或容器镜像未重建生效，仍按硬编码取列抛 KeyError。
 
-**修复**：（待定）核对 sina.py 该调用点是否走 _pick_col 兼容逻辑、缺列优雅返回空；确认修复已入镜像（docker compose up --build 重建）。
+**修复**：已核对——sina.py:75 该调用点已走 `_pick_col(df, "date", "日期")` 兼容逻辑、缺列优雅返回空（属问题三落地修复，随 b218b70 入代码库）；剩确认修复已入容器镜像：`docker compose up --build` 重建后 worker 不再报该 KeyError。
 
 **教训**：外部数据源列名漂移须在 Provider 内统一做列名兼容抽象，且修复后必须重建容器镜像验证，避免修复只落在本地没进容器。
 
@@ -255,7 +255,7 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 
 **根因**：① maybe_presync_fixed_indices 的 stale 判定为最新日K距今超过 1 天或无数据即算 stale，而日K本来就是 T+1 收盘才有，今天盘中看到昨天日K属正常却被判 stale → 每次启动必触发 kline_init_fixed_indices 任务与前端同步提示；② 15 个固定指数（主要为行业指数）无任何日K，数据源不可靠时全量拉取卡等待。
 
-**修复**：（待定）stale 阈值放宽/改为按交易日判定；无日K的行业指数单独增量补齐而非全量阻塞重拉。
+**修复**：stale_fixed_index_count 阈值由 1 天放宽到 7 自然日（覆盖周末+小长假），日K T+1 盘中看昨日不再误判 stale；无日K/超 7 天仍判 stale。无日K的行业指数走既有 skip_existing 逻辑（问题四修复：有数据跳过、仅无数据拉取），过期数据由每日 16:30 增量任务自愈。实测 3 天不 stale、10 天+无数据 stale（test_tmp_p135 验证后已删）。
 
 **教训**：新鲜度判定要贴合数据本身生成周期（日K T+1），不可用固定 1 天硬阈值导致每次重启误触发全量同步。
 

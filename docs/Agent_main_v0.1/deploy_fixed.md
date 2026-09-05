@@ -129,11 +129,14 @@
 2. 东财接口（index_zh_a_hist_min_em / index_zh_a_hist / stock_board_industry_name_em / stock_board_industry_hist_min_em）容器出口 IP 被风控，重试 3 次（2s+4s+8s）后 give up，属外部限流/反爬，非改代码可根治。
 
 时间：2026-09-04
-修复bug内容（描述）：（待定）① compose 为 frontend 配 depends_on: api（condition: service_healthy）+ api 健康检查，或 nginx proxy_next_upstream 对上游 502 重试；② 东财风控靠多源降级+降频缓解，暂无法根治。
+修复bug内容（描述）：
+1) nginx 启动竞态：dev 与生产 compose 的 api 启用 /health healthcheck（dev 因 --reload 多进程用 interval 15s/retries 5 容忍子进程重启），frontend/nginx 改 depends_on api condition: service_healthy——等 api 健康就绪再起 nginx，启动期不再全接口 502（选了 healthcheck 方案，避免 nginx 502 重试对 SSE/POST 的请求重放风险）。
+2) 东财容器出口 IP 风控：确认属外部限流/反爬（eastmoney 各接口重试 3 次 give up），非改代码可根治；靠多源降级链（东财→新浪→同花顺）+ 降频缓解，新浪 date 列修复（b218b70）后降级链不再被打穿，无需额外代码改动。
 需要我手动配置（如果有的话）：无。
 
 ---
 
 ## 工作完成后需手动配置 / 日志文件说明（问题五补充）
-- 观看运行：启动后 api 容器日志出现 uvicorn running 后再打开前端，即可避免启动期 502 刷屏。
+- 观看运行：docker compose -f deploy/docker-compose.dev.yml ps 应见 frontend 先于 api 变 healthy 后启动；api 日志出现 uvicorn running 且健康检查通过后 frontend 才监听 80，启动期不再 502 刷屏。
 - 观看运行：docker compose logs worker 持续打印 [provider:eastmoney] ... give up 说明东财仍被风控，等待冷却或依赖多源降级。
+- 手动配置：dev compose 的 api 健康检查依赖容器内 curl（镜像已含）；若调整 uvicorn 端口需同步改 healthcheck test 的 URL。

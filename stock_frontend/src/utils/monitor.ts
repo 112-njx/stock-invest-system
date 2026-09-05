@@ -31,6 +31,8 @@ function saveQueue(q: MonitorEvent[]) {
 
 let flushTimer: number | null = null
 let flushing = false
+/** 后端未实现 /monitor/events（404）后置位：本会话不再上报，避免每批事件都打一次 404 刷屏 */
+let backendMissing = false
 
 /** 入队一条事件并安排定时上报 */
 export function track(type: MonitorEvent['type'], name: string, meta?: Record<string, unknown>) {
@@ -63,6 +65,7 @@ export function reportError(err: unknown, meta?: Record<string, unknown>) {
 }
 
 function scheduleFlush() {
+  if (backendMissing) return
   if (flushTimer != null) return
   flushTimer = window.setTimeout(() => {
     flushTimer = null
@@ -72,15 +75,19 @@ function scheduleFlush() {
 
 /** 尝试上报队列（接口缺失/网络失败静默保留，后续重试；登出时清空） */
 export async function flush() {
-  if (flushing) return
+  if (flushing || backendMissing) return
   const q = loadQueue()
   if (!q.length) return
   flushing = true
   try {
     await reportEvents(q)
     localStorage.removeItem(KEY)
-  } catch {
-    /* 降级：队列保留，由 MAX 裁剪控制体积 */
+  } catch (err) {
+    // 后端未实现接口返回 404：置位后本会话停止重试，避免持续 404 刷屏（事件仍留在本地队列）
+    if ((err as { response?: { status?: number } } | undefined)?.response?.status === 404) {
+      backendMissing = true
+    }
+    /* 其他网络错误降级：队列保留，由 MAX 裁剪控制体积，下轮重试 */
   } finally {
     flushing = false
   }

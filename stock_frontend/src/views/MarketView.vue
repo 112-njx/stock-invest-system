@@ -7,7 +7,7 @@
  * - I 通用设置与开发者信息（SettingsPanel）
  * 首屏并行加载：固定指数列表 + 关注列表 + 默认标的 K 线；轮询刷新全部快照。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchSymbols, fetchSyncStatus } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
@@ -114,6 +114,18 @@ onMounted(async () => {
 watch(() => market.current?.id, () => ws.syncSubscriptions())
 watch(() => market.watchlist.length, () => ws.syncSubscriptions())
 watch(() => market.fixedIndices.length, () => ws.syncSubscriptions())
+
+// V0.2：卸载时清理 sync-status 轮询并重置同步状态，避免切页后后台持续请求、
+// 以及 AI 页等其它页面读到残留的"同步中"状态（快照轮询由 useSnapshotPolling 内部 onBeforeUnmount 停止；
+// WS 为全局多标签页单例，切页不断开）
+onUnmounted(() => {
+  if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
+  syncStartedAt = 0
+  syncDegraded = false
+  syncProgress.value = null
+  syncLabel.value = ''
+  market.setSyncStatus(null)
+})
 </script>
 
 <template>
