@@ -1,7 +1,7 @@
-# V0.3 开发参考指南 — 21 项生产级优化
+# V0.3 开发参考指南 — 22 项生产级优化
 
 > V0.3 核心目标：将 V0.1+V0.2 的功能从"个人 Demo 可用"升级为"可交付真实用户的生产级作品"。
-> 共 21 项优化，分两大类：前端修改/功能增加（13 项）、底层架构优化（8 项）。
+> 共 22 项优化，分两大类：前端修改/功能增加（13 项）、底层架构优化（9 项）。
 > 每项包含「说明」（优化什么）和「优化方案」（具体怎么做），开发前必须阅读对应条目。
 
 ---
@@ -40,12 +40,12 @@
 
 ### P0-3 记忆数据隐私
 ### 待修改
-**说明**：需求文档承诺"记忆文件保存在用户本地"，实际存储在服务端 `data/memory/` 和 `data/chroma/`，明文无加密。属于虚假承诺且存在数据泄露风险（服务器被入侵=所有用户交易体系泄露）。V0.3 采用方案 B（改承诺+加密），方案 A（浏览器本地化）列为未来增强。
+**说明**：需求文档承诺"记忆文件保存在用户本地"，实际记忆文本存于服务端 `data/memory/`（人类可读文件）与数据库 `memory_chunks`，语义向量原存于 ChromaDB（`data/chroma/`，V0.3 按 P1-12 统一迁移至 pgvector），均为明文无加密。属于虚假承诺且存在数据泄露风险（服务器被入侵=所有用户交易体系泄露）。V0.3 采用方案 B（改承诺+加密），方案 A（浏览器本地化）列为未来增强。
 
 **优化方案**：
 - **明确产品定位**：用户协议和隐私政策中说明"记忆数据存储在服务端并加密存储"，移除所有"本地存储"表述
 - **记忆文件加密**：AES-256-GCM 加密 `data/memory/{user_id}/` 下所有文件，加密密钥从环境变量 `MEMORY_ENCRYPTION_KEY`（32 字节随机）读取，写入时加密、读取时解密
-- **ChromaDB 加密**：记忆文本 content 字段在写入 ChromaDB 前加密存储；向量保持明文（相似度计算需要）；ChromaDB 持久化目录权限设为 `0700`
+- **向量库加密策略（配合 P1-12 pgvector）**：记忆文本 content 加密存储；embedding 向量保持明文（加密后无法计算相似度，沿用原策略）。迁移 pgvector 后，加密文本与明文向量同在 `memory_chunks` 表，改由数据库访问权限与磁盘加密保护；迁移完成前的 ChromaDB 持久化目录权限设为 `0700`
 - **memory_chunks 表**：content 字段改为加密存储（ENC(content)），检索时先解密原文
 - **记忆访问审计**：`audit_log` 表记录每次记忆读取/写入/删除（user_id, action, memory_id, ip, created_at）
 - **传输加密**：配合 P0-7 全链路 HTTPS
@@ -99,7 +99,7 @@
 - **账户删除**：
   - `DELETE /api/v1/users/me` — 软删除（`users.is_deleted=true, deleted_at`），立即吊销所有 token，用户无法登录
   - 30 天宽限期：软删除后 30 天内可恢复，30 天后硬删除
-  - 硬删除：级联删除所有关联数据（watchlist/support_resistance/strategies/backtest/conversations/chat_messages/agent_runs/agent_steps/memory_chunks/user_memory_files/user_sessions/user_usage），删除 ChromaDB 中该用户 collection，删除 `data/memory/{user_id}/` 目录
+  - 硬删除：级联删除所有关联数据（watchlist/support_resistance/strategies/backtest/conversations/chat_messages/agent_runs/agent_steps/memory_chunks（迁移 pgvector（P1-12）后向量行随该表级联删除，无需再单独删 ChromaDB collection；迁移前则删除该用户 Chroma collection）/user_memory_files/user_sessions/user_usage），删除 `data/memory/{user_id}/` 目录
   - 删除前二次确认：前端弹窗需输入"确认删除我的账户和所有数据"才能提交
 - **前端**：个人设置页增加"导出我的数据"按钮（显示任务进度+下载链接）和"删除账户"入口（红色危险区域，二次确认）
 
@@ -233,7 +233,7 @@
 
 ---
 
-## 二、底层架构优化（8 项）
+## 二、底层架构优化（9 项）
 
 > 以下 4 项纯后端/运维，用户不可见，属于基础设施加固。
 
@@ -241,7 +241,7 @@
 
 ### P1-1 备份 + 灾难恢复
 
-**说明**：当前无数据库自动备份、无 Redis 持久化确认、ChromaDB/记忆文件无备份，服务器故障或误操作可导致全部用户数据永久丢失。PostgreSQL 有约 680 个 K线分区子表，手动恢复极其困难。
+**说明**：当前无数据库自动备份、无 Redis 持久化确认、ChromaDB 向量库/记忆文件无备份（按 P1-12 迁移 pgvector 后向量随 PostgreSQL 统一备份，无需再单独备份），服务器故障或误操作可导致全部用户数据永久丢失。PostgreSQL 有约 680 个 K线分区子表，手动恢复极其困难。
 
 **优化方案**：
 - **PostgreSQL 备份**：
@@ -250,7 +250,7 @@
   - 备份脚本 `scripts/backup_pg.sh`，纳入 Celery beat 每日凌晨 2:00 执行
   - 每周自动恢复到临时库验证备份完整性（`scripts/verify_backup.sh`）
 - **Redis 持久化**：启用 AOF（`appendonly yes, appendfsync everysec`）+ RDB 快照（`save 60 1000`），Redis 数据目录纳入文件备份
-- **文件备份**：`data/memory/`、`data/chroma/`、导出文件目录每日 rsync 到 `/backup/files/`，保留最近7天
+- **文件备份**：`data/memory/`、导出文件目录每日 rsync 到 `/backup/files/`，保留最近7天；`data/chroma/` 仅在 P1-12（pgvector 迁移）完成前需要一并备份，迁移后向量随 `pg_dump` 备份，停止该目录备份并删除；pgvector 扩展与向量表随 PostgreSQL 全量/WAL 备份自动覆盖
 - **异地备份**：备份目录通过 rclone 同步到对象存储（S3/阿里云 OSS），每日一次，保留90天
 - **恢复演练文档**：`docs/ops/disaster_recovery.md`，包含 PostgreSQL 全量恢复/PITR 恢复/Redis 恢复/文件恢复步骤，每季度执行一次演练
 - **监控**：备份任务成功/失败告警、备份文件大小监控、备份目录磁盘空间监控（配合 P1-7）
@@ -367,6 +367,22 @@
 
 ---
 
+### P1-12 向量库 ChromaDB → pgvector 统一
+
+**说明**：当前记忆向量用 ChromaDB 本地持久化（`data/chroma/`，`chromadb.PersistentClient`，按用户分 collection `user_memory_{id}_{kind}`），与 PostgreSQL 形成两套存储——`memory_chunks` 表存元数据、Chroma 存向量与文档、靠 `vector_id` 关联。由此带来：多一套存储进程/目录与备份、PG 与 Chroma 数据一致性难保证、跨存储无法原子事务、水平扩展（P1-2）时本地文件向量库无法被多实例共享、检索需先查 Chroma 再在内存重排。统一到 PostgreSQL 的 pgvector 扩展后，记忆元数据与向量同库，TopK 检索一条 SQL 完成，并天然随 P1-1 数据库备份、随主从/连接池扩展。
+
+**优化方案**：
+- **扩展与表结构**：PostgreSQL 安装并 `CREATE EXTENSION IF NOT EXISTS vector;`（部署/ Docker 镜像需内置 pgvector）；新增 Alembic 迁移，给 `memory_chunks` 增加 `embedding vector(384)` 列（维度对齐 `EMBEDDING_DIM`，hash/MiniLM 均为 384）与 `embedding_kind varchar(16)`（区分 hash/minilm，等价原 collection 名后缀的向量空间隔离，避免混用导致检索失真）；原 `vector_id` 迁移验证后废弃
+- **向量索引**：`USING hnsw (embedding vector_cosine_ops)`（数据量小可先 ivfflat），并对 (user_id, embedding_kind) 建普通索引配合过滤
+- **检索下推 SQL**：用余弦距离操作符完成 TopK（`ORDER BY embedding <=> :qvec LIMIT k`），原"相似度×0.7+重要性×0.3"加权重排、find_duplicate 的 0.85 去重阈值全部下推为 SQL；以 user_id + embedding_kind 行级过滤替代 per-user collection
+- **存储层重写**：`agent/memory/store.py` 移除 PersistentClient/collection，改为 repository + SQLAlchemy；add/update/delete/清空改为对 memory_chunks 行的增删改（清空=按 user_id 删除）；embedding 计算仍复用现有 Hash/MiniLM，`embedding.py` 去掉对 `chromadb.api.types` 的依赖，EmbeddingFunction 改为本项目自有可调用协议
+- **存量数据迁移**：一次性脚本遍历各 Chroma collection，按 vector_id 回填 memory_chunks.embedding/embedding_kind；校验行数与抽样 TopK 召回一致后再下线 Chroma，迁移期可双写灰度
+- **依赖与清理**：依赖移除 chromadb、引入 pgvector；删除 `data/chroma/` 目录与 `CHROMA_DIR` 配置；更新本地/部署安装文档（数据库需装 vector 扩展）
+- **与加密协同（P0-3）**：content 加密、embedding 保持明文向量（加密后无法计算相似度，沿用原"向量明文"策略），统一入库后改由数据库访问权限与磁盘加密保护
+- **验证与回滚**：迁移前后对同一批 query 对比 TopK 召回与 score；记忆增删改/清空/去重合并/按用户隔离全链路回归；pytest 全绿；验证完成前保留 Chroma 与迁移脚本作为回滚路径
+
+---
+
 ## 三、实施依赖与建议顺序
 
 ### 强依赖关系
@@ -379,6 +395,7 @@ P0-8(法律页面) ──→ 登录页改造(注册协议勾选)
 P1-1(备份) ──→ P1-3(数据库时区迁移，迁移前需备份)
 P0-10(回测正确性) ──→ P1-11(回测可视化，口径正确后再展示)
 P1-9(异步线程池隔离) ──→ P0-9(Agent 按需回源，避免阻塞事件循环)
+P1-12(pgvector 迁移) ──→ P0-3(记忆加密，向量统一入库后再定加密/权限策略)
 ```
 
 ### 建议实施批次
@@ -388,7 +405,7 @@ P1-9(异步线程池隔离) ──→ P0-9(Agent 按需回源，避免阻塞事�
 | 第零批（核心缺陷修复） | P0-9, P0-10 | 实测发现的功能命门：Agent 按需回源取数 + 回测胜率/撮合正确性，独立于安全改造，应最先做 |
 | 第一批（安全地基） | P0-7, P0-1, P0-5, P0-6 | 鉴权安全一体化改造，共享 Cookie/CSP 基础设施（P0-7 内含 CORS 白名单修正） |
 | 第二批（合规+账户） | P0-8, P1-8, P0-4, 登录页改造 | 法律页面+邮件服务+密码找回+登录页重构，互相依赖 |
-| 第三批（数据+成本） | P0-3, P0-2, P1-5 | 记忆加密+AI限流+数据导出删除 |
+| 第三批（数据+成本） | P1-12, P0-3, P0-2, P1-5 | 先做 pgvector 向量库统一再做记忆加密；AI 限流+数据导出删除 |
 | 第四批（性能+运维） | P1-6, P1-1, P1-3, P1-4, P1-2, P1-9 | 分页+备份+时区+沙箱+水平扩展+启动预热/缓存性能 |
 | 第五批（扩展+可视化） | P1-10, P1-11 | 财报/新闻数据源与 Agent 工具扩展、回测资金曲线与买卖点可视化（P1-11 依赖 P0-10） |
 
@@ -401,3 +418,4 @@ P1-9(异步线程池隔离) ──→ P0-9(Agent 按需回源，避免阻塞事�
 5. 所有新增端点必须写入 `docs/Agent_backend/api-docs.md`，所有前端组件变更写入 `docs/Agent_frontend/Agent_code.md`
 6. P0-9/P0-10 为实测发现的核心缺陷（非新功能），修复时必须先补可复现的回归测试再改实现；P0-10 修复前后需用同一策略对比胜率/收益差异并记录
 7. P0-9 回源取数与 P1-9 异步隔离强相关，禁止在 async 请求/Agent 链路新增 `time.sleep`、`requests` 等同步阻塞调用
+8. P1-12（ChromaDB→pgvector）须先于 P0-3（记忆加密）实施；向量迁移需双写灰度 + TopK 召回对比验证通过后，才允许移除 chromadb 依赖与 `data/chroma/`，数据库镜像必须内置 pgvector 扩展
