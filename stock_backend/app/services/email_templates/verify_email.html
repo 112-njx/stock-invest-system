@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>邮箱验证</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="padding: 40px 40px 20px; text-align: center;">
+              <h1 style="margin: 0; color: #1a1a1a; font-size: 24px;">验证您的邮箱</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 0 40px 20px;">
+              <p style="margin: 0 0 16px; color: #333; font-size: 16px; line-height: 1.6;">
+                您好，{{ username }}：
+              </p>
+              <p style="margin: 0 0 24px; color: #333; font-size: 16px; line-height: 1.6;">
+                感谢您注册量化回测助手！请点击下方按钮验证您的邮箱地址，完成账号激活。
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 0 40px 30px; text-align: center;">
+              <a href="{{ verify_url }}" style="display: inline-block; padding: 14px 40px; background-color: #1677ff; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 500;">
+                验证邮箱
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 0 40px 20px;">
+              <p style="margin: 0 0 8px; color: #666; font-size: 14px; line-height: 1.5;">
+                如果按钮无法点击，请复制以下链接到浏览器打开：
+              </p>
+              <p style="margin: 0; color: #1677ff; font-size: 13px; word-break: break-all;">
+                {{ verify_url }}
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 20px 40px 30px;">
+              <p style="margin: 0; color: #999; font-size: 13px;">
+                此链接 10 分钟内有效。如果您没有注册本账号，请忽略此邮件。
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 20px 40px; border-top: 1px solid #eee; text-align: center;">
+              <p style="margin: 0; color: #999; font-size: 12px;">
+                © 2026 stock-agent-聂久翔 | 量化研究辅助工具
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

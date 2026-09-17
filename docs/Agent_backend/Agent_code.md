@@ -310,3 +310,7 @@ Agent的后端编码记录,你需要按照：
 编码时间：2026-09-17
 编码内容（描述）：V0.3 泳道A G01——CORS 白名单修正+Cookie 安全+Nginx 安全响应头+HTTPS 重定向机制。main.py CORS 从 allow_origins=[“*”] 改为环境变量 CORS_ORIGINS 逗号分隔白名单（空值安全降级禁凭证）；config.py 新增 CORS_ORIGINS/COOKIE_SECURE/COOKIE_SAMESITE/ACCESS_TOKEN_COOKIE_NAME 四项配置；security.py 新增 set_access_token_cookie/clear_access_token_cookie 工具函数（为 G19 预留）；nginx.conf 补充 HSTS/CSP/X-Frame-Options DENY/nosniff/Referrer-Policy 五项安全响应头+$ssl_redirect 环境变量控制 80→443 重定向+443 TLS 完整配置（注释待启用）；前端 http.ts 加 withCredentials=true+TODO(G19) 标记；user.ts 四处 localStorage 操作加 TODO(G19) 标记；.env.example/.env.docker.example/docker-compose.yml/docker-compose.dev.yml 同步新增环境变量。测试 test_g01_security.py 9 项全绿（CORS 白名单/拒绝未知源/禁通配/Cookie 属性/Secure 标志/清除 Cookie/配置项/向后兼容登录）。
 
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道B G02——邮件服务（SMTP+模板+email_logs）。config.py 新增 SMTP_HOST/PORT/USER/PASS/FROM_NAME/FROM_EMAIL/USE_TLS/TIMEOUT 八项配置（HOST 为空时自动启用模拟模式）；新增 EmailLog 模型（Alembic 0009 迁移，recipient/template/subject/status/error/created_at）；app/services/email_service.py 封装 send_email(db,recipient,template_name,context)：Jinja2 渲染 HTML+纯文本双格式→smtplib 发送（STARTTLS/SSL 双模式）→写 email_logs，SMTP_HOST 未配时落盘 data/email_outbox/*.eml 并标注 [SIMULATED]；四种模板（verify_email/password_reset/login_alert/system_notice）各含 HTML+纯文本版本；pyproject 新增 jinja2 依赖。验收：16 单测全绿（模板渲染×6、模拟发送×4、日志持久化×3、SMTP 发送×2、自定义主题×1）。
+

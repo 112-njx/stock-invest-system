@@ -47,6 +47,7 @@ huggingface_hub==1.27.0
 idna==3.18
 importlib_resources==7.1.0
 iniconfig==2.3.0
+Jinja2==3.1.6
 jiter==0.16.0
 jsonpatch==1.33
 jsonpath==0.82.2
@@ -93,6 +94,7 @@ overrides==7.7.0
 packaging==26.3
 pandas==3.0.5
 pathspec==1.1.1
+pgvector==0.5.0
 platformdirs==4.11.1
 pluggy==1.6.0
 prometheus_client==0.26.0

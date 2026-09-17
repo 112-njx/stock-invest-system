@@ -1,0 +1,14 @@
+{{ notice_title }}
+
+您好，{{ username }}：
+
+{{ notice_content }}
+
+{% if action_url %}
+{{ action_text | default('查看详情') }}：{{ action_url }}
+{% endif %}
+
+此邮件由系统自动发送。如需取消订阅，请在个人设置中调整通知偏好。
+
+---
+© 2026 stock-agent-聂久翔 | 量化研究辅助工具

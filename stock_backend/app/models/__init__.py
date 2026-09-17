@@ -2,6 +2,7 @@
 
 from .agent import AgentRun, AgentStep, MemoryChunk, UserAgent
 from .base import Base
+from .email_log import EmailLog
 from .kline import KLINE_MODELS, Kline1d, Kline1mon, Kline1w, Kline15m
 from .ops import SyncTask, TaskLog
 from .snapshot import EtfPremium, IndexValuation, SnapshotRealtime, StockFundamental
@@ -17,6 +18,7 @@ __all__ = [
     "Base",
     "ChatMessage",
     "Conversation",
+    "EmailLog",
     "EtfPremium",
     "IndexValuation",
     "KLINE_MODELS",

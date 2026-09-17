@@ -55,7 +55,10 @@ class Settings(BaseSettings):
     # ---- JWT 鉴权 ----
     JWT_SECRET_KEY: str = "dev-secret-change-in-production-0123456789abcdef"  # ≥32字节，生产必须覆盖为强随机值
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # token 有效期 7 天
+    JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # 旧 token 有效期 7 天（向后兼容，G19 后由 ACCESS_TOKEN_EXPIRE_MINUTES 接管）
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15  # G19: access token 有效期 15 分钟
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7  # G19: refresh token 有效期 7 天
+    REFRESH_TOKEN_COOKIE_NAME: str = "refresh_token"  # G19: refresh token Cookie 名称
     ADMIN_USERNAMES: str = "root"  # 管理员用户名（逗号分隔），启动时自动置 is_admin=true
 
     # ---- SMTP 邮件服务（G02：邮箱验证/密码重置/异常登录/系统通知）----
