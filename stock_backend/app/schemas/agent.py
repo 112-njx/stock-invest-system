@@ -110,3 +110,15 @@ class MemoryFactOut(BaseModel):
     source_type: str
     source_id: int | None = None
     created_at: datetime
+
+
+class AuditLogOut(BaseModel):
+    """单条记忆访问审计（GET /memory/audit，G15 P0-3a）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    action: str  # memory_read / memory_write / memory_delete
+    memory_id: int | None = None
+    ip: str | None = None
+    created_at: datetime

@@ -329,3 +329,9 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 时间：2026-09-17
 修复bug内容（描述）：G31 迁移前后差异记录（Chroma 存量 4 条 vs memory_chunks 3 行）。按 project_constraints 约束 4 已停机报告，经确认采用方案 A（以 PG 为准，孤儿跳过）。**差异明细**：Chroma `user_memory_643_minilm` 3 条 vs PG 3 行——vector_id 逐一完全一致（u643_backtest_84bb70aa27b4 / u643_backtest_2442e926e5fa / u643_rule_e0ab5ff048ad），无差异；Chroma `user_memory_554` 1 条（u554_backtest_b93db8f574d1）在 PG 中无对应行，为**孤儿向量**。**根因**（已实证，非推测）：`SELECT id,username FROM users WHERE id IN (554,643)` 仅 643(root) 存在，554 已注销；其 memory_chunks 行随外键 CASCADE 删除，而 Chroma 无外键约束、旧 delete_chunk 失败仅记 warning，故 collection 残留。同一原因遗留 data/memory/554/experience.md 孤儿文件（信息未丢失，故删除 data/chroma/ 无数据损失）。**TopK 召回对比**：4 条 query（3 条存量原文 + 1 条主题词）逐条比对旧 Chroma 与新 pgvector，TopK 序列与 score **4/4 完全一致、0 差异**；user_memory_554 因 kind=hash 与当前配置 minilm 不一致被跳过（本就不可比）。结论：迁移无召回损失。
 需要我手动配置（如果有的话）：无。
+
+---
+
+时间：2026-09-17
+修复bug内容（描述）：记忆加密的两处设计坑。① 若按「在各读写点手工加解密」实现 G34，则记忆管理 API、数据导出（G17 export_service）、重嵌入脚本、后台清理任务四条出口都要各自记得解密，漏一处就会把密文返回给用户——故改用 SQLAlchemy TypeDecorator（EncryptedText），在 ORM 边界统一加解密，所有读取方零改动。② 密文直接以 bytes 写 Text 列在 psycopg2 下不可行，改为 base64 文本落库，列类型仍为 Text 故无需 Alembic 迁移；兼容判断用「base64 解码成功且带 ENC1 魔数」双重条件，避免存量明文被误判。另修一处自查发现的问题：crypto.py 初版未绑定模块级 settings（项目其它模块惯例为 settings = get_settings()），导致测试 monkeypatch 失败，已补齐。
+需要我手动配置（如果有的话）：MEMORY_ENCRYPTION_KEY（生产必须，见 project_constraints_v0.3.md 第 1 条）。

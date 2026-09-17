@@ -1379,7 +1379,7 @@ curl "http://127.0.0.1:8000/api/v1/memory/facts?page=1&size=20&importance_min=7"
 - **接口名称**：删除单条记忆
 - **请求 Method**：DELETE
 - **请求 Path**：/api/v1/memory/facts/{fact_id}
-- **接口作用**：删除单条记忆（同步删 ChromaDB 向量 + PG 记录），删除后 AI 不再召回。
+- **接口作用**：删除单条记忆（删 memory_chunks 行，向量同列同删），删除后 AI 不再召回；同时写入记忆访问审计。
 - **请求 Body**：无（Path：fact_id；Header：Authorization: Bearer <token>）
 
 **请求示例（curl）**
@@ -1399,7 +1399,7 @@ curl -X DELETE "http://127.0.0.1:8000/api/v1/memory/facts/12" -H "Authorization:
 - **接口名称**：清空全部记忆
 - **请求 Method**：DELETE
 - **请求 Path**：/api/v1/memory/facts
-- **接口作用**：清空当前用户全部记忆（重建 ChromaDB collection + 删 PG 记录 + 删本地记忆文件）。
+- **接口作用**：清空当前用户全部记忆（按 user_id 删 memory_chunks 行 + 删加密记忆文件）；同时写入记忆访问审计。
 - **请求 Body**：无（Header：Authorization: Bearer <token>）
 
 **请求示例（curl）**
@@ -1414,7 +1414,27 @@ curl -X DELETE "http://127.0.0.1:8000/api/v1/memory/facts" -H "Authorization: Be
 {"code":0,"msg":"已清空","data":{"deleted":5}}
 ```
 
-## 8. 注销账户（G18）
+## 8. 记忆访问审计（G15 · P0-3a）
+
+- **接口名称**：记忆访问审计日志（分页）
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/memory/audit
+- **接口作用**：分页返回当前用户的记忆访问审计日志（读取/写入/删除的时间、动作、关联记忆 ID、来源 IP），按时间倒序。用于隐私合规与用户自查。
+- **请求 Body**：无（Query：`page`(默认1)、`size`(默认20，≤100)、`action`(可选：memory_read / memory_write / memory_delete)；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/memory/audit?page=1&size=20&action=memory_read" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"items":[{"id":31,"action":"memory_read","memory_id":null,"ip":"127.0.0.1","created_at":"2026-09-17T05:00:00Z"}],"total":1,"page":1,"size":20}}
+```
+
+## 9. 注销账户（G18）
 
 - **接口名称**：注销账户（软删除）
 - **请求 Method**：DELETE

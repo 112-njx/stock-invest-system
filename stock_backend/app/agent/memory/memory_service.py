@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.memory import store
 from app.core.config import get_settings
-from app.repositories import agent_repo
+from app.repositories import agent_repo, audit_repo
 from app.services.llm import LLMService, get_llm_service
 
 logger = logging.getLogger(__name__)
@@ -85,8 +85,10 @@ async def aextract_facts(user_msg: str, assistant_msg: str, llm_svc: LLMService 
     return _parse_facts(result.text)
 
 
-def save_memory(db: Session, user_id: int, source_type: str, source_id: int | None, facts: list[dict]) -> int:
-    """保存抽取事实：写记忆文件 + 向量化落库（memory_chunks）+ user_memory_files 登记。
+def save_memory(
+    db: Session, user_id: int, source_type: str, source_id: int | None, facts: list[dict], ip: str | None = None
+) -> int:
+    """保存抽取事实：写记忆文件（加密）+ 向量化落库（memory_chunks）+ user_memory_files 登记 + 审计。
 
     阶段六 6.3 去重合并：新记忆写入前与同用户已有记忆算余弦相似度，>0.85 时更新已有记忆
     （内容取较新表述、importance 取最大值），不新增。返回入库条数（不含合并条数）。
@@ -103,12 +105,16 @@ def save_memory(db: Session, user_id: int, source_type: str, source_id: int | No
                 meta = {**(dup["meta"] or {}), "importance": new_importance}
                 store.update_chunk(db, user_id, dup["chunk_id"], fact["content"], meta)
                 store.append_to_memory_file(user_id, fact["type"], f"{fact['content']}（合并更新）", new_importance)
+                merged_row = agent_repo.get_memory_chunk_by_vector(db, user_id, dup["chunk_id"])
+                audit_repo.log(
+                    db, user_id, audit_repo.ACTION_WRITE, memory_id=merged_row.id if merged_row else None, ip=ip
+                )
                 merged += 1
                 continue
 
             vector_id = f"u{user_id}_{source_type}_{uuid.uuid4().hex[:12]}"
             fpath = store.append_to_memory_file(user_id, fact["type"], fact["content"], importance)
-            store.add_chunk(
+            row = store.add_chunk(
                 db,
                 user_id,
                 vector_id,
@@ -116,6 +122,7 @@ def save_memory(db: Session, user_id: int, source_type: str, source_id: int | No
                 {"source_type": fact["type"], "source_id": source_id, "file_path": str(fpath), "importance": importance},
             )
             agent_repo.upsert_memory_file(db, user_id, str(fpath), fact["type"])
+            audit_repo.log(db, user_id, audit_repo.ACTION_WRITE, memory_id=row.id, ip=ip)
             saved += 1
         except Exception as e:  # noqa: BLE001
             logger.warning("save_memory failed user=%s: %s", user_id, e)
@@ -124,11 +131,13 @@ def save_memory(db: Session, user_id: int, source_type: str, source_id: int | No
     return saved
 
 
-def retrieve_memory(db: Session, user_id: int, query: str, top_k: int | None = None) -> str:
-    """相似度检索 TopK → 格式化文本注入上下文。"""
+def retrieve_memory(db: Session, user_id: int, query: str, top_k: int | None = None, ip: str | None = None) -> str:
+    """相似度检索 TopK → 格式化文本注入上下文（G15：命中即记审计，无命中不记）。"""
     hits = store.search(db, user_id, query, top_k=top_k)
     if not hits:
         return ""
+    audit_repo.log(db, user_id, audit_repo.ACTION_READ, ip=ip)
+    db.commit()
     lines = [f"- {h['content']}（来源:{h['source_type']}）" for h in hits]
     return "\n".join(lines)
 
@@ -159,20 +168,22 @@ def list_facts(
     return rows, total
 
 
-def delete_fact(db: Session, user_id: int, fact_id: int) -> bool:
-    """删除单条记忆（删 memory_chunks 行，向量同列同删，阶段六 6.4）。"""
+def delete_fact(db: Session, user_id: int, fact_id: int, ip: str | None = None) -> bool:
+    """删除单条记忆（删 memory_chunks 行，向量同列同删，阶段六 6.4）+ 审计。"""
     if not store.delete_chunk_by_id(db, user_id, fact_id):
         return False
+    audit_repo.log(db, user_id, audit_repo.ACTION_DELETE, memory_id=fact_id, ip=ip)
     db.commit()
     return True
 
 
-def clear_all_facts(db: Session, user_id: int) -> int:
-    """清空全部记忆（按 user_id 删 memory_chunks 行 + 删本地记忆文件，阶段六 6.4）。"""
+def clear_all_facts(db: Session, user_id: int, ip: str | None = None) -> int:
+    """清空全部记忆（按 user_id 删 memory_chunks 行 + 删本地记忆文件，阶段六 6.4）+ 审计。"""
     import shutil
 
     deleted = store.delete_collection(db, user_id)
     agent_repo.delete_all_memory_files(db, user_id)
+    audit_repo.log(db, user_id, audit_repo.ACTION_DELETE, ip=ip)  # memory_id 为空 = 批量清空
     db.commit()
     try:
         d = store.memory_dir(user_id)

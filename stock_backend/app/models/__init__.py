@@ -1,6 +1,7 @@
 """模型聚合：import 使 Base.metadata 装载全部表（供 Alembic 自动生成/校验）。"""
 
 from .agent import AgentRun, AgentStep, MemoryChunk, UserAgent
+from .audit import AuditLog
 from .base import Base
 from .email_log import EmailLog
 from .export_task import ExportTask
@@ -17,6 +18,7 @@ __all__ = [
     "AdminAnnouncement",
     "AgentRun",
     "AgentStep",
+    "AuditLog",
     "BacktestResult",
     "BacktestTask",
     "Base",

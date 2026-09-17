@@ -418,3 +418,15 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：G31 双写灰度可开关（验收项）。store.py 增 MEMORY_DUAL_WRITE 开关：开启时 PG 写入镜像到 Chroma（惰性导入，失败只告警不影响主链路），关闭时 Chroma 零写入。新增 tests/test_memory_dual_write.py 2 项验证「关→无写入 / 开→add·update·delete·clear 全镜像」，实测通过。因迁移与验证在同一会话内完成，开关与遗留路径一并按计划下线，测试证据记入本文件。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道C G15——记忆文件加密 + audit_log + 存储说明（P0-3a）。新增 app/core/crypto.py（AES-256-GCM：ENC1 魔数 + 12B nonce + tag；密钥取 MEMORY_ENCRYPTION_KEY，支持 64 位 hex 或 32 字节原文，长度不符直接报错；**未配置抛 EncryptionKeyMissing 不降级明文**）。store.py 记忆文件改为加密落盘（append = 解密→拼接→重加密），读取自动解密且兼容存量明文 .md。新增 models/audit.py + repositories/audit_repo.py + Alembic 0017 建 audit_log 表（user_id FK CASCADE / action / memory_id / ip / created_at + (user_id, created_at DESC) 索引）。memory_service 的 save/retrieve/delete/clear 全部写审计（best-effort，失败不阻断主链路），API 端点透传 X-Forwarded-For 首段 IP。新增 GET /api/v1/memory/audit 分页端点。前端 MemoryFilesDialog 加「数据存储说明」提示条（仅加提示，未改面板结构）；PrivacyView 移除「本地存储设计」表述、改为服务端加密存储并补审计说明。新增 cryptography>=42 依赖（pyproject + requirements.lock）。验收：test_memory_crypto.py 13 项全绿，vue-tsc -b --noEmit 通过。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道C G34——memory_chunks.content 加密（P0-3b）。实现方式为 SQLAlchemy `TypeDecorator`（app/models/types.py::EncryptedText，Text 列绑定参数加密、结果解密），而非在各读写点手工加解密：**所有读取方（记忆管理 API / 数据导出 / 重嵌入脚本 / 后台任务）零改动即拿到明文**，不会漏掉某个出口把密文吐给用户。密文以 base64 文本落库，列类型仍为 Text，**无需迁移**；embedding 保持明文向量（加密后无法计算相似度）。存量明文行按「非密文头则原样返回」兼容读取。验收：test_memory_crypto.py 覆盖 content 直读原始列为密文、ORM 读出为明文、检索/去重返回解密原文、API 返回明文、embedding 仍为 384 维明文、存量明文行可读。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G15 需要人类配置项——MEMORY_ENCRYPTION_KEY 未配置。按约束 5「未配置前用环境变量占位，禁止硬编码密钥」实现：config 中该字段默认空串，代码路径无任何硬编码兜底，未配置时加密写入直接抛 EncryptionKeyMissing。已为本机开发环境生成 32 字节随机密钥写入 stock_backend/.env（该文件被 .gitignore，不入库），并在 .env.example 留空占位 + 生成命令注释。**生产部署必须自行生成并注入该密钥**，否则记忆写入与 content 落库会失败（详见 project_constraints_v0.3.md）。另：测试侧在 tests/conftest.py 用 secrets.token_hex(32) 注入一次性随机密钥，使测试自包含、不依赖本机 .env。

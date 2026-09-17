@@ -7,6 +7,7 @@ from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, 
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+from .types import EncryptedText
 
 # 向量维度常量（对齐 config.EMBEDDING_DIM=384，Hash/MiniLM 均 384 维）
 EMBEDDING_DIM = 384
@@ -71,7 +72,8 @@ class MemoryChunk(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     source_type: Mapped[str] = mapped_column(String(32), nullable=False)  # strategy/rule/preference/backtest
     source_id: Mapped[int | None] = mapped_column(BigInteger)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # G34（P0-3b）：内容加密落库（AES-256-GCM），embedding 保持明文向量（加密后无法算相似度）
+    content: Mapped[str] = mapped_column(EncryptedText, nullable=False)
     vector_id: Mapped[str | None] = mapped_column(String(64))
     file_path: Mapped[str | None] = mapped_column(String(512))
     importance: Mapped[int] = mapped_column(Integer, nullable=False, default=5)  # 重要性 1-10（检索加权 + 低重要性清理）

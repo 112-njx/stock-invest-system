@@ -23,6 +23,7 @@ from sqlalchemy import Float, cast, func, select
 from sqlalchemy.orm import Session
 
 from app.agent.memory.embedding import get_embedding
+from app.core import crypto
 from app.core.config import get_settings
 from app.models.agent import MemoryChunk
 from app.repositories import agent_repo
@@ -221,19 +222,33 @@ def find_duplicate(db: Session, user_id: int, content: str, threshold: float = D
     }
 
 
-# ---- 人类可读记忆文件 ----
+# ---- 人类可读记忆文件（G15：落盘为 AES-256-GCM 密文，读取自动解密）----
 def memory_dir(user_id: int) -> Path:
     d = Path(settings.MEMORY_DIR) / str(user_id)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
+def read_memory_file_text(path: Path | str) -> str:
+    """读取记忆文件明文（自动解密；迁移期存量明文文件原样返回）。不存在返回空串。"""
+    p = Path(path)
+    if not p.exists():
+        return ""
+    return crypto.decrypt_bytes(p.read_bytes()).decode("utf-8")
+
+
+def write_memory_file_text(path: Path | str, text: str) -> None:
+    """整体写入记忆文件（加密落盘）。密钥未配置时抛 EncryptionKeyMissing，不降级为明文。"""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(crypto.encrypt_text(text))
+
+
 def append_to_memory_file(user_id: int, source_type: str, content: str, importance: int) -> Path:
-    """把一条记忆追加到用户记忆文件（markdown 人类可读）。"""
+    """把一条记忆追加到用户记忆文件（加密存储；追加 = 解密现有内容 → 拼接 → 重新加密）。"""
     d = memory_dir(user_id)
     safe_type = re.sub(r"[^\w一-鿿-]", "_", source_type)
     fpath = d / f"{safe_type}.md"
     stamp = __import__("datetime").datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
-    with fpath.open("a", encoding="utf-8") as f:
-        f.write(f"- [{stamp}] (重要度{importance}) {content}\n")
+    write_memory_file_text(fpath, read_memory_file_text(fpath) + f"- [{stamp}] (重要度{importance}) {content}\n")
     return fpath

@@ -118,11 +118,15 @@ class Settings(BaseSettings):
     EXPORT_DOWNLOAD_TOKEN_MINUTES: int = 30  # 下载链接签名 token 有效期（分钟）
 
     # ---- 本地记忆（memory_chunks + pgvector 持久化 + 人类可读记忆文件）----
+    # G31 起 PG 为向量存储唯一真源；Chroma 依赖 / data/chroma/ / CHROMA_DIR / 双写开关均已下线。
     MEMORY_DIR: str = str(_BASE_DIR / "data" / "memory")  # 记忆文件根目录（M 区可打开）
-    CHROMA_DIR: str = str(_BASE_DIR / "data" / "chroma")  # 遗留向量库目录（G21 迁移期回滚路径，G31 下线后移除）
-    MEMORY_DUAL_WRITE: bool = False  # G21/G31 迁移期双写开关：PG 写入同时镜像 Chroma（可回滚），验证通过后置 False
     MEMORY_TOP_K: int = 5  # 记忆检索注入条数
     MEMORY_IMPORTANCE_MIN: int = 5  # 抽取时重要性低于该值不入库（噪音过滤）
+
+    # ---- 记忆加密（G15 P0-3a / G34 P0-3b）----
+    # 32 字节随机密钥（64 位 hex），AES-256-GCM。**禁止硬编码**，未配置时加密写入会明确报错。
+    # 生成：python -c "import secrets; print(secrets.token_hex(32))"
+    MEMORY_ENCRYPTION_KEY: str = ""  # 空 = 未配置（需人工配置，见 project_constraints_v0.3.md）
 
     # ---- Embedding（阶段六：ONNX MiniLM 语义向量，int8 量化，本地 CPU 推理）----
     EMBEDDING_MODEL: str = "minilm"  # minilm | hash（hash 为回退选项）

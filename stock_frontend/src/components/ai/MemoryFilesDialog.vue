@@ -165,6 +165,10 @@ const SOURCE_LABEL: Record<string, string> = {
       </div>
 
       <div class="dialog__body">
+        <!-- G15（P0-3a）：数据存储说明——记忆为服务端加密存储，仅作提示，不改面板结构 -->
+        <p class="mem-notice">
+          记忆以加密方式存储在本服务端（AES-256-GCM），不会写入浏览器本地；仅用于为你提供个性化分析，可随时在此查看或删除。
+        </p>
         <!-- 加载态 -->
         <div v-if="loading" class="dlg-empty">加载中…</div>
         <!-- 错误态 -->
@@ -329,6 +333,17 @@ const SOURCE_LABEL: Record<string, string> = {
 }
 .mem-retry:hover {
   background: var(--accent-soft);
+}
+/* G15：数据存储说明提示条 */
+.mem-notice {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.02));
+  color: var(--text-muted, #8b93a3);
+  font-size: 12px;
+  line-height: 1.6;
 }
 /* 记忆卡片 */
 .mem-list {

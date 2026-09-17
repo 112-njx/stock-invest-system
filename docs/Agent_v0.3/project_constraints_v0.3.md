@@ -190,3 +190,17 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 现象：`/metrics` 抓取时日志报 `market freshness collect failed: can't subtract offset-naive and offset-aware datetimes`，`market_data_freshness_seconds` 指标**从未真正上报**，`MarketDataStale` 告警规则因此永不触发（监控盲区）。
    - 根因：`app/core/metrics_ext.py::_refresh_market_freshness` 用 `datetime.now(UTC) - row`，而 `snapshot_realtime.updated_at` 是 naive（`timestamp without time zone`），aware 减 naive 抛 TypeError。属 P1-3（G24 时区统一）的典型症状，非 G05 引入。
    - 需人工操作：无。已记录，G24 完成 timestamptz 迁移后该指标自动恢复（迁移后 ORM 返回 aware datetime）；G24 需补回归断言。
+
+
+20. **【泳道 C · G15/G34】MEMORY_ENCRYPTION_KEY 未配置 —— 生产必须配置（开发环境已临时配置）**
+   - 现状：G15（记忆文件加密）/ G34（memory_chunks.content 加密）均使用 AES-256-GCM，密钥从环境变量 `MEMORY_ENCRYPTION_KEY` 读取（32 字节随机，64 位 hex）。按约束 5「未配置前用环境变量占位，禁止硬编码密钥」，`config.py` 中该字段默认空串，**代码内无任何硬编码兜底**；未配置时加密写入直接抛 `EncryptionKeyMissing`（不会静默降级为明文）。
+   - **已为本机开发环境生成随机密钥写入 `stock_backend/.env`**（该文件被 `.gitignore` 忽略，不入库）；`.env.example` 仅留空占位 + 生成命令注释。
+   - 需人工操作（**生产部署必须**）：生成并注入密钥 —— `python -c "import secrets; print(secrets.token_hex(32))"`，将输出写入生产环境变量 `MEMORY_ENCRYPTION_KEY`。
+     ⚠️ **该密钥一旦用于加密便不可更换**：更换后既有记忆文件与 `memory_chunks.content` 密文将无法解密（存量数据不可读）。如需轮换，必须先解密全部存量再用新密钥重新加密。**请纳入密钥管理与备份范围**。
+   - 附：测试侧已在 `tests/conftest.py` 用 `secrets.token_hex(32)` 注入一次性随机密钥，测试自包含、不依赖本机 `.env`。
+
+21. **【泳道 C · G04/G21 遗留】后端容器镜像未安装 pgvector，api/worker/beat 容器启动即崩溃**
+   - 现象：`docker logs stock-invest-dev-worker-1` 报 `ModuleNotFoundError: No module named 'pgvector'`，`worker` / `beat` 容器处于 `Restarting` 循环，`api` 亦受影响。宿主机 venv 已装 pgvector（G04 已加入 pyproject），**仅容器镜像未重建**。
+   - 根因：G04 把 `pgvector` 加入 `pyproject.toml` / `requirements.lock` 后**未重建镜像**，容器内仍是旧依赖层。**与代码无关，宿主 venv 跑测试不受影响**（本泳道全部测试均在宿主 venv + 5433 容器库上执行并通过）。
+   - 需人工操作：重建后端镜像后重启 —— `docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml build api worker beat && docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d`。重建后容器内 `python -c "import pgvector"` 应无报错。
+   - 附：本次会话期间 dev 全栈曾被停止（容器 `Exited (0)`），已由本泳道用上述 compose 命令恢复 db + redis。
