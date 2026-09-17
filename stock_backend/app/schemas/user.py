@@ -27,6 +27,20 @@ class ResetPasswordIn(BaseModel):
     new_password: str = Field(min_length=6, max_length=128, description="新密码")
 
 
+class ChangePasswordIn(BaseModel):
+    """G33：已登录用户修改密码。"""
+
+    old_password: str = Field(description="当前密码（校验身份）")
+    new_password: str = Field(min_length=6, max_length=128, description="新密码")
+
+
+class ChangeEmailIn(BaseModel):
+    """G33：已登录用户修改邮箱（新邮箱需重新验证）。"""
+
+    password: str = Field(description="当前密码（校验身份）")
+    new_email: str = Field(max_length=128, description="新邮箱")
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

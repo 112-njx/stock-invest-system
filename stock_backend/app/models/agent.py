@@ -2,10 +2,14 @@
 
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+
+# 向量维度常量（对齐 config.EMBEDDING_DIM=384，Hash/MiniLM 均 384 维）
+EMBEDDING_DIM = 384
 
 
 class UserAgent(Base):
@@ -71,4 +75,7 @@ class MemoryChunk(Base):
     vector_id: Mapped[str | None] = mapped_column(String(64))
     file_path: Mapped[str | None] = mapped_column(String(512))
     importance: Mapped[int] = mapped_column(Integer, nullable=False, default=5)  # 重要性 1-10（检索加权 + 低重要性清理）
+    # G04（P1-12a）：pgvector 向量列 + embedding 类型标记（nullable，G31 回填前为空）
+    embedding = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    embedding_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)  # hash / minilm
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")

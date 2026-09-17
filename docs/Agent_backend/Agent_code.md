@@ -346,3 +346,19 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：G19 修复 refresh 复用检测失效（严重）。根因：session_service.validate_refresh_token 的检查顺序把 revoked_at 排在 Redis 黑名单之前，而轮换时旧 session 同时被 revoke_session + 入黑名单，导致复用请求永远命中"已吊销"分支短路，revoke_all_user_sessions 从不执行——即同一 refresh token 被盗用后无法触发全设备踢出。修复：把 is_refresh_token_blacklisted 检查提到 find_session 之后第一位（黑名单是"已轮换"的唯一信号），revoked_at 降为第二位。实测修复前 active=2（复用未触发）、修复后 active=0（全踢出）。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道A G29——WS 鉴权 token 不在 URL（P0-5）。ws_market.py 移除 query token 鉴权，改为：① 浏览器路径——握手从 HttpOnly Cookie 读 access_token，校验 JWT+Redis 黑名单+用户存在，失败直接拒绝握手 4001；② 非浏览器兜底——无 Cookie 时先 accept，5s 内等首条 {"action":"auth","token":...}，通过则注册否则 4001；③ 心跳复查 jti 黑名单，登出/踢出后 ≤15s 内断开已建立连接。manager.py ConnectionState 加 jti 槽位 + 新增 register()（仅注册不重复 accept）。auth.py 补齐 access_token Cookie 的种/清（login/register/refresh 用 _set_auth_cookies 双写，logout 双清）——G19 只种了 refresh Cookie，浏览器 WS 无法带 header，必须补此链路。验收：test_ws_market.py 13 项全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G29 Nginx 日志脱敏。deploy/nginx/nginx.conf 新增 map $request_uri $safe_request_uri 正则把 token 参数值替换为 ***（兼容历史客户端/第三方脚本仍带 token 的情况），定义 log_format masked 用 $safe_request_uri 替代 $request_uri，80 与 443 两个 server 块均设 access_log ... masked。注意 map 值中的 $1/$2 不会被镜像 envsubst 误替换（envsubst 只替换已定义环境变量名，数字不是合法变量名）。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道B G33（后端部分）——已登录态改密/改邮箱。规划缺口：P0-4 只定义未登录 forgot/reset，未定义已登录改密/改邮箱端点，但 G33 验收要求「入口且可用」，故补两端点（已在 project_constraints 记录待确认）。新增 PUT /users/me/password（ChangePasswordIn：old_password+new_password，校验旧密码 40003、新旧相同 40004 → 复用 session_service.revoke_all_user_sessions 吊销全部会话）与 PUT /users/me/email（ChangeEmailIn：password+new_email，校验密码 40003、与当前相同 40005、被他人占用 40002 → 置 email_verified=false + best-effort 发验证邮件）；user_service 增 change_password/change_email。验收：test_users_g33.py 11 单测全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G33 跨泳道问题记录（非本步引入）。全库 pytest 9 failed/353 passed，失败均为「不带 Authorization header 应 401」类用例，根因是泳道A G19（d8e1abb）在 deps.py::_extract_token 增加 access_token Cookie 回退 + 登录/注册下发 Cookie，TestClient 会话内 Cookie 持久化使「无 header」请求被 Cookie 认证通过；另 test_ws_market 两项属 G29 进行中的 WS 鉴权改造（query token→Cookie）。建议泳道A 在 conftest client 夹具清空 Cookie。已记入 project_constraints_v0.3.md 第八章第 4 条，本轮未越权修改泳道A 文件。

@@ -20,6 +20,64 @@ def update_profile(db: Session, user: User, nickname: str | None = None, avatar_
     return user
 
 
+def change_password(db: Session, user: User, old_password: str, new_password: str) -> None:
+    """G33：修改密码（校验旧密码）→ 吊销该用户全部 refresh token，强制所有设备重新登录。"""
+    from app.core.security import hash_password, verify_password
+    from app.services import session_service
+
+    if not verify_password(old_password, user.password_hash):
+        raise ApiError(status_code=400, code=40003, msg="当前密码不正确")
+    if old_password == new_password:
+        raise ApiError(status_code=400, code=40004, msg="新密码不能与当前密码相同")
+    user_repo.update_password(db, user, hash_password(new_password))
+    session_service.revoke_all_user_sessions(db, user.id)
+    db.commit()
+
+
+def change_email(db: Session, user: User, password: str, new_email: str) -> dict:
+    """G33：修改邮箱（校验密码）→ 新邮箱置未验证并发送验证邮件。
+
+    邮箱唯一性：已被他人占用则拒绝。
+    """
+    from app.core.security import verify_password
+    from app.services import email_token
+
+    if not verify_password(password, user.password_hash):
+        raise ApiError(status_code=400, code=40003, msg="当前密码不正确")
+    new_email = new_email.strip()
+    if new_email == user.email:
+        raise ApiError(status_code=400, code=40005, msg="新邮箱与当前邮箱相同")
+    existing = user_repo.get_by_email(db, new_email)
+    if existing is not None and existing.id != user.id:
+        raise ApiError(status_code=400, code=40002, msg="该邮箱已被注册")
+
+    user.email = new_email
+    user.email_verified = False  # 新邮箱需重新验证
+    db.flush()
+    db.commit()
+
+    # 发送验证邮件（best-effort，失败不阻断改邮箱）
+    try:
+        from app.core.config import get_settings
+        from app.services.email_service import send_email
+
+        token = email_token.create_verify_token(user.id, new_email)
+        origins = get_settings().CORS_ORIGINS
+        frontend_url = origins.split(",")[0].strip() if origins else "http://localhost:5173"
+        verify_url = f"{frontend_url}/verify-email?token={token}"
+        send_email(
+            db=db,
+            recipient=new_email,
+            template_name="verify_email",
+            context={"username": user.username, "verify_url": verify_url},
+        )
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).warning("send verify email failed for %s (best-effort)", new_email, exc_info=True)
+    return {"message": "邮箱已更新，请查收验证邮件完成验证"}
+
+
 def ensure_admins(db: Session) -> None:
     """按 ADMIN_USERNAMES 配置将指定用户置为管理员（启动时幂等调用，best-effort）。"""
     from app.core.config import get_settings

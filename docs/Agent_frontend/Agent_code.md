@@ -164,3 +164,10 @@ Agent的前端编码记录,你需要按照：
 编码内容（描述）：V0.3 泳道A G01 前端改动。api/http.ts 加 withCredentials=true（跨域自动携带 Cookie，为 G19 Cookie 鉴权预备），请求拦截器保留 localStorage Bearer token 并加 TODO(G19) 标记待移除。stores/user.ts 四处 localStorage 操作（初始化/setAuth/logout）各加 TODO(G19) 标记，G19 双 token 启用后统一改为 Cookie + 后端 logout 端点。stock_frontend/nginx.conf 补充五项安全响应头（HSTS/CSP/X-Frame-Options DENY/nosniff/Referrer-Policy）。向后兼容：登录/注册响应仍返回 Bearer token，前端行为不变。
 编码时间：2026-09-17
 编码内容（描述）：V0.3 泳道A G19 前端——401 自动刷新 + token 改内存存储。api/http.ts：加 401 拦截器自动调 refreshApi 并重放原请求，isRefreshing 锁 + refreshSubscribers 队列防并发重复刷新，_skipRefresh 标记防递归；refresh 失败清登录态跳登录页。stores/user.ts：token 从 localStorage 改为纯内存（setAuth 不再写盘），logout 改 async 调后端 POST /auth/logout 吊销会话，新增 clearAuth 供 401 降级用。api/auth.ts：新增 refreshApi/logoutApi/fetchSessions/revokeSession。api/types.ts：新增 RefreshResult/SessionInfo。api/ai.ts 的 SSE 401 分支改用 clearAuth。SettingsPanel.vue onLogout 改 async await。typecheck/build 全绿。
+
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道A G29 前端——WS 去 URL token。utils/wsClient.ts：buildWsUrl 移除 ?token= 参数与 dev 分支，统一 `${ws|wss}://${location.host}/api/v1/ws/market`，鉴权完全依赖 HttpOnly Cookie 握手自动携带；移除 useUserStore 导入（不再读 token）。vite.config.ts：/api 代理加 ws:true，让开发环境 WS 也走 vite 代理与页面同源，避免直连 127.0.0.1:8000 时 localhost/127.0.0.1 域名不一致导致 Cookie 丢失。typecheck/build 全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 G33（前端）——忘记密码/重置密码/邮箱验证页 + 注册邮箱必填 + 设置改密改邮箱。新增 ForgotPasswordView.vue（输入邮箱→POST /auth/forgot-password→查收提示，含格式校验与错误态）、ResetPasswordView.vue（从 query 取 token→新密码+确认→POST /auth/reset-password，含缺 token/成功/失败三态 + 重新申请入口）、VerifyEmailView.vue（邮件链接落地页，onMounted 调 GET /auth/verify-email，loading/success/error 三态）。router/index.ts 追加 3 条 public 路由（仅追加，不改现有结构，避让 G35）。LoginView.vue 增量：注册 tab 新增邮箱必填+格式校验+验证提示文案、登录 tab 新增「忘记密码？」链接。SettingsPanel.vue 仅新增「账号安全」区块（修改密码/修改邮箱两行 + 当前邮箱与未验证标注 + 弹窗表单），不改上方用户 Cell/显示风格/开发者信息结构（与 G18 删除账户、G19 设备管理区块并存）。api/auth.ts 增 verifyEmail/forgotPassword/resetPassword/changePassword/changeEmail 五函数并改 registerApi 增 email 参数；stores/user.ts register 增 email 形参；types.ts User 增 email_verified。验收：vue-tsc 通过、build 通过、eslint 通过。

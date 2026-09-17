@@ -8,6 +8,9 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { changeEmailApi, changePasswordApi } from '@/api/auth'
+import BaseButton from '@/components/base/BaseButton.vue'
+import BaseInput from '@/components/base/BaseInput.vue'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
 import { toast } from '@/utils/toast'
@@ -19,6 +22,83 @@ const user = useUserStore()
 const menuOpen = ref(false)
 const cellRef = ref<HTMLElement | null>(null)
 const menuPos = ref({ top: 0, left: 0, width: 0 })
+
+// ---- G33：账号安全（改密 / 改邮箱）区块 ----
+// 仅新增本区块，不改动上方用户 Cell / 显示风格 / 开发者信息结构。
+type SecurityDialog = 'password' | 'email' | null
+
+const securityDialog = ref<SecurityDialog>(null)
+const secLoading = ref(false)
+const secErrors = ref<Record<string, string>>({})
+// 改密表单
+const oldPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+// 改邮箱表单
+const emailPassword = ref('')
+const newEmail = ref('')
+
+function openSecurity(dialog: Exclude<SecurityDialog, null>) {
+  securityDialog.value = dialog
+  secErrors.value = {}
+  oldPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  emailPassword.value = ''
+  newEmail.value = ''
+}
+
+function closeSecurity() {
+  if (secLoading.value) return
+  securityDialog.value = null
+}
+
+async function submitPassword() {
+  const e: Record<string, string> = {}
+  if (!oldPassword.value) e.oldPassword = '请输入当前密码'
+  if (!newPassword.value) e.newPassword = '请输入新密码'
+  else if (newPassword.value.length < 6) e.newPassword = '密码至少 6 位'
+  if (newPassword.value !== confirmPassword.value) e.confirmPassword = '两次密码不一致'
+  if (newPassword.value && newPassword.value === oldPassword.value) e.newPassword = '新密码不能与当前密码相同'
+  secErrors.value = e
+  if (Object.keys(e).length > 0) return
+
+  secLoading.value = true
+  try {
+    await changePasswordApi(oldPassword.value, newPassword.value)
+    toast.success('密码修改成功，请重新登录')
+    securityDialog.value = null
+    // 后端已吊销全部会话 → 清本地状态回登录页
+    user.clearAuth()
+    router.push({ name: 'login' })
+  } catch {
+    // 错误提示由 axios 拦截器统一 toast，此处静默
+  } finally {
+    secLoading.value = false
+  }
+}
+
+async function submitEmail() {
+  const e: Record<string, string> = {}
+  if (!emailPassword.value) e.emailPassword = '请输入当前密码'
+  const mail = newEmail.value.trim()
+  if (!mail) e.newEmail = '请输入新邮箱'
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) e.newEmail = '邮箱格式不正确'
+  secErrors.value = e
+  if (Object.keys(e).length > 0) return
+
+  secLoading.value = true
+  try {
+    await changeEmailApi(emailPassword.value, mail)
+    toast.success('邮箱已更新，请查收验证邮件')
+    securityDialog.value = null
+    await user.fetchMe().catch(() => {})
+  } catch {
+    // 错误提示由 axios 拦截器统一 toast，此处静默
+  } finally {
+    secLoading.value = false
+  }
+}
 
 onMounted(() => {
   if (!user.user && user.token) user.fetchMe().catch(() => {})
@@ -103,9 +183,98 @@ const menuStyle = computed(() => ({
       </button>
     </div>
 
+    <!-- G33：账号安全区块（改密 / 改邮箱），仅新增，不改上方结构 -->
+    <div class="settings-block settings-block--col">
+      <span class="settings-block__label">账号安全</span>
+      <div class="security-rows">
+        <button class="security-row" @click="openSecurity('password')">
+          <span class="security-row__text">修改密码</span>
+          <span class="security-row__arrow">›</span>
+        </button>
+        <button class="security-row" @click="openSecurity('email')">
+          <span class="security-row__text">修改邮箱</span>
+          <span class="security-row__arrow">›</span>
+        </button>
+      </div>
+      <span class="security-note">
+        当前邮箱：{{ user.user?.email || '未绑定' }}
+        <template v-if="user.user?.email && !user.user?.email_verified">（未验证）</template>
+      </span>
+    </div>
+
     <div class="settings-dev">
       <span class="settings-dev__text">本软件由 Xhope(发誓不做夜猫子)全程开发</span>
     </div>
+
+    <!-- G33：改密 / 改邮箱弹窗 -->
+    <Teleport to="body">
+      <div v-if="securityDialog" class="sec-mask" @click.self="closeSecurity">
+        <div class="sec-dialog">
+          <h3 class="sec-dialog__title">
+            {{ securityDialog === 'password' ? '修改密码' : '修改邮箱' }}
+          </h3>
+
+          <form
+            v-if="securityDialog === 'password'"
+            class="sec-dialog__form"
+            @submit.prevent="submitPassword"
+          >
+            <BaseInput
+              v-model="oldPassword"
+              label="当前密码"
+              type="password"
+              placeholder="请输入当前密码"
+              :error="secErrors.oldPassword"
+              autocomplete="current-password"
+            />
+            <BaseInput
+              v-model="newPassword"
+              label="新密码"
+              type="password"
+              placeholder="请输入新密码（至少 6 位）"
+              :error="secErrors.newPassword"
+              autocomplete="new-password"
+            />
+            <BaseInput
+              v-model="confirmPassword"
+              label="确认新密码"
+              type="password"
+              placeholder="请再次输入新密码"
+              :error="secErrors.confirmPassword"
+              autocomplete="new-password"
+            />
+            <p class="sec-dialog__hint">修改成功后所有设备将退出登录，需用新密码重新登录。</p>
+            <div class="sec-dialog__actions">
+              <BaseButton type="button" variant="ghost" @click="closeSecurity">取消</BaseButton>
+              <BaseButton type="submit" variant="primary" :loading="secLoading">确认修改</BaseButton>
+            </div>
+          </form>
+
+          <form v-else class="sec-dialog__form" @submit.prevent="submitEmail">
+            <BaseInput
+              v-model="emailPassword"
+              label="当前密码"
+              type="password"
+              placeholder="请输入当前密码"
+              :error="secErrors.emailPassword"
+              autocomplete="current-password"
+            />
+            <BaseInput
+              v-model="newEmail"
+              label="新邮箱"
+              placeholder="请输入新邮箱"
+              :error="secErrors.newEmail"
+              autocomplete="email"
+            />
+            <p class="sec-dialog__hint">新邮箱需重新验证，我们将向新邮箱发送验证链接。</p>
+            <div class="sec-dialog__actions">
+              <BaseButton type="button" variant="ghost" @click="closeSecurity">取消</BaseButton>
+              <BaseButton type="submit" variant="primary" :loading="secLoading">确认修改</BaseButton>
+            </div>
+          </form>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -274,5 +443,87 @@ const menuStyle = computed(() => ({
   font-size: 11px;
   color: var(--text-muted);
   line-height: 1.6;
+}
+
+/* G33：账号安全区块 */
+.settings-block--col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.security-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.security-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.security-row:hover {
+  background: var(--bg-hover);
+}
+.security-row__arrow {
+  font-size: 16px;
+  color: var(--text-muted);
+  line-height: 1;
+}
+.security-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* G33：改密/改邮箱弹窗 */
+.sec-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+.sec-dialog {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 22px 22px 18px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.sec-dialog__title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+.sec-dialog__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sec-dialog__hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.sec-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 </style>

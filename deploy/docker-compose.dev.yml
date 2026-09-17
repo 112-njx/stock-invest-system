@@ -35,7 +35,8 @@ x-backend-env: &backend_env
 
 services:
   db:
-    image: postgres:16-alpine
+    # G04（P1-12a）：使用内置 pgvector 扩展的镜像（替代 postgres:16-alpine）
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
@@ -47,8 +48,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    # 开发调试可选：直连容器内 DB（避免与本机 5432 冲突）
-    # ports: ["127.0.0.1:5433:5432"]
+    # G04：默认映射到宿主 5433，供本地 pytest / DBeaver 直连（本机原生 5432 无 pgvector 扩展）。
+    # 若本机 5433 被占用，用 DEV_DB_PORT 覆盖，如 DEV_DB_PORT=127.0.0.1:5434。
+    ports:
+      - "${DEV_DB_PORT:-127.0.0.1:5433}:5432"
     restart: unless-stopped
     networks: [backend]
 

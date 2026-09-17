@@ -382,6 +382,50 @@ curl -X PUT "http://127.0.0.1:8000/api/v1/users/me" -H "Authorization: Bearer ey
 {"code":0,"msg":"ok","data":{"id":1,"username":"alice","nickname":"新昵称","avatar_url":null}}
 ```
 
+## 3. 修改密码（G33）
+
+- **接口名称**：修改密码
+- **请求 Method**：PUT
+- **请求 Path**：/api/v1/users/me/password
+- **接口作用**：已登录用户改密（需旧密码校验），成功后**吊销该用户全部 refresh token**，所有设备需重新登录。
+- **请求 Body**：有（Body-JSON：old_password、new_password；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -X PUT "http://127.0.0.1:8000/api/v1/users/me/password" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"old_password":"pass123456","new_password":"newpass789"}'
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"message":"密码修改成功，请重新登录"}}
+```
+
+（旧密码错误返回 `40003`；新旧密码相同返回 `40004`；新密码 <6 位返回 422）
+
+## 4. 修改邮箱（G33）
+
+- **接口名称**：修改邮箱
+- **请求 Method**：PUT
+- **请求 Path**：/api/v1/users/me/email
+- **接口作用**：已登录用户改邮箱（需密码校验），新邮箱置 `email_verified=false` 并向新邮箱发送验证邮件。
+- **请求 Body**：有（Body-JSON：password、new_email；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -X PUT "http://127.0.0.1:8000/api/v1/users/me/email" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"password":"pass123456","new_email":"new@example.com"}'
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"message":"邮箱已更新，请查收验证邮件完成验证"}}
+```
+
+（密码错误返回 `40003`；新邮箱与当前相同返回 `40005`；新邮箱已被他人注册返回 `40002`）
+
 # 重点关注股票 API（Watchlist）
 
 ## 1. 关注列表
@@ -1302,15 +1346,33 @@ curl -X POST "http://127.0.0.1:8000/api/v1/admin/catalog/sync" -H "Authorization
 - **接口名称**：实时行情 WebSocket
 - **请求 Method**：WS
 - **请求 Path**：/api/v1/ws/market
-- **接口作用**：实时快照/K线增量推送。query 传 token 鉴权；订阅消息 `{"action":"subscribe","symbol_ids":[1,2]}`；服务端每 15s 发 `{"type":"ping"}`，30s 无 pong 断开；断线补拉 `{"action":"sync","since":"ISO时间"}`。
-- **请求 Body**：无（Query：token=JWT）
+- **接口作用**：实时快照/K线增量推送。**鉴权走 HttpOnly Cookie（G29，token 不再出现在 URL）**；订阅消息 `{"action":"subscribe","symbol_ids":[1,2]}`；服务端每 15s 发 `{"type":"ping"}`，30s 无 pong 断开；断线补拉 `{"action":"sync","since":"ISO时间"}`。
+- **请求 Body**：无（无 Query 参数）
+
+**鉴权方式（G29 / P0-5）**
+
+| 客户端 | 方式 | 说明 |
+|---|---|---|
+| 浏览器 | HttpOnly Cookie | `new WebSocket(url)` 自动携带 `access_token` Cookie，服务端握手时校验（含 Redis 黑名单） |
+| 非浏览器（脚本/移动端） | 首条 auth 消息 | 握手后 5s 内发 `{"action":"auth","token":"<JWT>"}`，校验通过即认证 |
+
+- 校验失败：Cookie 存在但无效 → 握手直接拒绝（4001）；无 Cookie 且 5s 内未发 auth → accept 后 4001 关闭。
+- 心跳期间复查 jti 黑名单：登出/踢出设备后，已建立的 WS 连接会在下一次心跳（≤15s）被断开（4001）。
+- **query 参数 `?token=` 已不再是鉴权途径**（即使 token 有效也拒绝），避免 Nginx/代理日志泄露。
 
 **请求示例（JS 伪代码）**
 
 ```js
-const ws = new WebSocket(`ws://127.0.0.1:8000/api/v1/ws/market?token=${token}`);
+// 浏览器：Cookie 自动携带，无需传 token
+const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/v1/ws/market`);
 ws.onopen = () => ws.send(JSON.stringify({action:"subscribe", symbol_ids:[125,70]}));
 ws.onmessage = e => console.log(e.data); // {"type":"ping"} / {"type":"snapshot","data":{...}} / {"type":"kline",...}
+```
+
+```js
+// 非浏览器客户端：首条 auth 消息兜底
+const ws = new WebSocket("wss://host/api/v1/ws/market");
+ws.onopen = () => ws.send(JSON.stringify({action:"auth", token: jwt}));
 ```
 
 **成功返回示例（推送消息）**

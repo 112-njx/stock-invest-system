@@ -14,6 +14,7 @@ const username = ref('')
 const password = ref('')
 const confirm = ref('')
 const nickname = ref('')
+const email = ref('')
 const errors = ref<Record<string, string>>({})
 const loading = ref(false)
 
@@ -25,6 +26,10 @@ function validate(): boolean {
   if (!password.value) e.password = '请输入密码'
   else if (password.value.length < 6) e.password = '密码至少 6 位'
   if (tab.value === 'register') {
+    // G23/G33：邮箱必填且需格式合法
+    const mail = email.value.trim()
+    if (!mail) e.email = '请输入邮箱'
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) e.email = '邮箱格式不正确'
     if (!nickname.value.trim()) e.nickname = '请输入昵称'
     if (password.value !== confirm.value) e.confirm = '两次密码不一致'
   }
@@ -39,8 +44,13 @@ async function submit() {
     if (tab.value === 'login') {
       await userStore.login(username.value.trim(), password.value)
     } else {
-      // 注册成功即自动登录（后端注册签发 JWT）
-      await userStore.register(username.value.trim(), password.value, nickname.value.trim())
+      // 注册成功即自动登录（后端注册签发 JWT，并发送验证邮件）
+      await userStore.register(
+        username.value.trim(),
+        password.value,
+        email.value.trim(),
+        nickname.value.trim(),
+      )
     }
     const redirect = (route.query.redirect as string) || '/market'
     router.push(redirect)
@@ -49,6 +59,10 @@ async function submit() {
   } finally {
     loading.value = false
   }
+}
+
+function goForgot() {
+  router.push({ name: 'forgot-password' })
 }
 </script>
 
@@ -103,13 +117,26 @@ async function submit() {
             autocomplete="new-password"
           />
           <BaseInput
+            v-model="email"
+            label="邮箱"
+            placeholder="用于账号验证与密码找回"
+            :error="errors.email"
+            autocomplete="email"
+          />
+          <BaseInput
             v-model="nickname"
             label="昵称"
             placeholder="请输入昵称（展示用）"
             :error="errors.nickname"
             autocomplete="nickname"
           />
+          <p class="form__hint">注册后将向该邮箱发送验证链接（10 分钟内有效）。</p>
         </template>
+
+        <!-- G33：忘记密码入口（仅登录态展示） -->
+        <div v-if="tab === 'login'" class="form__aux">
+          <button type="button" class="link" @click="goForgot">忘记密码？</button>
+        </div>
 
         <BaseButton type="submit" block size="lg" :loading="loading" class="submit">
           {{ tab === 'login' ? '登 录' : '注册并登录' }}
@@ -194,5 +221,23 @@ async function submit() {
 }
 .submit {
   margin-top: 6px;
+}
+.form__hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.form__aux {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -4px;
+}
+.link {
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.link:hover {
+  text-decoration: underline;
 }
 </style>

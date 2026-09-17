@@ -13,7 +13,8 @@ name: stock-invest
 
 services:
   db:
-    image: postgres:16-alpine
+    # G04（P1-12a）：使用内置 pgvector 扩展的镜像（替代 postgres:16-alpine）
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}

@@ -124,3 +124,10 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 现状：新增迁移 `stock_backend/alembic/versions/0010_user_sessions.py`（revision 0010 / down_revision 0009）。本地因第 1 条 pgvector 阻塞，0009 未执行，0010 也随之未执行；已临时手工建表供本地测试。
    - 需人工操作：解决第 1 条 pgvector 后执行 `alembic upgrade head`，一次性补齐 0009~0012（含 user_sessions 表与两个索引）。回滚方案：`alembic downgrade 0009`（脚本内含 drop index + drop table）。
    - 附注：G19 新增环境变量均有默认值，无需配置——`ACCESS_TOKEN_EXPIRE_MINUTES`(15) / `REFRESH_TOKEN_EXPIRE_DAYS`(7) / `REFRESH_TOKEN_COOKIE_NAME`(refresh_token)。
+
+4. **【泳道 A · G19/G29】Cookie 回退鉴权导致 9 个「未登录应 401」用例失败（跨泳道回归）**
+   - 现象：全库 `pytest` 9 failed / 353 passed。失败用例均为断言「不带 Authorization header 应返回 401」的接口（test_strategies::test_generate_api、test_sse::test_resume_endpoint_ownership、test_chat::test_chat_api_stream_and_requires_token、test_conversations::test_messages_order_and_symbol、test_research_graph::test_deep_chat_records_agent_steps、test_agent_ops::test_agent_runs_ownership_and_auth、test_catalog_search::test_search_fuzzy_prefers_synced_over_catalog、test_ws_market::test_ws_rejects_without_token/bad_token）。
+   - 根因：G19（提交 d8e1abb）在 `app/api/deps.py::_extract_token` 增加 Cookie 回退（`request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)`），且登录/注册响应下发 access_token Cookie；FastAPI TestClient 在同一测试会话内持久化 Cookie，导致先 register 再「无 header」请求时被 Cookie 认证通过 → 期望 401 实得 200。WS 两项为 G29 进行中的 WS 鉴权改造（query token → Cookie）所致。
+   - 影响范围：测试断言层面；生产行为符合预期（浏览器 Cookie 鉴权是设计目标），但**测试夹具需要隔离 Cookie**。
+   - 建议修复（属泳道 A 范围）：在 `tests/conftest.py` 的 client 夹具或相关测试中显式清空 Cookie（`client.cookies.clear()`），或为「未登录」用例使用独立的无 Cookie client。
+   - 需人工操作：无（代码内修复）；本轮泳道 B 未越权修改泳道 A 文件。
