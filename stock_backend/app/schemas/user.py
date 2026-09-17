@@ -5,17 +5,20 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.validators import HttpUrlTextOptional, SafeTextOptional
+
 
 class RegisterIn(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_]+$", description="用户名")
     password: str = Field(min_length=6, max_length=128, description="密码（明文，服务端 bcrypt 哈希）")
     email: str = Field(max_length=128, description="邮箱（必填，用于账号验证和密码重置）")
-    nickname: str | None = Field(None, max_length=64)
+    nickname: SafeTextOptional = Field(None, max_length=64)
 
 
 class LoginIn(BaseModel):
-    username: str
-    password: str
+    # G30：补长度上限，避免超长输入打到 bcrypt（CPU 消耗）与日志
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=128)
 
 
 class ForgotPasswordIn(BaseModel):
@@ -23,21 +26,21 @@ class ForgotPasswordIn(BaseModel):
 
 
 class ResetPasswordIn(BaseModel):
-    token: str = Field(description="重置密码 token（从邮件链接获取）")
+    token: str = Field(max_length=512, description="重置密码 token（从邮件链接获取）")
     new_password: str = Field(min_length=6, max_length=128, description="新密码")
 
 
 class ChangePasswordIn(BaseModel):
     """G33：已登录用户修改密码。"""
 
-    old_password: str = Field(description="当前密码（校验身份）")
+    old_password: str = Field(max_length=128, description="当前密码（校验身份）")
     new_password: str = Field(min_length=6, max_length=128, description="新密码")
 
 
 class ChangeEmailIn(BaseModel):
     """G33：已登录用户修改邮箱（新邮箱需重新验证）。"""
 
-    password: str = Field(description="当前密码（校验身份）")
+    password: str = Field(max_length=128, description="当前密码（校验身份）")
     new_email: str = Field(max_length=128, description="新邮箱")
 
 
@@ -59,13 +62,14 @@ class TokenOut(BaseModel):
 
 
 class UserUpdateIn(BaseModel):
-    nickname: str | None = Field(None, max_length=64)
-    avatar_url: str | None = Field(None, max_length=255)
+    nickname: SafeTextOptional = Field(None, max_length=64)
+    # G30：头像地址仅允许 http/https/站内路径，拒绝 javascript:/data: 等可执行协议
+    avatar_url: HttpUrlTextOptional = Field(None, max_length=255)
 
 
 # ---- 重点关注股票 ----
 class WatchlistAddIn(BaseModel):
-    symbol: str = Field(..., description="标的代码（或 symbol_id）")
+    symbol: str = Field(..., max_length=32, description="标的代码（或 symbol_id）")
 
 
 class WatchlistOut(BaseModel):
@@ -87,10 +91,10 @@ class WatchlistOut(BaseModel):
 
 # ---- 支撑/压力位 ----
 class SupportResistanceIn(BaseModel):
-    symbol: str = Field(..., description="标的代码（或 symbol_id）")
+    symbol: str = Field(..., max_length=32, description="标的代码（或 symbol_id）")
     type: Literal["support", "pressure"] = Field(..., description="support=支撑位 / pressure=压力位")
     price: float = Field(..., description="价位")
-    note: str | None = Field(None, max_length=255)
+    note: SafeTextOptional = Field(None, max_length=255)
 
 
 class SupportResistanceOut(BaseModel):

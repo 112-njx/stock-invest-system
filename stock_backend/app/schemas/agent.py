@@ -5,22 +5,27 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.validators import SafeText, SafeTextOptional
+
+# G30：system_prompt 直接拼入 LLM 上下文，需限长（防 prompt 注入放大/成本 DoS）
+_SYSTEM_PROMPT_MAX = 8000
+
 
 class AgentCreateIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=64)
+    name: SafeText = Field(..., min_length=1, max_length=64)
     agent_type: str = Field("custom", pattern="^(diagnostic|plan|radar|strategy|custom)$")
-    system_prompt: str | None = None
+    system_prompt: SafeTextOptional = Field(None, max_length=_SYSTEM_PROMPT_MAX)
     tools: dict[str, Any] | None = None
     llm_config: dict[str, Any] | None = None
     memory_config: dict[str, Any] | None = None
     status: str = Field("draft", pattern="^(active|draft)$")
-    template: str | None = Field(None, description="从预设模板创建（technical/fundamental/risk_control）")
+    template: str | None = Field(None, max_length=32, description="从预设模板创建（technical/fundamental/risk_control）")
 
 
 class AgentUpdateIn(BaseModel):
-    name: str | None = Field(None, min_length=1, max_length=64)
+    name: SafeTextOptional = Field(None, min_length=1, max_length=64)
     agent_type: str | None = Field(None, pattern="^(diagnostic|plan|radar|strategy|custom)$")
-    system_prompt: str | None = None
+    system_prompt: SafeTextOptional = Field(None, max_length=_SYSTEM_PROMPT_MAX)
     tools: dict[str, Any] | None = None
     llm_config: dict[str, Any] | None = None
     memory_config: dict[str, Any] | None = None

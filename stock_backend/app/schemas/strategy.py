@@ -5,11 +5,17 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.validators import SafeText, SafeTextOptional
+
+# G30：策略描述/代码直接拼入 LLM 上下文或存库回显，需限长
+_DESCRIPTION_MAX = 2000
+_CODE_MAX = 20000
+
 
 # ---- AI 策略生成（3.5 结构化输出）----
 class StrategyGenerateIn(BaseModel):
-    description: str = Field(..., min_length=1, description="用户交易想法描述")
-    symbol: str | None = Field(None, description="绑定标的（代码或 symbol_id，可选）")
+    description: SafeText = Field(..., min_length=1, max_length=_DESCRIPTION_MAX, description="用户交易想法描述")
+    symbol: str | None = Field(None, max_length=32, description="绑定标的（代码或 symbol_id，可选）")
 
 
 class StrategyParams(BaseModel):
@@ -33,17 +39,17 @@ class StrategyOutput(BaseModel):
 
 # ---- 交易策略 CRUD（3.6）----
 class StrategyCreateIn(BaseModel):
-    title: str = Field(..., min_length=1, max_length=128)
-    description: str | None = None
-    code: str | None = None
+    title: SafeText = Field(..., min_length=1, max_length=128)
+    description: SafeTextOptional = Field(None, max_length=_DESCRIPTION_MAX)
+    code: SafeTextOptional = Field(None, max_length=_CODE_MAX)
     params: dict[str, Any] | None = None
     status: str = Field("draft", pattern="^(active|draft)$")
 
 
 class StrategyUpdateIn(BaseModel):
-    title: str | None = Field(None, min_length=1, max_length=128)
-    description: str | None = None
-    code: str | None = None
+    title: SafeTextOptional = Field(None, min_length=1, max_length=128)
+    description: SafeTextOptional = Field(None, max_length=_DESCRIPTION_MAX)
+    code: SafeTextOptional = Field(None, max_length=_CODE_MAX)
     params: dict[str, Any] | None = None
     status: str | None = Field(None, pattern="^(active|draft)$")
 

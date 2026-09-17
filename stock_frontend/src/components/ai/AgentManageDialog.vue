@@ -103,7 +103,13 @@ async function onDelete(a: AgentConfig) {
         <div v-else class="agent-form">
           <label class="af-field">
             <span class="af-label">名称</span>
-            <input v-model="form.name" class="af-input" type="text" placeholder="例如：我的技术面风控" />
+            <input
+              v-model="form.name"
+              class="af-input"
+              type="text"
+              maxlength="64"
+              placeholder="例如：我的技术面风控"
+            />
           </label>
           <label class="af-field">
             <span class="af-label">预设模板</span>
@@ -117,6 +123,7 @@ async function onDelete(a: AgentConfig) {
               v-model="form.system_prompt"
               class="af-input af-input--area"
               rows="3"
+              maxlength="8000"
               placeholder="描述你的交易体系，AI 将按此辅助决策…"
             />
           </label>

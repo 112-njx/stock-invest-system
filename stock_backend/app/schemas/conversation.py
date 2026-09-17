@@ -5,13 +5,18 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.validators import SafeText, SafeTextOptional
+
+# G30：消息内容会落库并经前端 markdown 渲染，需限长
+_CONTENT_MAX = 20000
+
 
 class ConversationCreateIn(BaseModel):
-    title: str | None = Field(None, max_length=128, description="会话标题，默认「新会话」")
+    title: SafeTextOptional = Field(None, max_length=128, description="会话标题，默认「新会话」")
 
 
 class ConversationRenameIn(BaseModel):
-    title: str = Field(..., min_length=1, max_length=128, description="新标题")
+    title: SafeText = Field(..., min_length=1, max_length=128, description="新标题")
 
 
 class ConversationOut(BaseModel):
@@ -25,8 +30,8 @@ class ConversationOut(BaseModel):
 
 class MessageCreateIn(BaseModel):
     role: Literal["user", "assistant", "system"] = "user"
-    content: str = Field(..., min_length=1, description="消息内容")
-    symbol: str | None = Field(None, description="绑定标的（代码或 symbol_id，可选）")
+    content: SafeText = Field(..., min_length=1, max_length=_CONTENT_MAX, description="消息内容")
+    symbol: str | None = Field(None, max_length=32, description="绑定标的（代码或 symbol_id，可选）")
     tokens: int | None = Field(None, ge=0)
 
 

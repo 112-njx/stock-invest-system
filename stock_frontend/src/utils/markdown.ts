@@ -1,11 +1,33 @@
 /**
  * 极简 Markdown 渲染器（AI 输出流式渲染用）：
  * - 仅支持安全子集：标题/粗体/斜体/行内代码/代码块/无序有序列表/简单表格/链接/段落
- * - 先 HTML 转义再解析，白名单标签输出，无 XSS 注入面（不引入 marked+DOMPurify 依赖）
- * - 输出直接用于 v-html，配合样式文件中的 .markdown-body 命名空间
+ * - 先 HTML 转义再解析，白名单标签输出
+ * - G30：输出再经 DOMPurify 消毒（纵深防御）——本渲染器本身已 escape-first，
+ *   DOMPurify 作为第二道防线，拦截解析器疏漏或未来改动引入的注入面
+ * - 输出用于 v-html，配合样式文件中的 .markdown-body 命名空间
  *
  * 占位符：行内代码 / 代码块（在转义后替换，避免内嵌语法被二次解析）。
  */
+import DOMPurify from 'dompurify'
+
+/**
+ * G30 消毒配置：
+ * - 禁止 script/iframe/object/embed/form 等可执行或可提交内容的标签
+ * - 禁止 style 属性（CSS 注入）；on* 事件属性与 javascript: 协议由 DOMPurify 默认策略拦截
+ * - 保留渲染器产出的白名单标签：h1-6/p/ul/ol/li/strong/em/code/pre/a/table/thead/tbody/tr/th/td
+ */
+const PURIFY_CONFIG = {
+  FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button', 'style', 'link', 'base', 'meta'],
+  FORBID_ATTR: ['style'],
+  // DOMPurify 默认会剥离 target（反 tabnabbing），但渲染器已同时输出 rel="noopener noreferrer"，
+  // 故显式放行 target，保持外链新标签页打开的原有 UX。
+  ADD_ATTR: ['target'],
+}
+
+/** 对已生成的 HTML 做消毒（供 v-html 使用前调用） */
+export function sanitizeHtml(html: string): string {
+  return DOMPurify.sanitize(html, PURIFY_CONFIG)
+}
 
 const INLINE_PH = '\u0000'
 const BLOCK_PH = '\u0001'
@@ -133,5 +155,5 @@ export function renderMarkdown(text: string): string {
     out.push(`<p>${inline(line)}</p>`)
   }
   closeList()
-  return out.join('\n')
+  return sanitizeHtml(out.join('\n'))
 }

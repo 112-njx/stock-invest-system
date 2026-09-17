@@ -103,6 +103,7 @@ function closeStrategyModule() {
       v-model="ai.inputText"
       class="ci-textarea"
       rows="3"
+      maxlength="20000"
       placeholder="例如：帮我分析一小时内上证指数的趋势……"
       @keydown.enter.exact.prevent="onSend"
     />

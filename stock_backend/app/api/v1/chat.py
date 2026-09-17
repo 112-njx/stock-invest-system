@@ -15,17 +15,22 @@ from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.models.user import User
 from app.repositories import conversation_repo
+from app.schemas.validators import SafeText
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 settings = get_settings()
 
+# G30：用户输入直接拼入 LLM 上下文并落库回显，需限长（防 prompt 注入放大/成本 DoS）
+_CHAT_CONTENT_MAX = 20000
+
 
 class ChatIn(BaseModel):
     conversation_id: int | None = Field(None, description="会话ID（空则新建）")
-    symbol: str | None = Field(None, description="绑定标的（代码或 symbol_id，可选）")
-    content: str = Field(..., min_length=1, description="用户输入")
+    symbol: str | None = Field(None, max_length=32, description="绑定标的（代码或 symbol_id，可选）")
+    content: SafeText = Field(..., min_length=1, max_length=_CHAT_CONTENT_MAX, description="用户输入")
     agent_id: int | None = Field(None, description="定制 Agent ID（3.7，可选）")
-    run_type: str = Field("custom", description="diagnostic/plan/radar/strategy/custom")
+    # G30：run_type 收敛为枚举，避免任意字符串进入分支判断
+    run_type: str = Field("custom", pattern="^(diagnostic|plan|radar|strategy|custom)$")
 
 
 async def _sse_keepalive(gen):

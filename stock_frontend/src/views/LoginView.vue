@@ -129,6 +129,7 @@ function goForgot() {
             placeholder="请输入昵称（展示用）"
             :error="errors.nickname"
             autocomplete="nickname"
+            :maxlength="64"
           />
           <p class="form__hint">注册后将向该邮箱发送验证链接（10 分钟内有效）。</p>
         </template>
