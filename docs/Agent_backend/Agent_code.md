@@ -312,5 +312,9 @@ Agent的后端编码记录,你需要按照：
 
 ---
 编码时间：2026-09-17
-编码内容（描述）：V0.3 泳道B G02——邮件服务（SMTP+模板+email_logs）。config.py 新增 SMTP_HOST/PORT/USER/PASS/FROM_NAME/FROM_EMAIL/USE_TLS/TIMEOUT 八项配置（HOST 为空时自动启用模拟模式）；新增 EmailLog 模型（Alembic 0009 迁移，recipient/template/subject/status/error/created_at）；app/services/email_service.py 封装 send_email(db,recipient,template_name,context)：Jinja2 渲染 HTML+纯文本双格式→smtplib 发送（STARTTLS/SSL 双模式）→写 email_logs，SMTP_HOST 未配时落盘 data/email_outbox/*.eml 并标注 [SIMULATED]；四种模板（verify_email/password_reset/login_alert/system_notice）各含 HTML+纯文本版本；pyproject 新增 jinja2 依赖。验收：16 单测全绿（模板渲染×6、模拟发送×4、日志持久化×3、SMTP 发送×2、自定义主题×1）。
+编码内容（描述）：V0.3 泳道B G02——邮件服务（SMTP+模板+email_logs）。config.py 新增 SMTP_HOST/PORT/USER/PASS/FROM_NAME/FROM_EMAIL/USE_TLS/TIMEOUT 八项配置（HOST 为空时自动启用模拟模式）；新增 EmailLog 模型（Alembic 0009 迁移，recipient/template/subject/error/created_at）；app/services/email_service.py 封装 send_email(db,recipient,template_name,context)：Jinja2 渲染 HTML+纯文本双格式→smtplib 发送（STARTTLS/SSL 双模式）→写 email_logs，SMTP_HOST 未配时落盘 data/email_outbox/*.eml 并标注 [SIMULATED]；四种模板（verify_email/password_reset/login_alert/system_notice）各含 HTML+纯文本版本；pyproject 新增 jinja2 依赖。验收：16 单测全绿（模板渲染×6、模拟发送×4、日志持久化×3、SMTP 发送×2、自定义主题×1）。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道D G06——回测正确性回归测试（P0-10a 测试先行）。新增 tests/test_backtest_correctness.py：9 个确定性场景覆盖费用影响/分批配对/期末持仓/平手交易/涨停不买入/跌停不卖出/同bar止损再入/微利毛赚净亏/滑点/成交量限制。每场景锁定修复前基线值（15 baseline PASS）+ 修复后目标期望值（10 target xfail）。基线数值经引擎逐bar追踪验证，fixed.md 记录修复前6项口径缺陷。验收：回测子集 30 passed+10 xfailed，现有 test_backtest_engine.py 15 项无回归。
 

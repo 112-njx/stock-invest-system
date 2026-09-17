@@ -266,3 +266,18 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 **现象**：用户疑问行业指数 ETF 就固定几个、为何启动时拉取 1000 个 ETF；日志显示 catalog_sync 对全市场 ETF（1000+只，养殖/光伏/红利等所有品种）做目录批量 upsert，0/16 tqdm 为 akshare 分页进度。
 
 **说明**：非固定指数拉取。catalog_sync（V0.2 3.1）设计为启动时全量同步 A股+ETF 目录元数据到 symbols 表（供搜索/添加关注），行业指数 ETF 只是目录中极小部分。当前因 (type,name) 约束冲突（见上）1000 ETF 全部入库失败，目录同步未生效。
+
+---
+
+## 2026-09-17 G06 回测引擎修复前口径基线（P0-10a，G20 修复参考）
+
+**6 项口径缺陷（修复前现状）**：
+
+1. **胜率按毛盈亏判定**：`metrics._pair_trades` 的 `pnl=(sell_price-buy_price)*shares`，未扣买入佣金与卖出佣金+印花税。微利交易毛赚净亏仍计为 win，胜率虚高。基线实测：buy 100@10.0/sell 100@10.01，毛 PnL=+1.0（win），净 PnL=-1.50（应为 loss）。
+2. **期末未平仓不参与配对**：持有至期末的仓位浮盈不计入胜率/盈亏统计，仅在 equity_curve 体现市值。基线实测：buy 100@10.0 持有至 close=15.0，total_trades=0，win_rate=None，浮盈 +499 元无指标记录。
+3. **一次卖单拆配多段各算一笔**：FIFO 按配对段数计 total_trades。基线实测：buy 100@10+buy 100@11，sell 200@12 → total_trades=2（应为 1 个完整回合）。
+4. **平手(pnl=0)计入亏损**：`losses=[p for p in pairs if pnl<=0]` 把 pnl=0 并入亏损。基线实测：buy 100@10/sell 100@10 → win_rate=0%（应标记 draw，不计入亏损）。
+5. **成本口径双轨**：止损止盈用加权平均 entry_price（engine._auto_exit），胜率配对用 FIFO（metrics._pair_trades），两者不一致。
+6. **撮合不现实**：滑点恒 0（配置 slippage_pct 有效但默认 0）；不校验当根 bar 成交量；无涨跌停检查（一字涨停可买、跌停可卖）；同 bar 止损后可再开同向仓。基线实测：涨停 close=high=10.8 照常买入、跌停 close=low=9.0 止损照常卖出、bar2 止损卖 200 后同 bar 再买 100。
+
+**基线锁定**：tests/test_backtest_correctness.py 15 个 baseline 断言全部 PASS，10 个 target 断言标记 xfail（G20 修复后移除 xfail 并切换为 target 断言）。
