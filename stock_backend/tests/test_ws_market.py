@@ -20,7 +20,7 @@ _PREFIX = "test_ws_"
 def user_token(client: TestClient) -> str:
     uname = f"{_PREFIX}{uuid.uuid4().hex[:8]}"
     try:
-        resp = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456"})
+        resp = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456", "email": f"{uname}@test.local"})
         yield resp.json()["data"]["token"]
     finally:
         db = get_session()

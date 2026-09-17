@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class RegisterIn(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_]+$", description="用户名")
     password: str = Field(min_length=6, max_length=128, description="密码（明文，服务端 bcrypt 哈希）")
-    email: str | None = Field(None, max_length=128)
+    email: str = Field(max_length=128, description="邮箱（必填，用于账号验证和密码重置）")
     nickname: str | None = Field(None, max_length=64)
 
 
@@ -18,12 +18,22 @@ class LoginIn(BaseModel):
     password: str
 
 
+class ForgotPasswordIn(BaseModel):
+    email: str = Field(max_length=128, description="注册邮箱")
+
+
+class ResetPasswordIn(BaseModel):
+    token: str = Field(description="重置密码 token（从邮件链接获取）")
+    new_password: str = Field(min_length=6, max_length=128, description="新密码")
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     username: str
     email: str | None = None
+    email_verified: bool = False
     nickname: str | None = None
     avatar_url: str | None = None
     created_at: datetime

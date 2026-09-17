@@ -25,8 +25,12 @@ def _cleanup_users(*usernames: str) -> None:
         db.close()
 
 
-def _register(client: TestClient, username: str, password: str = "pass123456"):
-    return client.post("/api/v1/auth/register", json={"username": username, "password": password})
+def _register(client: TestClient, username: str, password: str = "pass123456", email: str | None = None):
+    payload: dict = {"username": username, "password": password}
+    if email is None:
+        email = f"{username}@test.local"
+    payload["email"] = email
+    return client.post("/api/v1/auth/register", json=payload)
 
 
 def test_register_success(client: TestClient):

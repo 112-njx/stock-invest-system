@@ -177,12 +177,166 @@ curl -X POST "http://127.0.0.1:8000/api/v1/auth/login" -H "Content-Type: applica
 {"code":0,"msg":"ok","data":{"token":"eyJhbGciOi...","user":{"id":1,"username":"alice"}}}
 ```
 
+> **G19 双 token 变更**：登录/注册成功后在响应体返回 access token（15min），同时通过 `Set-Cookie` 种下 `refresh_token`（HttpOnly / Secure / SameSite=Lax / Path=/api/v1/auth，7d）。
+
+## 3. 刷新令牌
+
+- **接口名称**：刷新令牌
+- **请求 Method**：POST
+- **请求 Path**：/api/v1/auth/refresh
+- **接口作用**：从 Cookie 读 refresh token → 校验 → 轮换签发新 access + 新 refresh；旧 refresh 入 Redis 黑名单。复用检测：旧 refresh 被用两次则吊销该用户全部会话。
+- **请求 Body**：无（Cookie：refresh_token）
+
+**请求示例（curl）**
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/auth/refresh" -b "refresh_token=xxx"
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"token":"eyJhbGciOi..."}}
+```
+
+> 响应不返回 refresh 明文（仅通过 Set-Cookie 下发）。
+
+## 4. 登出
+
+- **接口名称**：登出
+- **请求 Method**：POST
+- **请求 Path**：/api/v1/auth/logout
+- **接口作用**：access token 的 jti 入 Redis 黑名单 + refresh session 标记吊销 + 清 Cookie。
+- **请求 Body**：无（Header：Authorization: Bearer <token>；Cookie：refresh_token）
+
+**请求示例（curl）**
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/auth/logout" -H "Authorization: Bearer eyJhbGciOi..." -b "refresh_token=xxx"
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":null}
+```
+
+## 5. 活跃设备列表
+
+- **接口名称**：活跃设备列表
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/auth/sessions
+- **接口作用**：返回当前用户所有活跃会话（未过期未吊销），标记当前设备。
+- **请求 Body**：无（Header：Authorization: Bearer <token>；Cookie：refresh_token）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/auth/sessions" -H "Authorization: Bearer eyJhbGciOi..." -b "refresh_token=xxx"
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":[{"id":1,"user_agent":"Mozilla/5.0 ...","ip_address":"127.0.0.1","created_at":"2026-09-17T05:00:00Z","expires_at":"2026-09-24T05:00:00Z","is_current":true}]}
+```
+
+## 6. 踢出设备
+
+- **接口名称**：踢出设备
+- **请求 Method**：DELETE
+- **请求 Path**：/api/v1/auth/sessions/{id}
+- **接口作用**：吊销指定会话（refresh 失效，已签发 access 通过黑名单失效）；仅限本人会话，越权返回 404。
+- **请求 Body**：无（Path：id；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -X DELETE "http://127.0.0.1:8000/api/v1/auth/sessions/2" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":null}
+```
+
 > **G01 安全加固备注（2026-09-17）**：
 > - CORS 已从通配符 `*` 改为环境变量 `CORS_ORIGINS` 白名单，仅白名单内来源可携带凭证。
 > - 后端新增 Cookie 安全工具（`set_access_token_cookie` / `clear_access_token_cookie`），属性：HttpOnly / Secure / SameSite=Lax / Path=/。G19 双 token 启用后，登录/刷新响应将额外设置 HttpOnly Cookie。
 > - Nginx 补充 HSTS / CSP / X-Frame-Options DENY / X-Content-Type-Options / Referrer-Policy 五项安全响应头。
 > - 生产 HTTPS：设置 `SSL_REDIRECT=true` + `COOKIE_SECURE=true` + 挂载 TLS 证书到 `/etc/nginx/certs/` 后取消 nginx.conf 443 块注释即可启用。
-> - 以下端点将在 G19 新增：`POST /auth/refresh`、`POST /auth/logout`、`GET /auth/sessions`、`DELETE /auth/sessions/{id}`。
+> - G19 已新增端点见上方 3~6 节：`POST /auth/refresh`、`POST /auth/logout`、`GET /auth/sessions`、`DELETE /auth/sessions/{id}`。
+
+> **G23 邮箱验证/密码重置备注（2026-09-17）**：
+> - **注册 `email` 改为必填**，注册后自动发送验证邮件（10 分钟有效链接），并校验邮箱唯一性（重复邮箱返回 `40002`）。
+> - **登录暴力保护**：同一用户名连续失败 5 次后锁定 15 分钟，锁定期间登录返回 `423`（业务码 `42301`）；登录成功后失败计数清零。计数器存 Redis `login_fail:{username}`（Redis 不可用时降级放行，不影响可用性）。
+> - 邮箱验证/密码重置 token 与 access token 独立签名（派生密钥 + `type` 字段），验证 token 不能用于重置、反之亦然。
+> - `UserOut` 新增 `email_verified` 字段。
+
+## 7. 邮箱验证
+
+- **接口名称**：邮箱验证
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/auth/verify-email
+- **接口作用**：校验验证邮件中的 token（10min 有效），标记用户邮箱已验证；重复验证返回成功提示。
+- **请求 Body**：无（Query：token）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/auth/verify-email?token=eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"message":"邮箱验证成功"}}
+```
+
+（token 无效/过期返回 `{"code":40010,"msg":"验证链接无效或已过期"}`）
+
+## 8. 忘记密码
+
+- **接口名称**：忘记密码（发送重置邮件）
+- **请求 Method**：POST
+- **请求 Path**：/api/v1/auth/forgot-password
+- **接口作用**：按邮箱发送密码重置邮件（1h 有效链接）。**无论邮箱是否已注册均返回相同成功响应**（防邮箱枚举）。
+- **请求 Body**：有（Body-JSON：email）
+
+**请求示例（curl）**
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/auth/forgot-password" -H "Content-Type: application/json" -d '{"email":"alice@example.com"}'
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"message":"如果该邮箱已注册，重置密码邮件已发送，请查收邮箱"}}
+```
+
+## 9. 重置密码
+
+- **接口名称**：重置密码
+- **请求 Method**：POST
+- **请求 Path**：/api/v1/auth/reset-password
+- **接口作用**：校验重置 token（1h 有效）→ 更新密码 → **吊销该用户全部 refresh token**（所有设备强制重新登录）。
+- **请求 Body**：有（Body-JSON：token、new_password）
+
+**请求示例（curl）**
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/auth/reset-password" -H "Content-Type: application/json" -d '{"token":"eyJhbGciOi...","new_password":"newpass789"}'
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"message":"密码重置成功，请使用新密码登录"}}
+```
+
+（token 无效/过期返回 `{"code":40012,"msg":"重置链接无效或已过期"}`）
 
 # 用户信息 API（Users）
 

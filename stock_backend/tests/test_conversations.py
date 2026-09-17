@@ -27,7 +27,7 @@ def _cleanup_users(*usernames: str) -> None:
 
 
 def _register(client: TestClient, username: str) -> str:
-    resp = client.post("/api/v1/auth/register", json={"username": username, "password": "pass123456"})
+    resp = client.post("/api/v1/auth/register", json={"username": username, "password": "pass123456", "email": f"{username}@test.local"})
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["token"]
 

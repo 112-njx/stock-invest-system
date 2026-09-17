@@ -22,6 +22,10 @@ def set_admin_by_username(db: Session, username: str) -> None:
         db.flush()
 
 
+def get_by_email(db: Session, email: str) -> User | None:
+    return db.scalar(select(User).where(User.email == email))
+
+
 def get_by_id(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
 
@@ -40,6 +44,18 @@ def update_profile(db: Session, user: User, nickname: str | None = None, avatar_
         user.avatar_url = avatar_url
     db.flush()
     return user
+
+
+def set_email_verified(db: Session, user: User) -> None:
+    """标记邮箱已验证。"""
+    user.email_verified = True
+    db.flush()
+
+
+def update_password(db: Session, user: User, new_password_hash: str) -> None:
+    """更新密码哈希。"""
+    user.password_hash = new_password_hash
+    db.flush()
 
 
 # ---- user_watchlist ----

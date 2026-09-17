@@ -18,7 +18,7 @@ def _uname() -> str:
 
 
 def _register(client: TestClient, username: str) -> dict:
-    r = client.post("/api/v1/auth/register", json={"username": username, "password": "pass123456"})
+    r = client.post("/api/v1/auth/register", json={"username": username, "password": "pass123456", "email": f"{username}@test.local"})
     assert r.status_code == 200, r.text
     return r.json()["data"]
 

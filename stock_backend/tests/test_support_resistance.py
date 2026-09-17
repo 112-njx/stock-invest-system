@@ -14,7 +14,7 @@ _PREFIX = "test_sr_"
 def user_token(client: TestClient) -> str:
     uname = f"{_PREFIX}{uuid.uuid4().hex[:8]}"
     try:
-        resp = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456"})
+        resp = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456", "email": f"{uname}@test.local"})
         yield resp.json()["data"]["token"]
     finally:
         db = get_session()
@@ -102,7 +102,7 @@ def test_delete_other_user_isolated(client: TestClient, user_token: str):
 
     uname = f"{_PREFIX}b{uuid.uuid4().hex[:8]}"
     try:
-        token_b = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456"}).json()[
+        token_b = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456", "email": f"{uname}@test.local"}).json()[
             "data"
         ]["token"]
         resp = client.delete(f"/api/v1/support-resistance/{row['id']}", headers=_auth(token_b))

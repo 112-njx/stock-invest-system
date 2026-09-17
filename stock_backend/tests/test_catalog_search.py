@@ -88,7 +88,7 @@ def test_maybe_catalog_sync_skips_when_enough():
 
 def test_admin_catalog_sync_endpoint(client: TestClient):
     uname = f"{_PREFIX}{uuid.uuid4().hex[:8]}"
-    token = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456"}).json()["data"][
+    token = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456", "email": f"{uname}@test.local"}).json()["data"][
         "token"
     ]
     db = get_session()
@@ -178,7 +178,7 @@ def test_search_endpoint_returns_sync_flags(client: TestClient):
 def user_token(client: TestClient) -> str:
     uname = f"{_PREFIX}w{uuid.uuid4().hex[:8]}"
     try:
-        resp = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456"})
+        resp = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456", "email": f"{uname}@test.local"})
         yield resp.json()["data"]["token"]
     finally:
         db = get_session()

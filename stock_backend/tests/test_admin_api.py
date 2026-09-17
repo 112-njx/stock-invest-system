@@ -14,7 +14,7 @@ _PREFIX = "test_admin_"
 def admin_token(client: TestClient) -> str:
     uname = f"{_PREFIX}{uuid.uuid4().hex[:8]}"
     try:
-        resp = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456"})
+        resp = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456", "email": f"{uname}@test.local"})
         token = resp.json()["data"]["token"]
         db = get_session()
         try:
@@ -39,7 +39,7 @@ def admin_token(client: TestClient) -> str:
 def normal_token(client: TestClient) -> str:
     uname = f"{_PREFIX}n{uuid.uuid4().hex[:8]}"
     try:
-        resp = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456"})
+        resp = client.post("/api/v1/auth/register", json={"username": uname, "password": "pass123456", "email": f"{uname}@test.local"})
         yield resp.json()["data"]["token"]
     finally:
         db = get_session()

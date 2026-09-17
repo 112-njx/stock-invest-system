@@ -318,3 +318,11 @@ Agent的后端编码记录,你需要按照：
 编码时间：2026-09-17
 编码内容（描述）：V0.3 泳道D G06——回测正确性回归测试（P0-10a 测试先行）。新增 tests/test_backtest_correctness.py：9 个确定性场景覆盖费用影响/分批配对/期末持仓/平手交易/涨停不买入/跌停不卖出/同bar止损再入/微利毛赚净亏/滑点/成交量限制。每场景锁定修复前基线值（15 baseline PASS）+ 修复后目标期望值（10 target xfail）。基线数值经引擎逐bar追踪验证，fixed.md 记录修复前6项口径缺陷。验收：回测子集 30 passed+10 xfailed，现有 test_backtest_engine.py 15 项无回归。
 
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道B G23——邮箱验证+密码重置+登录暴力保护（P0-4a）。users 表加 email_verified（Alembic 0012）；新增 app/services/email_token.py（验证/重置专用 JWT，派生密钥 JWT_SECRET_KEY+"|email_verify"/"|password_reset"+type 字段，防跨用途滥用，验证 10min/重置 1h）；RegisterIn.email 改必填+邮箱唯一性（重复 40002），注册后 best-effort 发验证邮件；新增 GET /auth/verify-email、POST /auth/forgot-password（无论邮箱存在均返成功防枚举）、POST /auth/reset-password（更新密码+复用 G19 session_service.revoke_all_user_sessions 吊销全部 refresh）；登录暴力保护 Redis login_fail:{username} 连续 5 次锁 15min 返 423(42301)、成功清零、Redis 不可用降级放行；UserOut 加 email_verified。验收：18 单测全绿，全库 340 passed（5 个 memory 失败为泳道C pgvector 环境问题，非本步引入）。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G23 连带改造——注册 email 必填的测试夹具同步。16 个测试文件（test_admin_api/agent_ops/agents/backtest_api/catalog_search/chat/conversations/memory/research_graph/sse/strategies/strategy_templates/support_resistance/watchlist/ws_market）的注册调用统一补 email=f"{username}@test.local"，共 19 处；test_auth.py 的 _register 帮助函数默认补 email 参数。属 email 必填契约变更的机械适配，不改变测试语义。

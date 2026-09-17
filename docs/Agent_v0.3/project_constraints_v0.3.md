@@ -54,12 +54,12 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
 3. **路由 `router/index`**：G03(法律页路由) 与 G35(登录路由重构) → G35 后集大成者，最后合入。
 4. **登录/注册组件**：G33、G35、G03(协议勾选) → 同 G35 收口。
 
-## 五、待确认项（4.6，开工前须定稿）
+## 五、已定稿决策（原 4.6 待确认项）
 
-1. **P1-8b 系统公告"管理员账号"设计未定** → 暂按「`users.is_admin` 标志 + 环境变量初始化管理员」，开工前定稿，否则 G16 公告部分挂起。
-2. **登录页改造(G35)"视觉重设计"方向未定** → 需设计稿/参考图定稿后再进入视觉实现；路由/空态/版权条可先行。
-3. **P0-2 简化版是否保留"用量统计"展示** → 默认不做，仅存 key。
-4. **P0-7 CORS 白名单域名（dev/prod 环境变量值）** → 需确认具体域名后写入；未定前用环境变量占位，禁止硬编码通配。
+1. **P1-8b 系统公告"管理员账号"** → 已定稿：沿用 `ADMIN_USERNAMES` 环境变量 + 正常注册。部署时环境变量配置管理员用户名列表（逗号分隔），这些用户注册后自动获得 `is_admin`；G16 管理员发布端点正常实现，不再挂起。
+2. **登录页改造(G35)"视觉重设计"** → 已定稿：规格书 `docs/Agent_v0.3/login_page_design_v0.3.md`（参考图 login_pic.png），G35 视觉严格按此实现。
+3. **P0-2 简化版"用量统计"** → 已定稿：保留 token 用量显示（按 usage 字段估算，非精确计费），不做服务端限流/额度分层。
+4. **P0-7 CORS 白名单域名** → 已定稿：域名暂未购买，一律用环境变量 `CORS_ORIGINS` 占位，禁止硬编码通配/具体域名，后续购买后填写。
 
 ## 六、泳道 A（安全鉴权）工作范围
 
@@ -81,3 +81,21 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
 - 所有新增端点必须写入 `docs/Agent_backend/api-docs.md`，所有前端组件变更写入 `docs/Agent_frontend/Agent_code.md`。
 - P0-9/P0-10 修复须先补可复现回归测试再改实现；P0-10 修复前后用同一策略对比胜率/收益差异并记录到 fixed.md。
 - 禁止在 async/Agent 链路新增 `time.sleep`、`requests` 等同步阻塞调用（P1-9 约束）。
+
+---
+
+## 八、需人类操作配置事项（各泳道发现即追加，标清序号+泳道）
+
+1. **【泳道 C · G04】本地 PostgreSQL 缺少 pgvector 扩展，迁移 0009 无法执行**
+   - 现象：`alembic upgrade head` 在 0009 报 `extension "vector" is not available`；本地 `memory_chunks.embedding` / `embedding_kind` 列缺失，导致 `test_memory.py` 5 个用例 + `test_agent_ops.py` 1 个用例失败（340 passed / 5 failed / 6 skipped）。
+   - 原因：pgvector 需预装在 PG 实例中，本机原生 PostgreSQL 未安装。
+   - 需人工操作：本机 PostgreSQL 安装 pgvector（Windows 可下载预编译包或改用 `pgvector/pgvector:pg16` 容器库），然后执行 `alembic upgrade head` 补 0009~0012。
+   - 临时绕过（仅供本地开发验证）：手工 `ALTER TABLE` 补列，不作为正式方案。
+
+2. **【泳道 B · G23】注册接口 `email` 已改为必填，所有测试注册夹具已同步更新**
+   - 影响：任何外部调用 `/api/v1/auth/register` 的地方必须带 `email`，否则 422。
+   - 需人工操作：无（代码内已同步），但前端注册页需在 G33 补邮箱必填校验。
+
+3. **【泳道 B · G02/G23】SMTP 凭据未配置，邮件走模拟模式**
+   - 现象：`SMTP_HOST` 为空时邮件不真发，落盘到 `stock_backend/data/email_outbox/*.eml`，日志标注 `[SIMULATED]`。
+   - 需人工操作：部署时配置 `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM_EMAIL`（`SMTP_USE_TLS=true` 走 587 STARTTLS，`false` 走 465 SSL），否则邮箱验证/密码重置链接无法真实送达。
