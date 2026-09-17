@@ -116,3 +116,17 @@
     - 关键坑（时间轴对齐）：DB 的 K 线 `ts` 是 **naive**（`2024-08-19T08:00:00`），而落库的 trades/curve 带时区（`+00:00`）。二者**字符串不等但 epoch 秒相等**，前端 `toUtcSeconds` 对两种写法解析一致，故标记能精确落到 bar 上。已用真实数据（symbol_id=92 的 509 根日K）实测 0 处错位——**后续比对时间轴务必用 epoch 秒，不要用字符串相等**。
     - 验收：`test_backtest_visualization.py` 5 项 + 回测三文件 44 项 = **49 项全绿**；`ruff` 本步改动文件全绿；前端 `vue-tsc` + `npm run build` 通过。
     - 跨泳道提示：本步提交时 `app/services/backtest_service.py` 混有泳道 B/G16 的站内通知在途改动、`app/schemas/backtest.py` 混有 G30 的输入长度校验，已如实披露未回退（见 project_constraints_v0.3.md 第八节第 9 条）。15m 周期买卖点受 `/kline` 默认 `limit=1000` 限制只显示最近区间（第 10 条）。
+
+18. V0.3 泳道 A（安全鉴权）四步全部完成（2026-09-17）：G01 → G19 → G29 → G30，对应 P0-7 → P0-1 → P0-5 → P0-6。
+    - **G01（P0-7）CORS/Cookie/Nginx/HTTPS**：`main.py` 的 `allow_origins=["*"]+allow_credentials=True`（浏览器规范禁止的无效组合，实际等效任意域可带凭证）改为环境变量 `CORS_ORIGINS` 逗号分隔白名单，空值自动关闭凭证（安全降级）。`config.py` 加 CORS_ORIGINS/COOKIE_SECURE/COOKIE_SAMESITE/ACCESS_TOKEN_COOKIE_NAME。`security.py` 加 Cookie 工具（HttpOnly/Secure/SameSite=Lax）。Nginx 补 HSTS/CSP/X-Frame-Options DENY/nosniff/Referrer-Policy 五项，`SSL_REDIRECT` 环境变量控制 80→443。前端 `withCredentials=true`。
+    - **G19（P0-1）双 token + 会话管理**：access 15min JWT（含 `jti`+`iat`）+ refresh 7d `secrets.token_urlsafe(48)` 存 HttpOnly Cookie；新增 `user_sessions` 表（只存 SHA-256 哈希）+ Alembic **0010**；`session_service` 负责轮换/复用检测/批量吊销；新增 `POST /auth/refresh`、`POST /auth/logout`、`GET /auth/sessions`、`DELETE /auth/sessions/{id}`；Redis 黑名单 `token_blacklist:{jti}` / `refresh_blacklist:{hash}`（TTL=剩余有效期）。前端 401 自动 refresh 重放（isRefreshing 锁 + 队列防并发、_skipRefresh 防递归），token 从 localStorage 改纯内存。
+    - **G29（P0-5）WS 鉴权去 URL token**：`ws_market.py` 移除 query token；握手从 Cookie 读 access token（校验 JWT+黑名单+用户存在），**Cookie 存在但无效→直接拒绝握手**，**无 Cookie→accept 后 5s 等首条 `{"action":"auth","token":...}`**（非浏览器兜底）；心跳复查 jti 黑名单，登出/踢出后 ≤15s 断开已建连接。前端 wsClient 去 token 走同源，vite 代理加 `ws:true`。Nginx `map` 正则脱敏 token + `log_format masked`。
+    - **G30（P0-6）XSS + 输入校验 + 隔离**：前端 markdown 输出经 DOMPurify 消毒（新增 `scripts/verify-xss.mjs` + `npm run verify:xss`，22 个 payload DOM 判定全绿）；新增 `schemas/validators.py`（SafeText 禁控制字符 / HttpUrlTextOptional 拒 javascript:）；补限长 system_prompt 8000、策略 code 20000、聊天 content 20000 等；横向越权与输入校验 `test_g30_isolation.py` 13 项全绿。
+    - **关键坑（务必记住）**：
+      ① **浏览器 `new WebSocket()` 无法携带 Authorization header，只发 Cookie** —— G19 只种了 refresh Cookie，G29 必须补 access_token Cookie 的种/清，否则 WS 无法鉴权（前后端联动，缺一不可）。
+      ② **HTTP 侧不要接受 Cookie 鉴权** —— G19 曾在 `deps.py` 加 Cookie 回退，G29 种 access Cookie 后导致 6 个"未登录应 401"测试被"自动登录"而失败，且引入 CSRF 面。已移除：WS 自己读 Cookie，不经 deps；HTTP 只认 Bearer。
+      ③ **`validate_refresh_token` 的检查顺序**：Redis 黑名单必须排在 `revoked_at` **之前**——轮换时旧 session 同时被吊销+入黑名单，若先查 revoked_at 会命中"已吊销"短路，复用检测永不触发（同一 refresh 被盗用后无法踢出全部设备）。已修复并记入 fixed.md。
+      ④ **nginx `if` 左值必须是变量**：`if (${SSL_REDIRECT} = "true")` 经 envsubst 变 `if (false = "true")` 报 `invalid condition` 配置加载失败。改用 `set $ssl_redirect "${SSL_REDIRECT}"` 再比较。**Nginx 配置改动务必用容器实跑 `nginx -t` 验证**（本轮靠它抓到该 bug）。
+    - **需人工配置**（详见 project_constraints_v0.3.md 第八节第 6~8 条）：CORS_ORIGINS 生产域名、Nginx TLS 证书路径（4 步启用 HTTPS）、`alembic upgrade head` 补 0009~0012（本地被 pgvector 扩展阻塞）。
+    - **已知遗留（非阻塞）**：仓储层 `backtest_repo.get_task/get_result`、`agent_repo.list_steps` 无 user_id 过滤，属纵深防御缺口——当前不可利用（服务层调用前均校验归属，G30 越权测试全绿印证），未来新增调用方易遗漏。
+    - 验收：G01 9 项 / G19 13 项 / G29 13 项 / G30 13 项安全测试全绿 + XSS 22 payload 全绿；前端 `vue-tsc` + `build` 通过；全库 pytest 以 Redis 健康为准（Redis 未启动时约 20 个 Redis 依赖用例会失败，属环境问题非代码缺陷）。
