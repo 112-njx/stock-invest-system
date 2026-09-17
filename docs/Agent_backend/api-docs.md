@@ -426,6 +426,66 @@ curl -X PUT "http://127.0.0.1:8000/api/v1/users/me/email" -H "Authorization: Bea
 
 （密码错误返回 `40003`；新邮箱与当前相同返回 `40005`；新邮箱已被他人注册返回 `40002`）
 
+## 5. 创建数据导出任务（G17）
+
+- **接口名称**：创建数据导出任务
+- **请求 Method**：POST
+- **请求 Path**：/api/v1/users/me/export
+- **接口作用**：异步创建全量个人数据导出任务（Celery），生成 ZIP：账号信息、关注列表、支撑压力位、交易策略（JSON+代码 .py）、回测任务与结果、会话与消息、Agent 配置与运行记录、记忆事实与原始 md 文件。文件存临时目录，**24h 后自动删除**。
+- **请求 Body**：无（Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/users/me/export" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"导出任务已提交","data":{"task_id":1,"status":"pending","progress":0,"file_size":null,"error":null,"created_at":"2026-09-17T08:00:00Z","finished_at":null,"expires_at":"2026-09-18T08:00:00Z","download_url":null}}
+```
+
+## 6. 查询导出任务状态（G17）
+
+- **接口名称**：导出任务状态
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/users/me/export/{task_id}
+- **接口作用**：查询导出进度（pending/running/success/failed/expired）；成功后返回**带签名 token 的下载链接**（30 分钟有效）。
+- **请求 Body**：无（Path：task_id；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/users/me/export/1" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"task_id":1,"status":"success","progress":100,"file_size":20480,"error":null,"created_at":"...","finished_at":"...","expires_at":"2026-09-18T08:00:00Z","download_url":"/api/v1/users/me/export/1/download?token=eyJhbGciOi..."}}
+```
+
+（任务不存在/越权查询他人任务返回 404/40420）
+
+## 7. 下载导出文件（G17）
+
+- **接口名称**：下载导出 ZIP
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/users/me/export/{task_id}/download
+- **接口作用**：按**签名 token** 下载导出 ZIP（token 含 user_id + task_id，防越权；30 分钟有效）。
+- **请求 Body**：无（Path：task_id；Query：token）
+
+**请求示例（curl）**
+
+```bash
+curl -OJ "http://127.0.0.1:8000/api/v1/users/me/export/1/download?token=eyJhbGciOi..."
+```
+
+**成功返回**：`application/zip` 二进制流（`Content-Disposition: attachment; filename=export_user1_1_20260917_080000.zip`）
+
+（token 无效/过期/不匹配返回 403/40301；任务未完成返回 400/40030；文件已过期被清理返回 404/40421）
+
 # 重点关注股票 API（Watchlist）
 
 ## 1. 关注列表

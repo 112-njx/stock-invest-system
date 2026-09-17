@@ -28,12 +28,14 @@ celery_app.conf.update(
         "app.worker.tasks.sync_tasks.*": {"queue": "sync"},
         "app.worker.tasks.backtest_tasks.*": {"queue": "backtest"},
         "app.worker.tasks.ai_tasks.*": {"queue": "ai"},
+        # G17：导出任务复用 ai 队列（新增独立队列需同步改 docker-compose 的 -Q 参数）
+        "app.worker.tasks.export_tasks.*": {"queue": "ai"},
     },
     beat_schedule=build_beat_schedule(),
 )
 
 # 显式注册任务模块：worker 侧加载，API 侧 .delay() 使用同一注册表
-from .tasks import ai_tasks, backtest_tasks, sync_tasks  # noqa: E402,F401
+from .tasks import ai_tasks, backtest_tasks, export_tasks, sync_tasks  # noqa: E402,F401
 
 # 设为默认应用：任务 .delay() 走本项目 broker，而非默认 AMQP
 celery_app.set_default()

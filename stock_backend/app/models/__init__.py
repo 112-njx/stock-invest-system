@@ -3,6 +3,7 @@
 from .agent import AgentRun, AgentStep, MemoryChunk, UserAgent
 from .base import Base
 from .email_log import EmailLog
+from .export_task import ExportTask
 from .kline import KLINE_MODELS, Kline1d, Kline1mon, Kline1w, Kline15m
 from .notification import AdminAnnouncement, Notification
 from .ops import SyncTask, TaskLog
@@ -22,6 +23,7 @@ __all__ = [
     "ChatMessage",
     "Conversation",
     "EmailLog",
+    "ExportTask",
     "EtfPremium",
     "IndexValuation",
     "KLINE_MODELS",

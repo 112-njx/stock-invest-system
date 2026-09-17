@@ -28,4 +28,8 @@ def build_beat_schedule() -> dict:
             "task": "app.worker.tasks.ai_tasks.memory_cleanup",
             "schedule": crontab(hour=4, minute=0),  # 每日凌晨 4:00 低重要性记忆清理（阶段六 6.2）
         },
+        "export-cleanup-daily": {
+            "task": "app.worker.tasks.export_tasks.cleanup_expired_exports",
+            "schedule": crontab(hour=4, minute=30),  # G17：每日凌晨 4:30 清理过期导出文件（24h TTL）
+        },
     }

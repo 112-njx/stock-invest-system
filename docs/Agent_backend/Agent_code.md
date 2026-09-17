@@ -382,3 +382,11 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：G16 环境说明——本地 PostgreSQL 缺 pgvector 致迁移 0009 无法执行，0014 亦无法经 alembic 落库；已按 0009/0012 同样方式手工建表（notifications/admin_announcements + 索引）供本地测试，正式环境须在装好 pgvector 后执行 alembic upgrade head 补 0009~0014。已记入 project_constraints_v0.3.md 第八章第 1 条。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道B G17——用户数据导出（P1-5a 数据复制权）。Alembic 0015 建 export_tasks 表（user_id/status/progress/file_path/file_size/error/created_at/finished_at/expires_at，FK CASCADE + user_id/status 索引）；新增 models/export_task.py、repositories/export_repo.py（强制 user_id 隔离 + list_expired 过期扫描）、services/export_service.py（build_export_zip 打包全量 ZIP：user.json/watchlist.json/support_resistance.json/strategies/strategies.json+strategies/code/*.py/backtest.json/conversations.json/agents.json/memory/facts.json+memory/files/*.md；cleanup_expired_exports 删文件置 expired）、services/export_token.py（独立派生密钥 JWT 含 task_id+user_id，30min）、worker/tasks/export_tasks.py（run_user_export + cleanup_expired_exports）。端点：POST /users/me/export（异步提交）、GET /users/me/export/{id}（状态+签名下载链接）、GET /users/me/export/{id}/download?token=（FileResponse）。config 增 EXPORT_DIR/EXPORT_TTL_HOURS/EXPORT_DOWNLOAD_TOKEN_MINUTES；beat 增每日 4:30 清理。验收：test_export.py 20 单测全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G17 待确认项——导出任务队列归属。worker 启动命令为 `-Q backtest,sync,ai`，新增独立 export 队列必须同步修改 deploy/docker-compose.yml 与 docker-compose.dev.yml（跨泳道文件）；放 sync 队列会阻塞 15s 实时轮询，放 backtest 语义不符。当前决策：task_routes 将 export_tasks 路由到 **ai 队列**（低频用户触发长任务，与 ai 队列特性相近，零部署改动）。若后续导出量大需隔离，请在两个 compose 的 worker command 加 `export` 队列并改路由。

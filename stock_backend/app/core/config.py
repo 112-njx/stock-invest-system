@@ -112,9 +112,15 @@ class Settings(BaseSettings):
     SSE_DELTA_CACHE_TTL: int = 600  # delta 断点续传缓存 TTL（秒）
     SSE_DELTA_CACHE_MAX: int = 100  # 每会话缓存最近 delta 条数上限
 
-    # ---- 本地记忆（ChromaDB 持久化 + 人类可读记忆文件，本地存储约束）----
+    # ---- 用户数据导出（G17：P1-5a 数据复制权）----
+    EXPORT_DIR: str = str(_BASE_DIR / "data" / "exports")  # 导出 ZIP 临时目录
+    EXPORT_TTL_HOURS: int = 24  # 导出文件保留时长（超过后由 beat 清理任务删除）
+    EXPORT_DOWNLOAD_TOKEN_MINUTES: int = 30  # 下载链接签名 token 有效期（分钟）
+
+    # ---- 本地记忆（memory_chunks + pgvector 持久化 + 人类可读记忆文件）----
     MEMORY_DIR: str = str(_BASE_DIR / "data" / "memory")  # 记忆文件根目录（M 区可打开）
-    CHROMA_DIR: str = str(_BASE_DIR / "data" / "chroma")  # 向量库持久化目录
+    CHROMA_DIR: str = str(_BASE_DIR / "data" / "chroma")  # 遗留向量库目录（G21 迁移期回滚路径，G31 下线后移除）
+    MEMORY_DUAL_WRITE: bool = False  # G21/G31 迁移期双写开关：PG 写入同时镜像 Chroma（可回滚），验证通过后置 False
     MEMORY_TOP_K: int = 5  # 记忆检索注入条数
     MEMORY_IMPORTANCE_MIN: int = 5  # 抽取时重要性低于该值不入库（噪音过滤）
 
