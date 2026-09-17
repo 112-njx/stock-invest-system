@@ -126,12 +126,11 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 需人工操作：解决第 1 条 pgvector 后执行 `alembic upgrade head`，一次性补齐 0009~0012（含 user_sessions 表与两个索引）。回滚方案：`alembic downgrade 0009`（脚本内含 drop index + drop table）。
    - 附注：G19 新增环境变量均有默认值，无需配置——`ACCESS_TOKEN_EXPIRE_MINUTES`(15) / `REFRESH_TOKEN_EXPIRE_DAYS`(7) / `REFRESH_TOKEN_COOKIE_NAME`(refresh_token)。
 
-4. **【泳道 A · G19/G29】Cookie 回退鉴权导致 9 个「未登录应 401」用例失败（跨泳道回归）**
+10. **【泳道 A · G19/G29】Cookie 回退鉴权导致 9 个「未登录应 401」用例失败 —— 已解决**
    - 现象：全库 `pytest` 9 failed / 353 passed。失败用例均为断言「不带 Authorization header 应返回 401」的接口（test_strategies::test_generate_api、test_sse::test_resume_endpoint_ownership、test_chat::test_chat_api_stream_and_requires_token、test_conversations::test_messages_order_and_symbol、test_research_graph::test_deep_chat_records_agent_steps、test_agent_ops::test_agent_runs_ownership_and_auth、test_catalog_search::test_search_fuzzy_prefers_synced_over_catalog、test_ws_market::test_ws_rejects_without_token/bad_token）。
    - 根因：G19（提交 d8e1abb）在 `app/api/deps.py::_extract_token` 增加 Cookie 回退（`request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)`），且登录/注册响应下发 access_token Cookie；FastAPI TestClient 在同一测试会话内持久化 Cookie，导致先 register 再「无 header」请求时被 Cookie 认证通过 → 期望 401 实得 200。WS 两项为 G29 进行中的 WS 鉴权改造（query token → Cookie）所致。
-   - 影响范围：测试断言层面；生产行为符合预期（浏览器 Cookie 鉴权是设计目标），但**测试夹具需要隔离 Cookie**。
-   - 建议修复（属泳道 A 范围）：在 `tests/conftest.py` 的 client 夹具或相关测试中显式清空 Cookie（`client.cookies.clear()`），或为「未登录」用例使用独立的无 Cookie client。
-   - 需人工操作：无（代码内修复）；本轮泳道 B 未越权修改泳道 A 文件。
+   - **解决**：泳道 A 后续提交已修正（全库 `pytest` 现为 **417 passed / 0 failed**）。
+   - 需人工操作：无。
 
 9. **【泳道 D · G32】`backtest_service.py` 被两条泳道并发编辑（提交时已如实披露）**
    - 现象：G32 编码期间，`stock_backend/app/services/backtest_service.py` 的工作区同时存在两套未提交改动——G32 的 `_serialize_curve/_serialize_trades/_realized_pnl_by_sell` + `execute_backtest` 落库调用，以及**泳道 B/G16（P1-8b）的 `_notify_backtest_done` 站内通知**（回测成功/失败写通知）。另 `app/schemas/backtest.py` 混入 G30（P0-6）给 `BacktestCreateIn.symbol` 加 `max_length=32` 的输入长度校验。
@@ -144,3 +143,13 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 影响：15m 回测的买卖点只显示最近约 1000 根 bar 区间内的部分，属**展示不完整**而非错误。日K/周K/月K 不受影响。
    - 需人工确认：是否需要为「查看买卖点」场景把 `/kline` 的 limit 提高到覆盖回测区间（或让前端按回测 `start_ts/end_ts` 传参）。当前为有意取舍（避免一次性拉 8k 根影响图表性能），待确认后由泳道 D 在后续增量处理。
    - 附注：本轮已一并完成的增量项——止损/止盈异形标记、hover 显示成交价/数量/费用/触发原因、交易明细表（含后端产出的逐笔已实现净盈亏）。**仍留待后续的增量**：交易明细与图表的高亮联动（点击明细行定位到 K 线对应位置）。
+
+11. **【泳道 B · G02】测试夹具用全量建表导致跨泳道 JSONB 编译失败 —— 已解决**
+   - 现象：`test_email_service.py` 8 个用例 setup ERROR，`sqlalchemy.exc.CompileError: (in table 'backtest_results', column 'equity_curve'): SQLiteTypeCompiler can't render element of type JSONB`。
+   - 根因：该测试的 `db_session` 夹具用 `Base.metadata.create_all(engine)` 在内存 SQLite 建**全部**表；泳道 D G32 给 `backtest_results` 新增了 JSONB 列，SQLite 无法渲染 → 编译期报错。非生产代码回归，属测试夹具作用域过宽。
+   - **解决**：夹具改为只建本模块用到的表（`EmailLog.__table__.create(engine)`）。已恢复 16/16 全绿。
+   - 需人工操作：无。**经验**：新增使用内存 SQLite 的测试时，禁止 `Base.metadata.create_all()` 全量建表，只建所需表。
+
+11. **【本地开发环境】Redis 容器需手动启动，否则缓存/SSE/同步类用例大面积失败**
+   - 现象：`stock-redis` 容器 Exited 时，`test_sse`/`test_market_cache`/`test_sync_service` 等 Redis 依赖用例失败，且 pytest 因连接重试耗时从 ~85s 膨胀到 ~20 分钟。
+   - 需人工操作：跑后端测试前先 `docker start stock-redis`（或确保 Docker Desktop 已启动容器）。本地 DB 同理：dev 库现为容器 `pgvector/pgvector:pg16`（127.0.0.1:5433）。

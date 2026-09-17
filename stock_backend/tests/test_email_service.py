@@ -8,7 +8,6 @@ os.environ.setdefault("APP_ENV", "test")
 os.environ["EMBEDDING_MODEL"] = "hash"
 
 import pytest  # noqa: E402
-from app.models.base import Base  # noqa: E402
 from app.models.email_log import EmailLog  # noqa: E402
 from app.services import email_service  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -17,16 +16,20 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 @pytest.fixture
 def db_session():
-    """内存 SQLite 测试会话。"""
+    """内存 SQLite 测试会话。
+
+    只建本模块用到的 email_logs 表（而非 Base.metadata 全量建表）：其他泳道为
+    backtest_results 等表引入了 JSONB 列，SQLite 无法渲染，全量建表会 CompileError。
+    """
     engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
+    EmailLog.__table__.create(engine)
     SessionLocal = sessionmaker(bind=engine)
     session = SessionLocal()
     try:
         yield session
     finally:
         session.close()
-        Base.metadata.drop_all(engine)
+        EmailLog.__table__.drop(engine)
 
 
 class TestTemplateRendering:
