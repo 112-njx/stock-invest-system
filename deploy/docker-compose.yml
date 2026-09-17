@@ -53,6 +53,8 @@ services:
       CHROMA_DIR: /app/data/chroma
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
       - backenddata:/app/data
     depends_on:
@@ -100,8 +102,12 @@ services:
     # 生产级配置覆盖前端镜像默认模板（限流 / 安全头 / TLS 可配）
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      # TLS 证书：启用 HTTPS 时挂载证书到此路径，并取消 nginx.conf 中 443 server 块注释
+      # - /path/to/certs/fullchain.pem:/etc/nginx/certs/fullchain.pem:ro
+      # - /path/to/certs/privkey.pem:/etc/nginx/certs/privkey.pem:ro
     environment:
       NGINX_PROXY_PASS: http://api:8000
+      SSL_REDIRECT: ${SSL_REDIRECT:-false}
     # 等 api 健康就绪再启动 nginx，避免启动期全接口 502（api 已配 /health healthcheck）
     depends_on:
       api:

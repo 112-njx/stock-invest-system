@@ -177,6 +177,13 @@ curl -X POST "http://127.0.0.1:8000/api/v1/auth/login" -H "Content-Type: applica
 {"code":0,"msg":"ok","data":{"token":"eyJhbGciOi...","user":{"id":1,"username":"alice"}}}
 ```
 
+> **G01 安全加固备注（2026-09-17）**：
+> - CORS 已从通配符 `*` 改为环境变量 `CORS_ORIGINS` 白名单，仅白名单内来源可携带凭证。
+> - 后端新增 Cookie 安全工具（`set_access_token_cookie` / `clear_access_token_cookie`），属性：HttpOnly / Secure / SameSite=Lax / Path=/。G19 双 token 启用后，登录/刷新响应将额外设置 HttpOnly Cookie。
+> - Nginx 补充 HSTS / CSP / X-Frame-Options DENY / X-Content-Type-Options / Referrer-Policy 五项安全响应头。
+> - 生产 HTTPS：设置 `SSL_REDIRECT=true` + `COOKIE_SECURE=true` + 挂载 TLS 证书到 `/etc/nginx/certs/` 后取消 nginx.conf 443 块注释即可启用。
+> - 以下端点将在 G19 新增：`POST /auth/refresh`、`POST /auth/logout`、`GET /auth/sessions`、`DELETE /auth/sessions/{id}`。
+
 # 用户信息 API（Users）
 
 ## 1. 当前用户信息

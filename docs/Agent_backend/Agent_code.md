@@ -304,5 +304,9 @@ Agent的后端编码记录,你需要按照：
 
 ---
 编码时间：2026-09-04
-编码内容（描述）：start-dev.bat 集成种子引导为 [4/4] 步：up -d --build 后检测后端 venv，存在则调 stock_backend\.venv\Scripts\python.exe deploy\seed_from_local.py，无 venv 则跳过。保持文件原 UTF-8/CRLF 编码与既有字节（历史中文转码已损坏，仅插入纯 ASCII 行避免乱码复发），步骤号 [1/3]~[3/3] 同步改为 /4。验收：双击一键启动后自动引导，重复运行命中“种子数据已存在，跳过”，前端行情页打开即有重点关注/K线/指数快照。
+编码内容（描述）：start-dev.bat 集成种子引导为 [4/4] 步：up -d --build 后检测后端 venv，存在则调 stock_backend\.venv\Scripts\python.exe deploy\seed_from_local.py，无 venv 则跳过。保持文件原 UTF-8/CRLF 编码与既有字节（历史中文转码已损坏，仅插入纯 ASCII 行避免乱码复发），步骤号 [1/3]~[3/3] 同步改为 /4。验收：双击一键启动后自动引导，重复运行命中”种子数据已存在，跳过”，前端行情页打开即有重点关注/K线/指数快照。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道A G01——CORS 白名单修正+Cookie 安全+Nginx 安全响应头+HTTPS 重定向机制。main.py CORS 从 allow_origins=[“*”] 改为环境变量 CORS_ORIGINS 逗号分隔白名单（空值安全降级禁凭证）；config.py 新增 CORS_ORIGINS/COOKIE_SECURE/COOKIE_SAMESITE/ACCESS_TOKEN_COOKIE_NAME 四项配置；security.py 新增 set_access_token_cookie/clear_access_token_cookie 工具函数（为 G19 预留）；nginx.conf 补充 HSTS/CSP/X-Frame-Options DENY/nosniff/Referrer-Policy 五项安全响应头+$ssl_redirect 环境变量控制 80→443 重定向+443 TLS 完整配置（注释待启用）；前端 http.ts 加 withCredentials=true+TODO(G19) 标记；user.ts 四处 localStorage 操作加 TODO(G19) 标记；.env.example/.env.docker.example/docker-compose.yml/docker-compose.dev.yml 同步新增环境变量。测试 test_g01_security.py 9 项全绿（CORS 白名单/拒绝未知源/禁通配/Cookie 属性/Secure 标志/清除 Cookie/配置项/向后兼容登录）。
 

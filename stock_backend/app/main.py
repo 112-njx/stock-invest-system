@@ -71,10 +71,12 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
         lifespan=lifespan,
     )
+    # CORS 白名单（G01：从 CORS_ORIGINS 环境变量解析，禁止硬编码通配）
+    _cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=_cors_origins,
+        allow_credentials=bool(_cors_origins),  # 白名单为空时禁用凭证（安全降级）
         allow_methods=["*"],
         allow_headers=["*"],
     )

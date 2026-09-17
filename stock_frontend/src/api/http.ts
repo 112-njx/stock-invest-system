@@ -14,16 +14,19 @@ declare module 'axios' {
 /**
  * axios 实例：
  * - baseURL `/api/v1`（开发代理到后端 8000，生产由 Nginx 反代）
+ * - withCredentials=true：跨域请求自动携带 Cookie（G01，为 G19 Cookie 鉴权预备）
  * - 请求拦截注入 Bearer token
  * - 响应拦截：业务错误统一 toast，401 登出并跳登录页
  */
 const http = axios.create({
   baseURL: '/api/v1',
   timeout: 20000,
+  withCredentials: true, // G01：跨域携带 Cookie（G19 refresh token Cookie 需要）
 })
 
 http.interceptors.request.use((config) => {
   const user = useUserStore()
+  // TODO(G19): Cookie 鉴权启用后移除此行，改为从 Cookie 自动携带 token
   if (user.token) config.headers.Authorization = `Bearer ${user.token}`
   return config
 })

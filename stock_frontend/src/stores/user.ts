@@ -7,6 +7,7 @@ const TOKEN_KEY = 'stock_invest_token'
 /** 用户状态：token + 用户信息，登录态由 token 驱动 */
 export const useUserStore = defineStore('user', {
   state: () => ({
+    // TODO(G19): 改为从响应体/内存读取，不再读 localStorage
     token: localStorage.getItem(TOKEN_KEY) || '',
     user: null as User | null,
   }),
@@ -28,6 +29,7 @@ export const useUserStore = defineStore('user', {
     setAuth(token: string, user: User) {
       this.token = token
       this.user = user
+      // TODO(G19): 移除 localStorage 存储，token 改由 HttpOnly Cookie 管理
       localStorage.setItem(TOKEN_KEY, token)
     },
     async fetchMe() {
@@ -40,6 +42,7 @@ export const useUserStore = defineStore('user', {
     logout() {
       this.token = ''
       this.user = null
+      // TODO(G19): 移除 localStorage 操作，改为调后端 POST /auth/logout + 清 Cookie
       localStorage.removeItem(TOKEN_KEY)
     },
   },

@@ -159,3 +159,6 @@ Agent的前端编码记录,你需要按照：
 
 编码时间：2026-08-27
 编码内容（描述）：审计修复 AI 生成策略后立刻回测 422（symbol: Input should be a valid string）。根因：stores/ai.ts runAutoBacktest 直接传数字 symbolId 给 createBacktest，后端 BacktestCreateIn.symbol 为 str（Pydantic 2 拒 int→str 触发 422）；这是「策略详情页 422」「添加关注/深度分析 422」同根因，但 7.5 生成→回测内嵌的自动回测路径此前漏改（只修了 StrategyDetailPanel 手动回测）。修复：改为 symbol: String(symbolId)，与 AIView/关注列表统一 symbol 转字符串。typecheck/lint 全绿。
+
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道A G01 前端改动。api/http.ts 加 withCredentials=true（跨域自动携带 Cookie，为 G19 Cookie 鉴权预备），请求拦截器保留 localStorage Bearer token 并加 TODO(G19) 标记待移除。stores/user.ts 四处 localStorage 操作（初始化/setAuth/logout）各加 TODO(G19) 标记，G19 双 token 启用后统一改为 Cookie + 后端 logout 端点。stock_frontend/nginx.conf 补充五项安全响应头（HSTS/CSP/X-Frame-Options DENY/nosniff/Referrer-Policy）。向后兼容：登录/注册响应仍返回 Bearer token，前端行为不变。

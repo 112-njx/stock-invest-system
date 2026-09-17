@@ -30,6 +30,8 @@ x-backend-env: &backend_env
   CHROMA_DIR: /app/data/chroma
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
   DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8081,http://127.0.0.1:5173,http://127.0.0.1:8081}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
 
 services:
   db:

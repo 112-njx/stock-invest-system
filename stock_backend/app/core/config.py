@@ -58,6 +58,22 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # token 有效期 7 天
     ADMIN_USERNAMES: str = "root"  # 管理员用户名（逗号分隔），启动时自动置 is_admin=true
 
+    # ---- SMTP 邮件服务（G02：邮箱验证/密码重置/异常登录/系统通知）----
+    SMTP_HOST: str = ""  # SMTP 服务器地址（为空时启用模拟模式）
+    SMTP_PORT: int = 587  # SMTP 端口（587=STARTTLS, 465=SSL）
+    SMTP_USER: str = ""  # SMTP 用户名
+    SMTP_PASS: str = ""  # SMTP 密码
+    SMTP_FROM_NAME: str = "量化回测助手"  # 发件人显示名称
+    SMTP_FROM_EMAIL: str = ""  # 发件人邮箱（为空时用 SMTP_USER）
+    SMTP_USE_TLS: bool = True  # True=STARTTLS(587), False=SSL(465)
+    SMTP_TIMEOUT: int = 30  # SMTP 连接/发送超时（秒）
+
+    # ---- CORS / Cookie 安全（G01：白名单 + Secure 属性）----
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:8081,http://127.0.0.1:5173,http://127.0.0.1:8081"  # 逗号分隔可信来源；生产覆盖为实际域名
+    COOKIE_SECURE: bool = False  # Cookie Secure 属性；生产 HTTPS 环境设 True
+    COOKIE_SAMESITE: str = "lax"  # Cookie SameSite（lax / strict / none）
+    ACCESS_TOKEN_COOKIE_NAME: str = "access_token"  # access token Cookie 名称（G19 启用 Cookie 鉴权后使用）
+
     # ---- 技术指标 ----
     INDICATOR_CACHE_TTL: int = 300  # 指标缓存秒数（key 含 K 线最新 ts，新数据到达自动失效）
 

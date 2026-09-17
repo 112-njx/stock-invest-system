@@ -41,3 +41,32 @@ def decode_access_token(token: str) -> int | None:
         return int(payload["sub"])
     except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
         return None
+
+
+# ---------- Cookie 安全工具（G01：为 G19 refresh token Cookie 预留）----------
+
+def set_access_token_cookie(response, token: str, max_age: int | None = None) -> None:
+    """设置 access token HttpOnly Cookie（Secure/SameSite 从配置读取）。
+
+    G01 阶段仅预留工具函数，G19 登录/刷新流程正式启用。
+    """
+    response.set_cookie(
+        key=_settings.ACCESS_TOKEN_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=_settings.COOKIE_SECURE,
+        samesite=_settings.COOKIE_SAMESITE,
+        path="/",
+        max_age=max_age,
+    )
+
+
+def clear_access_token_cookie(response) -> None:
+    """清除 access token Cookie。"""
+    response.delete_cookie(
+        key=_settings.ACCESS_TOKEN_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        secure=_settings.COOKIE_SECURE,
+        samesite=_settings.COOKIE_SAMESITE,
+    )
