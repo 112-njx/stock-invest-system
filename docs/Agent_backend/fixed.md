@@ -317,3 +317,9 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 **口径变更说明**（向后兼容）：`metrics_json` 为新增字段（`draws`/`unrealized_pnl`/`unrealized_count`），原有字段名与 API 响应结构不变；`total_trades` 语义由「FIFO 配对段数」变为「完整交易回合数」，数值可能变小，前端展示无需改动（仍为整数笔数）。
 
 **验证**：新增/重写 tests/test_backtest_correctness.py 23 项全绿（净盈亏/回合/期末结算/draw/涨跌停/同bar/滑点/量限）；tests/test_backtest_engine.py 15 项全绿；tests/test_backtest_api.py 6 项全绿。
+
+---
+
+时间：2026-09-17
+修复bug内容（描述）：G19 refresh token 复用检测失效（安全缺陷）。根因：services/session_service.py 的 validate_refresh_token 检查顺序错误——revoked_at 判断排在 Redis 黑名单判断之前。refresh 轮换时旧 session 会被同时 revoke_session（写 revoked_at）+ blacklist_refresh_token（写 Redis），于是被盗用的旧 token 再次请求时先命中"已吊销"分支短路返回，永远走不到 error=="已轮换" 分支，revoke_all_user_sessions 从不执行——即同一 refresh token 被用两次本应触发"吊销该用户全部会话"，实际只返回 401 而不踢出任何设备。修复：把 is_refresh_token_blacklisted 提到 find_session 之后第一位（Redis 黑名单是"已轮换"的唯一信号），revoked_at 降为第二位。实测：修复前复用后 active=2（未踢出），修复后 active=0（全设备踢出）；tests/test_g19_dual_token.py::test_refresh_reuse_detection 转绿。
+需要我手动配置（如果有的话）：无。

@@ -109,3 +109,18 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 现状：引擎按「一字板」形态（`open == high == low == close`）判定涨跌停并拒绝买入/卖出；若 bar 数据带 `limit_up` / `limit_down` 显式布尔字段则优先采用。
    - 影响：盘中打开涨停后回落（非一字板）不会被判定为涨停，仍可买入——属当前口径的有意取舍（避免误拦正常收盘价等于最高价的交易日）。
    - 需人工确认：行情同步层（`kline` 表）是否需要新增涨跌停标记字段。注意本项目禁止直接改表结构，若需新增须走 Alembic 迁移；当前不改表，保持一字板判定。
+
+6. **【泳道 A · G01】CORS 白名单域名未配置（生产）**
+   - 现状：`CORS_ORIGINS` 开发默认 `http://localhost:5173,http://localhost:8081`（含 127.0.0.1 同端口），已按 4.6 定稿要求改为环境变量白名单，代码内无任何硬编码通配或具体域名。
+   - 影响：生产部署若不配置该变量，`allow_credentials` 会因白名单为空而自动关闭（安全降级），前端跨域带 Cookie 的请求将失败。
+   - 需人工操作：域名购买后在 `.env.docker` 设置 `CORS_ORIGINS=https://<实际域名>`（多个用逗号分隔）。
+
+7. **【泳道 A · G01】Nginx TLS 证书路径未提供，HTTPS 尚未启用**
+   - 现状：`deploy/nginx/nginx.conf` 已写好完整 443 server 块（TLS 1.2/1.3 + 五项安全响应头），但处于注释状态；80 端口已预留 `SSL_REDIRECT` 环境变量控制的 301 重定向分支。五项安全响应头（HSTS/CSP/X-Frame-Options DENY/nosniff/Referrer-Policy）在 HTTP 下已生效。
+   - 需人工操作（证书就位后四步）：① 将 `fullchain.pem` / `privkey.pem` 挂载到容器 `/etc/nginx/certs/`（取消 `deploy/docker-compose.yml` 中 nginx volumes 的证书注释）；② 取消 `nginx.conf` 中 443 server 块全部注释；③ `.env.docker` 设 `SSL_REDIRECT=true`；④ `.env.docker` 设 `COOKIE_SECURE=true`（否则 HTTPS 下 refresh Cookie 不会被浏览器接受）。之后重建 nginx 容器。
+   - 注意：开发环境（vite dev / docker-compose.dev.yml）保持 HTTP，不受影响。
+
+8. **【泳道 A · G19】user_sessions 表需执行 Alembic 0010（依赖 G04 的 0009 先完成）**
+   - 现状：新增迁移 `stock_backend/alembic/versions/0010_user_sessions.py`（revision 0010 / down_revision 0009）。本地因第 1 条 pgvector 阻塞，0009 未执行，0010 也随之未执行；已临时手工建表供本地测试。
+   - 需人工操作：解决第 1 条 pgvector 后执行 `alembic upgrade head`，一次性补齐 0009~0012（含 user_sessions 表与两个索引）。回滚方案：`alembic downgrade 0009`（脚本内含 drop index + drop table）。
+   - 附注：G19 新增环境变量均有默认值，无需配置——`ACCESS_TOKEN_EXPIRE_MINUTES`(15) / `REFRESH_TOKEN_EXPIRE_DAYS`(7) / `REFRESH_TOKEN_COOKIE_NAME`(refresh_token)。

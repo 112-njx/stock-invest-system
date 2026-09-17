@@ -174,7 +174,7 @@ async function guardedFetch(
   }
   if (!res.ok) {
     if (res.status === 401) {
-      user.logout()
+      user.clearAuth() // G19：SSE 401 只清本地状态，由 http.ts 拦截器处理 refresh
       router.push({ name: 'login' })
       return null
     }

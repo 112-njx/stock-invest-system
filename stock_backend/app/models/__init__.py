@@ -5,6 +5,7 @@ from .base import Base
 from .email_log import EmailLog
 from .kline import KLINE_MODELS, Kline1d, Kline1mon, Kline1w, Kline15m
 from .ops import SyncTask, TaskLog
+from .session import UserSession
 from .snapshot import EtfPremium, IndexValuation, SnapshotRealtime, StockFundamental
 from .strategy import BacktestResult, BacktestTask, ChatMessage, Conversation, StrategyTemplate, TradingStrategy
 from .symbol import Symbol
@@ -38,5 +39,6 @@ __all__ = [
     "User",
     "UserAgent",
     "UserMemoryFile",
+    "UserSession",
     "UserWatchlist",
 ]

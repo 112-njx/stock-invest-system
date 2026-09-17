@@ -42,9 +42,9 @@ function toggleMenu() {
   menuOpen.value = !menuOpen.value
 }
 
-function onLogout() {
+async function onLogout() {
   menuOpen.value = false
-  user.logout()
+  await user.logout() // G19：调后端吊销会话 + 清 Cookie + 清本地状态
   toast.info('已退出登录')
   router.push({ name: 'login' })
 }

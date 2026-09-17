@@ -162,3 +162,5 @@ Agent的前端编码记录,你需要按照：
 
 编码时间：2026-09-17
 编码内容（描述）：V0.3 泳道A G01 前端改动。api/http.ts 加 withCredentials=true（跨域自动携带 Cookie，为 G19 Cookie 鉴权预备），请求拦截器保留 localStorage Bearer token 并加 TODO(G19) 标记待移除。stores/user.ts 四处 localStorage 操作（初始化/setAuth/logout）各加 TODO(G19) 标记，G19 双 token 启用后统一改为 Cookie + 后端 logout 端点。stock_frontend/nginx.conf 补充五项安全响应头（HSTS/CSP/X-Frame-Options DENY/nosniff/Referrer-Policy）。向后兼容：登录/注册响应仍返回 Bearer token，前端行为不变。
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道A G19 前端——401 自动刷新 + token 改内存存储。api/http.ts：加 401 拦截器自动调 refreshApi 并重放原请求，isRefreshing 锁 + refreshSubscribers 队列防并发重复刷新，_skipRefresh 标记防递归；refresh 失败清登录态跳登录页。stores/user.ts：token 从 localStorage 改为纯内存（setAuth 不再写盘），logout 改 async 调后端 POST /auth/logout 吊销会话，新增 clearAuth 供 401 降级用。api/auth.ts：新增 refreshApi/logoutApi/fetchSessions/revokeSession。api/types.ts：新增 RefreshResult/SessionInfo。api/ai.ts 的 SSE 401 分支改用 clearAuth。SettingsPanel.vue onLogout 改 async await。typecheck/build 全绿。

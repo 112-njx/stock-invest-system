@@ -1,13 +1,11 @@
 """G01 安全加固测试：CORS 白名单 / Cookie 安全属性 / 安全响应头。"""
 
-import os
 
 from app.core.config import get_settings
 from app.core.security import clear_access_token_cookie, set_access_token_cookie
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-
 
 # ---------- CORS 白名单 ----------
 
@@ -181,7 +179,7 @@ def test_login_still_returns_bearer_token(client: TestClient):
     try:
         resp = client.post(
             "/api/v1/auth/register",
-            json={"username": uname, "password": "pass123456"},
+            json={"username": uname, "password": "pass123456", "email": f"{uname}@test.local"},
         )
         assert resp.status_code == 200
         data = resp.json()["data"]
