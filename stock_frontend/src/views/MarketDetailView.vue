@@ -6,10 +6,16 @@
  * - D 区：重点关注列表（WatchlistPanel，行点击切换标的）/ 回测策略指标（StrategyMetricsPanel）
  * - 交互：Esc / 左上角按钮退出返回 /market；轮询刷新实时行情
  */
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchSymbols } from '@/api/market'
-import { useMarketStore } from '@/stores/market'
+import {
+  fetchBacktestResultDetail,
+  fetchBacktestResults,
+  fetchBacktestTask,
+  type BacktestTrade,
+} from '@/api/ai'
+import { useMarketStore, type Period } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
 import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
 import { useSnapshotPolling } from '@/composables/useSnapshotPolling'
@@ -27,6 +33,60 @@ const ws = useWsStore()
 const strategyId = computed(() => (route.query.strategy_id ? Number(route.query.strategy_id) : null))
 
 const { start } = useSnapshotPolling(4000)
+
+/* ---------- G32：回测买卖点标注 ---------- */
+/** 最新一条回测结果的买卖流水（后端已算好，前端只渲染） */
+const btTrades = ref<BacktestTrade[]>([])
+/** 买卖点所属 symbol_id：切换标的后不再叠加（避免张冠李戴） */
+const btSymbolId = ref<number | null>(null)
+/** 无法标注时的提示文案 */
+const markerNote = ref('')
+
+const PERIODS: Period[] = ['15m', '1d', '1w', '1mon']
+
+/**
+ * 拉取最新回测结果的买卖流水用于 K 线标注。
+ * 周期对齐：回测周期与行情页周期不同则切换，否则时间轴对不上、买卖点会错位。
+ */
+async function loadBacktestMarkers() {
+  if (!strategyId.value) {
+    btTrades.value = []
+    btSymbolId.value = null
+    markerNote.value = ''
+    return
+  }
+  try {
+    const list = await fetchBacktestResults(strategyId.value)
+    const latest = list[0]
+    if (!latest) {
+      btTrades.value = []
+      markerNote.value = '该策略暂无回测结果'
+      return
+    }
+    if (latest.task_id) {
+      const task = await fetchBacktestTask(latest.task_id)
+      if (task.period && PERIODS.includes(task.period as Period) && task.period !== market.period) {
+        market.setPeriod(task.period as Period)
+      }
+    }
+    const detail = await fetchBacktestResultDetail(latest.id)
+    btSymbolId.value = detail.symbol_id ?? null
+    btTrades.value = detail.trades ?? []
+    markerNote.value = btTrades.value.length
+      ? ''
+      : '该回测结果无买卖流水（升级前生成，或策略未产生交易）'
+  } catch {
+    btTrades.value = []
+    markerNote.value = '买卖点加载失败'
+  }
+}
+
+/** 仅当 K 线标的与回测标的相同时叠加买卖点 */
+const visibleMarkers = computed(() =>
+  btSymbolId.value != null && market.current?.id === btSymbolId.value ? btTrades.value : []
+)
+
+watch(strategyId, () => void loadBacktestMarkers())
 
 function goBack() {
   router.push('/market')
@@ -58,6 +118,8 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   await ensureDefaultSymbol()
   await resolveSymbolParam()
+  // G32：解析完标的后再拉买卖点，保证 btSymbolId 与 market.current 可比对
+  await loadBacktestMarkers()
   // V0.2：初始化 WS 实时行情（直接刷新/直达详情页时保证连接）
   ws.init()
   ws.syncSubscriptions()
@@ -77,12 +139,22 @@ onBeforeUnmount(() => {
 
     <div class="detail-body">
       <div class="col-left">
-        <!-- A+B 合并：K 线 + 技术指标多 pane，共享时间轴 -->
+        <!-- A+B 合并：K 线 + 技术指标多 pane，共享时间轴；G32：叠加回测买卖点 -->
         <KLineChart
           :symbol="market.current"
           :show-sr-button="true"
           :show-indicators="true"
+          :markers="visibleMarkers"
         />
+        <div v-if="strategyId" class="bt-marker-bar">
+          <template v-if="visibleMarkers.length">
+            <span class="bt-marker-bar__dot bt-marker-bar__dot--buy" />买入
+            <span class="bt-marker-bar__dot bt-marker-bar__dot--sell" />卖出
+            <span class="bt-marker-bar__sep" />
+            <span class="bt-marker-bar__count">共 {{ visibleMarkers.length }} 个买卖点</span>
+          </template>
+          <span v-else class="bt-marker-bar__note">{{ markerNote || '当前标的无买卖点' }}</span>
+        </div>
       </div>
       <div class="col-right">
         <BasicInfoPanel />
@@ -138,9 +210,36 @@ onBeforeUnmount(() => {
 .col-left {
   min-height: 0;
   min-width: 0;
-  /* A+B 合并为单个 KLineChart，占满左侧 */
-  display: block;
+  /* A+B 合并为单个 KLineChart，占满左侧；G32：下方追加买卖点图例条 */
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
+.col-left > :first-child {
+  flex: 1;
+  min-height: 0;
+}
+/* G32：买卖点图例/空态条 */
+.bt-marker-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.bt-marker-bar__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.bt-marker-bar__dot--buy { background: var(--up); }
+.bt-marker-bar__dot--sell { background: var(--down); }
+.bt-marker-bar__sep { flex: 1; }
+.bt-marker-bar__count { color: var(--text-muted); }
+.bt-marker-bar__note { color: var(--text-muted); }
 .col-right {
   min-height: 0;
   display: grid;

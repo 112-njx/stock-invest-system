@@ -86,11 +86,12 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
 
 ## 八、需人类操作配置事项（各泳道发现即追加，标清序号+泳道）
 
-1. **【泳道 C · G04】本地 PostgreSQL 缺少 pgvector 扩展，迁移 0009 无法执行**
+1. **【泳道 C · G04】本地 PostgreSQL 缺少 pgvector 扩展，迁移 0009 无法执行 —— 已解决（改用容器库）**
    - 现象：`alembic upgrade head` 在 0009 报 `extension "vector" is not available`；本地 `memory_chunks.embedding` / `embedding_kind` 列缺失，导致 `test_memory.py` 5 个用例 + `test_agent_ops.py` 1 个用例失败（340 passed / 5 failed / 6 skipped）。
-   - 原因：pgvector 需预装在 PG 实例中，本机原生 PostgreSQL 未安装。
-   - 需人工操作：本机 PostgreSQL 安装 pgvector（Windows 可下载预编译包或改用 `pgvector/pgvector:pg16` 容器库），然后执行 `alembic upgrade head` 补 0009~0012。
-   - 临时绕过（仅供本地开发验证）：手工 `ALTER TABLE` 补列，不作为正式方案。
+   - 原因：pgvector 需预装在 PG 实例中，本机原生 PostgreSQL 18.4 未安装，且本机无 MSVC（pgvector 的 `Makefile.win` 构建必需），无法就地编译。
+   - **已采取的方案**：本地开发/测试改用容器库 `pgvector/pgvector:pg16`（两个 compose 的 db 镜像已替换；dev compose 的 db 端口默认映射 `127.0.0.1:5433`）。`stock_backend/.env` 的 `DATABASE_URL` 已指向 5433。迁移 0009~0012 已应用，G04 测试 11/11 全绿。
+   - 需人工操作（新环境/换机时）：`docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d db` 启动容器库，再 `alembic upgrade head`。本机原生 PG 18（5432）保留作只读排查，不再作为开发库。
+   - 遗留（低优先，可选）：若希望恢复原生 PG 工作流，需安装 VS Build Tools 后用 `nmake /F Makefile.win` 编译安装 pgvector；不建议从非官方源取预编译 DLL。
 
 2. **【泳道 B · G23】注册接口 `email` 已改为必填，所有测试注册夹具已同步更新**
    - 影响：任何外部调用 `/api/v1/auth/register` 的地方必须带 `email`，否则 422。
@@ -131,3 +132,15 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 影响范围：测试断言层面；生产行为符合预期（浏览器 Cookie 鉴权是设计目标），但**测试夹具需要隔离 Cookie**。
    - 建议修复（属泳道 A 范围）：在 `tests/conftest.py` 的 client 夹具或相关测试中显式清空 Cookie（`client.cookies.clear()`），或为「未登录」用例使用独立的无 Cookie client。
    - 需人工操作：无（代码内修复）；本轮泳道 B 未越权修改泳道 A 文件。
+
+9. **【泳道 D · G32】`backtest_service.py` 被两条泳道并发编辑（提交时已如实披露）**
+   - 现象：G32 编码期间，`stock_backend/app/services/backtest_service.py` 的工作区同时存在两套未提交改动——G32 的 `_serialize_curve/_serialize_trades/_realized_pnl_by_sell` + `execute_backtest` 落库调用，以及**泳道 B/G16（P1-8b）的 `_notify_backtest_done` 站内通知**（回测成功/失败写通知）。另 `app/schemas/backtest.py` 混入 G30（P0-6）给 `BacktestCreateIn.symbol` 加 `max_length=32` 的输入长度校验。
+   - 影响：两套改动落在同一文件的不同区域，无 merge 冲突，功能共存（回测四文件 49 项全绿）。但 G32 的提交会把上述两条**尚未提交的跨泳道改动一并带入**。
+   - 处理：G32 **未回退任何他人改动**（避免破坏在途工作），提交时在 commit message 中明确标注该文件含 G16/G30 的在途改动，并已在本条记录。相关泳道如需拆分提交，请以其自身 commit 为准。
+   - 需人工确认：无（信息同步项）。
+
+10. **【泳道 D · G32】K 线买卖点标注的 15m 周期覆盖范围受 `/kline` 默认 limit 限制**
+   - 现状：前端 K 线图调 `/api/v1/kline` 使用默认 `limit=1000`，而回测取 K 线上限为 50000 根。日K 2 年约 500 根可完整覆盖；**15m 周期 2 年约 8k 根，超出 1000 的部分其买卖点会被前端裁剪掉不显示**（`KLineChart.drawMarkers` 按已加载 bar 时间范围过滤，不会报错、不会错位）。
+   - 影响：15m 回测的买卖点只显示最近约 1000 根 bar 区间内的部分，属**展示不完整**而非错误。日K/周K/月K 不受影响。
+   - 需人工确认：是否需要为「查看买卖点」场景把 `/kline` 的 limit 提高到覆盖回测区间（或让前端按回测 `start_ts/end_ts` 传参）。当前为有意取舍（避免一次性拉 8k 根影响图表性能），待确认后由泳道 D 在后续增量处理。
+   - 附注：本轮已一并完成的增量项——止损/止盈异形标记、hover 显示成交价/数量/费用/触发原因、交易明细表（含后端产出的逐笔已实现净盈亏）。**仍留待后续的增量**：交易明细与图表的高亮联动（点击明细行定位到 K 线对应位置）。

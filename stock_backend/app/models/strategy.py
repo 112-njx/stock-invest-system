@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -100,6 +101,9 @@ class BacktestResult(Base):
     annual_return: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
     max_drawdown: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
     metrics_json: Mapped[dict | None] = mapped_column(JSON)
+    # G32（P1-11）：资金曲线与买卖流水，供前端可视化（列表端点裁剪不返回）
+    equity_curve: Mapped[list | None] = mapped_column(JSONB)
+    trades: Mapped[list | None] = mapped_column(JSONB)
     start_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     end_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")

@@ -362,3 +362,15 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：G33 跨泳道问题记录（非本步引入）。全库 pytest 9 failed/353 passed，失败均为「不带 Authorization header 应 401」类用例，根因是泳道A G19（d8e1abb）在 deps.py::_extract_token 增加 access_token Cookie 回退 + 登录/注册下发 Cookie，TestClient 会话内 Cookie 持久化使「无 header」请求被 Cookie 认证通过；另 test_ws_market 两项属 G29 进行中的 WS 鉴权改造（query token→Cookie）。建议泳道A 在 conftest client 夹具清空 Cookie。已记入 project_constraints_v0.3.md 第八章第 4 条，本轮未越权修改泳道A 文件。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道D G32（P1-11）后端——回测结果可视化数据链路。新增 Alembic 0013 给 backtest_results 加 equity_curve/trades（JSONB，可空，up/down 已验证可逆）；models/strategy.py 加两列映射；backtest_repo.create_result 加两可选入参、list_results_by_strategy 加 defer() 不取大列；backtest_service 新增 _iso/_serialize_curve/_serialize_trades（datetime→ISO8601）+ _realized_pnl_by_sell（复用 metrics._pair_trades 给每笔卖出分摊已实现净盈亏，与胜率同口径，避免前端自算口径漂移），execute_backtest 落库两序列；schemas 拆 BacktestResultBriefOut（列表，不含大字段）/BacktestResultOut（详情，含两字段）；api/v1/backtest 列表端点改 BriefOut。验收：test_backtest_visualization.py 5 项 + 回测三文件 44 项全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G32 手工端到端验证（真实 K 线）。用 symbol_id=92 的 509 根日K 跑双均线策略：curve 509 点、流水 137 笔、胜率 36.76%、68 个回合。关键校验两项均通过——① 时间轴对齐：trades/curve 的 ts（`2024-08-19T08:00:00+00:00`）与 /api/v1/kline 下发的 naive ts（`2024-08-19T08:00:00`）按 epoch 秒比对 0 处错位（前端 toUtcSeconds 对两种写法解析结果一致）；② 口径一致：逐笔 realized_pnl 合计 == metrics._pair_trades 的 net_pnl 合计。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道A G30——用户输入校验 + 数据隔离审查（P0-6）。新增 app/schemas/validators.py：SafeText/SafeTextOptional（禁 C0/C1 控制字符，放行 \t\n\r）、HttpUrlTextOptional（仅 http/https/站内路径，拒 javascript:/data:/vbscript:）。各 schema 补限长：system_prompt 8000、策略 description 2000/code 20000、消息与聊天 content 20000、LoginIn username64/password128、token512、symbol 32、SR note 禁控制字符、agent name 禁控制字符、avatar_url 协议白名单；ChatIn.run_type 收敛为枚举。隔离审查结论：API 可达路径全部 WHERE user_id 隔离（服务层校验），未发现可利用遗漏；仓储层 backtest_repo/agent_repo.list_steps 无 user_id 属纵深防御缺口（当前调用方均先校验），已记录待后续加固。验收：test_g30_isolation.py 13 项全绿。

@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.models.strategy import BacktestResult, BacktestTask
 
@@ -65,6 +65,8 @@ def create_result(
     metrics: dict,
     start_ts: datetime | None,
     end_ts: datetime | None,
+    equity_curve: list | None = None,
+    trades: list | None = None,
 ) -> BacktestResult:
     row = BacktestResult(
         task_id=task_id,
@@ -78,6 +80,8 @@ def create_result(
         annual_return=metrics.get("annual_return"),
         max_drawdown=metrics.get("max_drawdown"),
         metrics_json=metrics.get("metrics_json") or {},
+        equity_curve=equity_curve,
+        trades=trades,
         start_ts=start_ts,
         end_ts=end_ts,
     )
@@ -87,9 +91,13 @@ def create_result(
 
 
 def list_results_by_strategy(db: Session, strategy_id: int) -> list[BacktestResult]:
+    """按策略列结果（G32：defer 大列——equity_curve/trades 单条约 60KB，列表不取）。"""
     return list(
         db.scalars(
-            select(BacktestResult).where(BacktestResult.strategy_id == strategy_id).order_by(BacktestResult.id.desc())
+            select(BacktestResult)
+            .options(defer(BacktestResult.equity_curve), defer(BacktestResult.trades))
+            .where(BacktestResult.strategy_id == strategy_id)
+            .order_by(BacktestResult.id.desc())
         )
     )
 

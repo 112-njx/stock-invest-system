@@ -118,11 +118,16 @@ def execute_backtest(task_id: int) -> dict:
             out["start_ts"], out["end_ts"], task.period,
             open_position=out.get("open_position"),
         )
-        result = backtest_repo.create_result(db, task_id, task.strategy_id, task.symbol_id, m, out["start_ts"], out["end_ts"])
+        result = backtest_repo.create_result(
+            db, task_id, task.strategy_id, task.symbol_id, m, out["start_ts"], out["end_ts"],
+            equity_curve=_serialize_curve(out["equity_curve"]),
+            trades=_serialize_trades(out["trades"]),
+        )
         backtest_repo.update_task(db, task_id, status="success", progress=100, error=None)
         db.commit()  # 结果 + 任务 success 原子写入
 
         _save_backtest_memory(db, strategy.user_id, strategy.title, symbol, result.id, m)
+        _notify_backtest_done(db, strategy.user_id, task_id, symbol.name, "success", m)
         return {"task_id": task_id, "result_id": result.id, "metrics": m}
     except BacktestTimeout as e:
         raise BacktestFatalError(f"回测超时: {e}") from e
@@ -132,11 +137,40 @@ def execute_backtest(task_id: int) -> dict:
         db.close()
 
 
+def _notify_backtest_done(
+    db: Session, user_id: int, task_id: int, symbol_name: str, status: str, metrics: dict | None = None
+) -> None:
+    """回测完成写站内通知（G16，best-effort，失败不影响回测主链路）。"""
+    try:
+        from app.services import notification_service
+
+        summary = None
+        if status == "success" and metrics:
+            win = metrics.get("win_rate")
+            ret = metrics.get("total_return")
+            if win is not None and ret is not None:
+                summary = f"胜率 {win:.1%}，总收益 {ret:+.2%}。点击查看完整结果。"
+        notification_service.notify_backtest_complete(db, user_id, task_id, symbol_name, status, summary)
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("notify backtest done failed task_id=%s (best-effort)", task_id, exc_info=True)
+        db.rollback()
+
+
 def mark_task_failed(task_id: int, error: str) -> None:
     db = get_session()
     try:
+        task = backtest_repo.get_task(db, task_id)
         backtest_repo.update_task(db, task_id, status="failed", error=error[:1000])
         db.commit()
+        # G16：回测失败也通知（best-effort）
+        if task is not None:
+            strategy = db.get(TradingStrategy, task.strategy_id)
+            symbol = db.get(Symbol, task.symbol_id)
+            if strategy is not None:
+                _notify_backtest_done(
+                    db, strategy.user_id, task_id, symbol.name if symbol else "标的", "failed"
+                )
     finally:
         db.close()
 
@@ -190,6 +224,83 @@ def _strategy_owned(db: Session, user_id: int, strategy_id: int) -> bool:
 
 
 # ---- 内部 ----
+def _iso(ts) -> str | None:
+    """datetime → ISO8601 字符串（JSONB 可序列化；naive 按 UTC 标注，与 DB 口径一致）。"""
+    if ts is None:
+        return None
+    if isinstance(ts, datetime):
+        return (ts if ts.tzinfo else ts.replace(tzinfo=UTC)).isoformat()
+    return str(ts)
+
+
+def _serialize_curve(curve: list[dict] | None) -> list[dict] | None:
+    """资金曲线序列化（G32）：ts 转 ISO8601，其余字段原样保留。"""
+    if not curve:
+        return None
+    return [
+        {
+            "ts": _iso(p.get("ts")),
+            "equity": float(p.get("equity", 0)),
+            "cash": float(p.get("cash", 0)),
+            "pos": int(p.get("pos", 0)),
+            "price": float(p.get("price", 0)),
+        }
+        for p in curve
+    ]
+
+
+def _realized_pnl_by_sell(trades: list[dict]) -> list[float]:
+    """给每笔卖出分摊「已实现净盈亏」（G32 明细表列，与胜率同一口径）。
+
+    复用 metrics._pair_trades（G20 净盈亏 + FIFO 成本 + 费用按股数分摊），
+    避免前端自算导致口径漂移（项目硬约束：前端不得计算复杂指标）。
+    一笔卖单可能拆成多段配对，按其 shares 之和恒等于该卖单 shares 推进游标。
+    """
+    sells = [t for t in trades if t["side"] == "sell"]
+    if not sells:
+        return []
+    pairs = metrics._pair_trades(trades)
+    out = [0.0] * len(sells)
+    si = 0
+    remaining = float(sells[0]["shares"])
+    for p in pairs:
+        if si >= len(sells):
+            break
+        out[si] += float(p.get("net_pnl", p["pnl"]))
+        remaining -= float(p["shares"])
+        if remaining <= 0:
+            si += 1
+            remaining = float(sells[si]["shares"]) if si < len(sells) else 0.0
+    return [round(v, 2) for v in out]
+
+
+def _serialize_trades(trades: list[dict] | None) -> list[dict] | None:
+    """买卖流水序列化（G32）：ts 转 ISO8601；reason 供前端区分止损/止盈样式；
+    卖出笔带 realized_pnl（已实现净盈亏，买入笔为 null）。"""
+    if not trades:
+        return None
+    realized = _realized_pnl_by_sell(trades)
+    out: list[dict] = []
+    si = 0
+    for t in trades:
+        is_sell = t.get("side") == "sell"
+        out.append(
+            {
+                "ts": _iso(t.get("ts")),
+                "side": t.get("side"),
+                "price": float(t.get("price", 0)),
+                "shares": int(t.get("shares", 0)),
+                "amount": float(t.get("amount", 0)),
+                "fee": float(t.get("fee", 0)),
+                "reason": t.get("reason", "signal"),
+                "realized_pnl": realized[si] if is_sell and si < len(realized) else None,
+            }
+        )
+        if is_sell:
+            si += 1
+    return out
+
+
 def _bar_to_dict(b) -> dict:
     return {
         "ts": b.ts,

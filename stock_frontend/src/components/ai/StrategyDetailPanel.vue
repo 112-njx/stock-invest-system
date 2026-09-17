@@ -4,18 +4,25 @@
  * 四部分居中：策略描述 / 回测结果（已保存）/ 代码实现（展示+可编辑保存）/ 回测模块（选标的→发起回测→轮询结果）。
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAiStore } from '@/stores/ai'
 import {
   createBacktest,
+  fetchBacktestResultDetail,
   fetchBacktestResults,
   fetchBacktestTask,
   updateStrategy,
   type BacktestResult,
+  type BacktestResultDetail,
   type BacktestTask,
 } from '@/api/ai'
 import type { SymbolInfo } from '@/api/market'
 import { toast } from '@/utils/toast'
 import SymbolPicker from '@/components/ai/SymbolPicker.vue'
+import BacktestEquityChart from '@/components/trading/BacktestEquityChart.vue'
+import BacktestTradesTable from '@/components/trading/BacktestTradesTable.vue'
+
+const router = useRouter()
 
 const emit = defineEmits<{ (e: 'back'): void }>()
 
@@ -37,13 +44,41 @@ const latest = computed<BacktestResult | null>(() => results.value[0] ?? null)
 async function loadResults() {
   if (!strategy.value) return
   resultsLoading.value = true
+  detail.value = null
   try {
     results.value = await fetchBacktestResults(strategy.value.id)
+    const top = results.value[0]
+    if (top) await loadDetail(top.id)
   } catch {
     results.value = []
   } finally {
     resultsLoading.value = false
   }
+}
+
+/* ---------- G32：资金曲线 / 交易明细 / 买卖点跳转 ---------- */
+const detail = ref<BacktestResultDetail | null>(null)
+
+async function loadDetail(resultId: number) {
+  try {
+    detail.value = await fetchBacktestResultDetail(resultId)
+  } catch {
+    detail.value = null
+  }
+}
+
+const equityPoints = computed(() => detail.value?.equity_curve ?? [])
+const trades = computed(() => detail.value?.trades ?? [])
+const initialCash = computed(() => equityPoints.value[0]?.cash ?? 0)
+
+/** G32：跳转行情页 K 线查看买卖点 */
+function goMarkerDetail() {
+  const r = latest.value
+  if (!r) return
+  router.push({
+    path: '/market/detail',
+    query: { strategy_id: String(strategy.value?.id ?? ''), symbol: String(r.symbol_id ?? '') },
+  })
 }
 
 /* ---------- 回测模块 ---------- */
@@ -175,12 +210,25 @@ onMounted(() => void loadResults())
             <span class="metric__value">{{ pct(latest.max_drawdown) }}</span>
           </div>
         </div>
+
+        <!-- G32：资金曲线 + 交易明细 + 买卖点跳转 -->
+        <template v-if="latest">
+          <div class="sd__chart">
+            <BacktestEquityChart :points="equityPoints" :initial-cash="initialCash" show-time-axis />
+          </div>
+          <div class="sd__trades">
+            <BacktestTradesTable :trades="trades" max-height="220px" />
+          </div>
+          <div class="sd__op">
+            <button class="sd__btn sd__btn--primary" @click="goMarkerDetail">在行情页查看买卖点</button>
+          </div>
+        </template>
       </section>
 
       <!-- ③ 代码实现 -->
       <section class="sd__section">
         <h3 class="sd__h3">代码实现</h3>
-        <textarea v-model="code" class="sd__code" rows="10" spellcheck="false" />
+        <textarea v-model="code" class="sd__code" rows="10" maxlength="20000" spellcheck="false" />
         <div class="sd__op">
           <button class="sd__btn sd__btn--primary" @click="saveCode">保存代码</button>
         </div>
@@ -296,6 +344,19 @@ onMounted(() => void loadResults())
   font-size: 12px;
   color: var(--text-muted);
   padding: 12px 0;
+}
+/* G32：资金曲线 / 交易明细 */
+.sd__chart {
+  height: 220px;
+  margin-top: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.sd__trades {
+  margin-top: 12px;
+  text-align: left;
 }
 .sd__metrics {
   display: grid;

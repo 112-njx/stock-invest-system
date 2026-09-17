@@ -171,3 +171,14 @@ Agent的前端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：V0.3 G33（前端）——忘记密码/重置密码/邮箱验证页 + 注册邮箱必填 + 设置改密改邮箱。新增 ForgotPasswordView.vue（输入邮箱→POST /auth/forgot-password→查收提示，含格式校验与错误态）、ResetPasswordView.vue（从 query 取 token→新密码+确认→POST /auth/reset-password，含缺 token/成功/失败三态 + 重新申请入口）、VerifyEmailView.vue（邮件链接落地页，onMounted 调 GET /auth/verify-email，loading/success/error 三态）。router/index.ts 追加 3 条 public 路由（仅追加，不改现有结构，避让 G35）。LoginView.vue 增量：注册 tab 新增邮箱必填+格式校验+验证提示文案、登录 tab 新增「忘记密码？」链接。SettingsPanel.vue 仅新增「账号安全」区块（修改密码/修改邮箱两行 + 当前邮箱与未验证标注 + 弹窗表单），不改上方用户 Cell/显示风格/开发者信息结构（与 G18 删除账户、G19 设备管理区块并存）。api/auth.ts 增 verifyEmail/forgotPassword/resetPassword/changePassword/changeEmail 五函数并改 registerApi 增 email 参数；stores/user.ts register 增 email 形参；types.ts User 增 email_verified。验收：vue-tsc 通过、build 通过、eslint 通过。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道D G32（P1-11）前端——回测结果可视化。api/ai.ts 新增 EquityPoint/BacktestTrade/BacktestResultDetail 类型 + fetchBacktestResultDetail（详情端点）。KLineChart.vue 新增 markers prop：createSeriesMarkers（lightweight-charts v5 插件 API）渲染买卖点，买入 arrowUp/belowBar/--up 红 + 文字 B，卖出 arrowDown/aboveBar/--down 绿 + 文字 S，止损 square、止盈 circle 异形区分；配色一律走既有 cssColors() 读 CSS 变量不硬编码；subscribeCrosshairMove 命中同 time 的流水时浮层显示成交价/数量/金额/费用/触发原因；标记按已加载 K 线时间范围裁剪（15m 默认只取 1000 根）。验收：vue-tsc 通过、build 通过。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G32 前端（续）——资金曲线 + 交易明细 + 跳转入口。新增 BacktestEquityChart.vue（lightweight-charts AreaSeries 渲染 equity_curve，初始资金虚线基准 + 标的买入持有基准虚线；基准为后端 price 序列的纯展示归一化，非指标计算）与 BacktestTradesTable.vue（时间/方向/价格/数量/费用/累计持仓/已实现盈亏/触发原因，已实现盈亏直接用后端 realized_pnl，累计持仓为逐笔运行和）。StrategyMetricsPanel.vue（全景K线D区）与 StrategyDetailPanel.vue（AI页N区）复用两组件并加「在行情页查看买卖点」入口；前者另展示 metrics_json 的 G20 新增字段（平手回合/期末浮盈）。MarketDetailView.vue 按 strategy_id 拉最新结果详情→转 markers 传给 KLineChart，并做周期对齐（回测周期≠行情页周期时切换 market.period）与标的比对（仅当 K 线标的==回测标的才叠加），K 线下方加买卖点图例条。未改 router/index.ts（G35 收口），跳转复用既有 /market/detail?symbol=&strategy_id=。
+
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道A G30 前端——DOMPurify 消毒 + 表单限长。utils/markdown.ts 引入 DOMPurify（v3），renderMarkdown 输出经 sanitizeHtml() 消毒（FORBID_TAGS: script/iframe/object/embed/form/input/textarea/button/style/link/base/meta；FORBID_ATTR: style；ADD_ATTR: target 保住外链新标签页）。新增 scripts/verify-xss.mjs + npm run verify:xss：esbuild 打包真实 markdown.ts → jsdom 渲染 22 个 XSS payload → DOM 解析断言无可执行元素/on* 事件/javascript: 协议，并校验正常内容不被误伤。表单补 maxlength 与后端一致：agent 名称64/system_prompt8000、昵称64、聊天输入20000、策略代码20000。v-html 排查：10 处中 7 处为静态 SVG 常量，3 处渲染 LLM 内容均经 renderMarkdown→消毒管线。

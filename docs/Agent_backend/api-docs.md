@@ -1103,6 +1103,7 @@ curl "http://127.0.0.1:8000/api/v1/backtest/tasks?strategy_id=1" -H "Authorizati
 - **请求 Path**：/api/v1/backtest/results
 - **接口作用**：按策略查询回测结果列表（N 区与全景K线策略指标数据源：胜率/盈亏比/夏普/年化/最大回撤等）。
 - **请求 Body**：无（Query：strategy_id；Header：Authorization: Bearer <token>）
+- **G32 字段裁剪**：本端点用 `BacktestResultBriefOut` 序列化，**不返回** `equity_curve` / `trades`（两字段单条约 60KB，列表返回会显著放大响应体）。仓储层同时用 SQLAlchemy `defer()` 让 DB 不取这两列。需要曲线/流水请调「5. 结果详情」。
 
 **请求示例（curl）**
 
@@ -1121,7 +1122,7 @@ curl "http://127.0.0.1:8000/api/v1/backtest/results?strategy_id=1" -H "Authoriza
 - **接口名称**：回测结果详情
 - **请求 Method**：GET
 - **请求 Path**：/api/v1/backtest/results/{result_id}
-- **接口作用**：单条回测结果详情（含 metrics_json 扩展指标与交易统计）。
+- **接口作用**：单条回测结果详情（含 metrics_json 扩展指标与交易统计；G32 起另含资金曲线与买卖流水）。
 - **请求 Body**：无（Path：result_id；Header：Authorization: Bearer <token>）
 
 **请求示例（curl）**
@@ -1133,8 +1134,41 @@ curl "http://127.0.0.1:8000/api/v1/backtest/results/5" -H "Authorization: Bearer
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":{"id":5,"task_id":17,"strategy_id":1,"win_rate":0.25,"metrics_json":{...}}}
+{"code":0,"msg":"ok","data":{"id":5,"task_id":17,"strategy_id":1,"win_rate":0.25,"metrics_json":{...},"equity_curve":[{"ts":"2024-08-12T08:00:00+00:00","equity":1000000.0,"cash":1000000.0,"pos":0,"price":5520.454}],"trades":[{"ts":"2024-08-19T08:00:00+00:00","side":"buy","price":5778.676,"shares":164,"amount":947702.86,"fee":284.31,"reason":"signal","realized_pnl":null}]}}
 ```
+
+**G32 新增响应字段说明（P1-11 回测结果可视化）**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| equity_curve | array \| null | **资金曲线**，逐 bar 一点；与 `/api/v1/kline` 的 bar `ts` 一一对应（同一回测周期的每根 K 线） |
+| trades | array \| null | **买卖流水**，按时间升序 |
+
+`equity_curve` 元素：
+
+| 字段 | 说明 |
+|---|---|
+| ts | 该 bar 时间（ISO8601，带 `+00:00` 时区；与 `/kline` 的 naive `ts` 表示同一时刻） |
+| equity | 该 bar 收盘时的总权益（现金 + 持仓市值，含期末未平仓浮动市值） |
+| cash | 可用现金 |
+| pos | 持仓股数 |
+| price | 该 bar 收盘价（前端「买入持有基准」用此序列归一化） |
+
+`trades` 元素：
+
+| 字段 | 说明 |
+|---|---|
+| ts | 成交时间（ISO8601，同上） |
+| side | `buy` / `sell` |
+| price | 成交价（含滑点；止损/止盈为触发价） |
+| shares | 成交股数 |
+| amount | 成交金额（price × shares） |
+| fee | 该笔费用（买入=佣金；卖出=佣金+印花税） |
+| reason | 触发原因：`signal`（策略信号）/ `stop_loss`（止损）/ `take_profit`（止盈） |
+| realized_pnl | **已实现净盈亏**（仅 `sell` 有值，`buy` 为 `null`）。与胜率同一口径：复用 `metrics._pair_trades` 的 FIFO 成本 + 买卖费用按股数分摊，前端**不得自行重算** |
+
+> **兼容性**：两字段为 0013 迁移新增，**存量结果行（迁移前生成）为 `null`**，前端按空态降级展示，不报错。
+> **体积**：单条结果两字段合计约 60KB（2 年日K ≈ 500 点 + 上百笔流水），故列表端点裁剪（见 4）。
 
 **metrics_json 字段说明（P0-10b/G20 修复后口径）**
 

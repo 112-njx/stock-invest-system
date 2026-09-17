@@ -13,6 +13,7 @@ import {
   CandlestickSeries,
   ColorType,
   createChart,
+  createSeriesMarkers,
   CrosshairMode,
   HistogramSeries,
   LineSeries,
@@ -21,6 +22,9 @@ import {
   type IPaneApi,
   type IPriceLine,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
+  type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
 import {
@@ -34,6 +38,7 @@ import {
   type SupportResistanceItem,
 } from '@/api/market'
 import type { SymbolInfo } from '@/api/market'
+import type { BacktestTrade } from '@/api/ai'
 import { useMarketStore, type Period } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
 import { useThemeStore } from '@/stores/theme'
@@ -61,8 +66,10 @@ const props = withDefaults(
     symbol: SymbolInfo | null
     showSrButton?: boolean
     showIndicators?: boolean
+    /** G32：回测买卖点标记（空数组/不传则不渲染） */
+    markers?: BacktestTrade[]
   }>(),
-  { showSrButton: false, showIndicators: false }
+  { showSrButton: false, showIndicators: false, markers: () => [] }
 )
 const emit = defineEmits<{
   (e: 'dblclick'): void
@@ -81,6 +88,12 @@ let chart: IChartApi | null = null
 let candleSeries: ISeriesApi<'Candlestick'> | null = null
 let srLines: IPriceLine[] = []
 let lastBar: KLineBar | null = null
+/** G32：买卖点标记插件（v5 独立插件 API） */
+let markersPlugin: ISeriesMarkersPluginApi<Time> | null = null
+/** G32：已加载 K 线的时间范围（UTC 秒），用于裁掉落在区间外的标记 */
+let barRange: { from: number; to: number } | null = null
+/** G32：hover 命中买卖点时的浮层信息 */
+const hoverTip = ref<{ x: number; y: number; trade: BacktestTrade } | null>(null)
 
 /** 优化4/优化7：最大缩放限制——放大最多显示15条K线，可无限缩小 */
 const MAX_VISIBLE_BARS = 15
@@ -243,6 +256,9 @@ function initChart() {
   // 主图 stretch factor 较大
   chart.panes()[0].setStretchFactor(2)
 
+  // G32：hover 命中买卖点时显示浮层
+  chart.subscribeCrosshairMove(onCrosshairMove)
+
   container.value.addEventListener('dblclick', onDblClick)
 }
 
@@ -276,6 +292,7 @@ function applyTheme() {
     }
   }
   redrawSRLines()
+  drawMarkers() // G32：主题切换后按新配色重绘买卖点
 }
 
 function onDblClick() {
@@ -344,6 +361,68 @@ function rebuildIndicatorPanes() {
   chart.panes()[0]?.setStretchFactor(2)
 }
 
+/* ---------- G32：回测买卖点标记 ---------- */
+const REASON_LABEL: Record<BacktestTrade['reason'], string> = {
+  signal: '',
+  stop_loss: '止损',
+  take_profit: '止盈',
+}
+
+/**
+ * 买卖点标记样式（遵循项目红涨绿跌：买入=--up 红，卖出=--down 绿）。
+ * 信号买卖用箭头 + B/S；止损/止盈改用方形/圆形 + 文字区分（后续增量样式）。
+ */
+function markerStyle(t: BacktestTrade, c: ReturnType<typeof cssColors>) {
+  const isBuy = t.side === 'buy'
+  const base = {
+    time: toUtcSeconds(t.ts) as Time,
+    position: (isBuy ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
+    color: isBuy ? c.up : c.down,
+  }
+  if (t.reason === 'stop_loss') return { ...base, shape: 'square' as const, text: '止损' }
+  if (t.reason === 'take_profit') return { ...base, shape: 'circle' as const, text: '止盈' }
+  return { ...base, shape: (isBuy ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown', text: isBuy ? 'B' : 'S' }
+}
+
+/** 渲染买卖点：仅保留落在已加载 K 线时间范围内的标记（超出区间的标记无法定位） */
+function drawMarkers() {
+  if (!candleSeries) return
+  if (!markersPlugin) {
+    markersPlugin = createSeriesMarkers(candleSeries, [])
+  }
+  const list = props.markers ?? []
+  if (!list.length || !barRange) {
+    markersPlugin.setMarkers([])
+    return
+  }
+  const c = cssColors()
+  const inRange = list
+    .map((t) => ({ t, time: toUtcSeconds(t.ts) }))
+    .filter(({ time }) => time >= barRange!.from && time <= barRange!.to)
+    .sort((a, b) => a.time - b.time)
+  markersPlugin.setMarkers(inRange.map(({ t }) => markerStyle(t, c) as SeriesMarker<Time>))
+}
+
+/** hover 命中买卖点 → 浮层显示成交价/数量/费用/触发原因 */
+function onCrosshairMove(param: { time?: unknown; point?: { x: number; y: number } }) {
+  const list = props.markers ?? []
+  if (!list.length || param.time == null || !param.point) {
+    hoverTip.value = null
+    return
+  }
+  const hit = list.filter((t) => toUtcSeconds(t.ts) === param.time)
+  if (!hit.length) {
+    hoverTip.value = null
+    return
+  }
+  hoverTip.value = { x: param.point.x, y: param.point.y, trade: hit[hit.length - 1] }
+}
+
+function reasonText(t: BacktestTrade): string {
+  if (t.reason === 'signal') return t.side === 'buy' ? '买入信号' : '卖出信号'
+  return REASON_LABEL[t.reason] || t.reason
+}
+
 /* ---------- 数据 ---------- */
 const indicatorRows = ref<IndicatorRow[]>([])
 
@@ -398,6 +477,11 @@ async function loadKline() {
     if (!chart) initChart()
     candleSeries?.setData(toCandleData(bars))
     lastBar = bars.length ? bars[bars.length - 1] : null
+    // G32：记录已加载时间范围并重绘买卖点（K 线范围外的时间轴标记无法定位，需裁剪）
+    barRange = bars.length
+      ? { from: toUtcSeconds(bars[0].ts), to: toUtcSeconds(bars[bars.length - 1].ts) }
+      : null
+    drawMarkers()
 
     // K线数据设置后再创建指标 pane，确保 chart 尺寸稳定、pane 可见（修复 bug5）
     if (props.showIndicators) {
@@ -503,12 +587,17 @@ watch(
   }
 )
 
+watch(() => props.markers, () => drawMarkers(), { deep: false })
+
 watch(() => props.symbol, (newSym, oldSym) => {
   if (!props.symbol) {
     lastBar = null
     candleSeries?.setData([])
     clearSRLines()
     indicatorRows.value = []
+    barRange = null
+    markersPlugin?.setMarkers([])
+    hoverTip.value = null
     if (props.showIndicators) removeAllIndicatorPanes()
     return
   }
@@ -549,11 +638,16 @@ onBeforeUnmount(() => {
   window.removeEventListener('wheel', onWheel, true)
   closeSrDialog()
   closeIndicatorPicker()
+  chart?.unsubscribeCrosshairMove(onCrosshairMove)
   chart?.remove()
   chart = null
   candleSeries = null
   srLines = []
   indicatorPanes.clear()
+  // G32：标记插件随 chart 一并销毁，仅清引用
+  markersPlugin = null
+  barRange = null
+  hoverTip.value = null
   // V0.2：注销 WS kline 回调
   ws.setKlineHandler(null)
 })
@@ -648,6 +742,23 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
     <div ref="container" class="kline-chart__body" @dblclick.stop="emit('dblclick')">
       <!-- V0.2：加载中顶部细进度条（无闪烁切换时提示） -->
       <div v-if="loading && props.symbol" class="kline-chart__progress" />
+      <!-- G32：hover 买卖点浮层（成交价/数量/费用/触发原因） -->
+      <div
+        v-if="hoverTip"
+        class="mk-tip"
+        :style="{ left: `${hoverTip.x + 12}px`, top: `${hoverTip.y + 12}px` }"
+      >
+        <div class="mk-tip__row">
+          <span class="mk-tip__side" :class="hoverTip.trade.side">
+            {{ hoverTip.trade.side === 'buy' ? '买入' : '卖出' }}
+          </span>
+          <span class="mk-tip__reason">{{ reasonText(hoverTip.trade) }}</span>
+        </div>
+        <div class="mk-tip__row"><span>成交价</span><b>{{ hoverTip.trade.price.toFixed(2) }}</b></div>
+        <div class="mk-tip__row"><span>数量</span><b>{{ hoverTip.trade.shares }}</b></div>
+        <div class="mk-tip__row"><span>金额</span><b>{{ hoverTip.trade.amount.toFixed(2) }}</b></div>
+        <div class="mk-tip__row"><span>费用</span><b>{{ hoverTip.trade.fee.toFixed(2) }}</b></div>
+      </div>
     </div>
 
     <div v-if="loading && !props.symbol" class="kline-chart__state">加载中…</div>
@@ -863,6 +974,38 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 .kline-chart__retry:hover {
   background: var(--accent-soft);
 }
+
+/* G32：买卖点 hover 浮层 */
+.mk-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  min-width: 120px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+  font-variant-numeric: tabular-nums;
+}
+.mk-tip__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  line-height: 1.7;
+}
+.mk-tip__row > span { color: var(--text-muted); }
+.mk-tip__side {
+  font-weight: 600;
+  padding: 0 5px;
+  border-radius: 3px;
+}
+.mk-tip__side.buy { color: var(--up); background: var(--up-soft); }
+.mk-tip__side.sell { color: var(--down); background: var(--down-soft); }
+.mk-tip__reason { color: var(--text-secondary); }
 
 /* 弹窗 */
 .modal-mask {

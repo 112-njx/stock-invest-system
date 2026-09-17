@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, get_db
 from app.core.response import ok
 from app.models.user import User
-from app.schemas.backtest import BacktestCreateIn, BacktestResultOut, BacktestTaskOut
+from app.schemas.backtest import (
+    BacktestCreateIn,
+    BacktestResultBriefOut,
+    BacktestResultOut,
+    BacktestTaskOut,
+)
 from app.services import backtest_service
 
 router = APIRouter(prefix="/api/v1/backtest", tags=["backtest"])
@@ -60,8 +65,9 @@ def list_results(
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
+    # G32：列表用 BriefOut 裁剪掉 equity_curve/trades（大字段只在详情端点返回）
     rows = backtest_service.list_results(db, current.id, strategy_id)
-    return ok(data=[BacktestResultOut.model_validate(r).model_dump(mode="json") for r in rows])
+    return ok(data=[BacktestResultBriefOut.model_validate(r).model_dump(mode="json") for r in rows])
 
 
 @router.get("/results/{result_id}")

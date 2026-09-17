@@ -421,6 +421,33 @@ export interface BacktestResult {
   end_ts?: string | null
 }
 
+/** G32：资金曲线单点（后端已按 G20 口径算好，前端只渲染） */
+export interface EquityPoint {
+  ts: string
+  equity: number
+  cash: number
+  pos: number
+  price: number
+}
+
+/** G32：买卖流水（reason 用于区分信号/止损/止盈样式；realized_pnl 由后端按 G20 净盈亏口径算好，买入笔为 null） */
+export interface BacktestTrade {
+  ts: string
+  side: 'buy' | 'sell'
+  price: number
+  shares: number
+  amount: number
+  fee: number
+  reason: 'signal' | 'stop_loss' | 'take_profit'
+  realized_pnl?: number | null
+}
+
+/** G32：回测结果详情（仅详情端点返回 equity_curve/trades；存量结果为 null） */
+export interface BacktestResultDetail extends BacktestResult {
+  equity_curve?: EquityPoint[] | null
+  trades?: BacktestTrade[] | null
+}
+
 /** 发起回测（异步，返回任务） */
 export function createBacktest(payload: {
   strategy_id: number
@@ -443,9 +470,14 @@ export function fetchBacktestTasks(strategyId?: number) {
   return request<BacktestTask[]>({ url: '/backtest/tasks', params: strategyId ? { strategy_id: strategyId } : undefined })
 }
 
-/** 回测结果列表（按策略，N 区与全景 K 线策略指标数据源） */
+/** 回测结果列表（按策略，N 区与全景 K 线策略指标数据源；不含 equity_curve/trades） */
 export function fetchBacktestResults(strategyId: number) {
   return request<BacktestResult[]>({ url: '/backtest/results', params: { strategy_id: strategyId } })
+}
+
+/** G32：回测结果详情（含资金曲线与买卖流水，用于可视化） */
+export function fetchBacktestResultDetail(resultId: number) {
+  return request<BacktestResultDetail>({ url: `/backtest/results/${resultId}` })
 }
 
 /* ===================== Agent 运行历史（阶段七 7.3：多智能体可观测） ===================== */
