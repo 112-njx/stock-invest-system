@@ -139,7 +139,10 @@ def test_search_fuzzy_prefers_synced_over_catalog():
     codes = [r["code"] for r in rows]
     # is_catalog=FALSE（已同步）排在 is_catalog=TRUE（仅目录）之前
     assert codes.index("900201") < codes.index("900202")
-    assert rows[0]["has_kline"] is True
+    # 注意：目录中可能存在名称含"测试"的真实标的（如东华测试 300354），
+    # 其代码小于 900xxx 会排在夹具之前，故不能假设 rows[0] 就是夹具 —— 显式按代码取行。
+    assert next(r for r in rows if r["code"] == "900201")["has_kline"] is True
+    assert next(r for r in rows if r["code"] == "900202")["has_kline"] is False
 
 
 def test_search_caches_result():
