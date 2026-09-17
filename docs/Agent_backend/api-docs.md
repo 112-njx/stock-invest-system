@@ -142,20 +142,22 @@ curl -X POST "http://127.0.0.1:8000/api/v1/fetch-all"
 - **接口名称**：用户注册
 - **请求 Method**：POST
 - **请求 Path**：/api/v1/auth/register
-- **接口作用**：注册新用户（密码 bcrypt 哈希入库），成功后签发 JWT。
-- **请求 Body**：有（Body-JSON：username、password、email?、nickname?）
+- **接口作用**：注册新用户（密码 bcrypt 哈希入库），成功后签发 JWT 并发送邮箱验证邮件。
+- **请求 Body**：有（Body-JSON：username、password、**email（必填）**、nickname?）
 
 **请求示例（curl）**
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/api/v1/auth/register" -H "Content-Type: application/json" -d '{"username":"alice","password":"pass123456","nickname":"Alice"}'
+curl -X POST "http://127.0.0.1:8000/api/v1/auth/register" -H "Content-Type: application/json" -d '{"username":"alice","password":"pass123456","email":"alice@example.com","nickname":"Alice"}'
 ```
 
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":{"token":"eyJhbGciOi...","user":{"id":1,"username":"alice","email":null,"nickname":"Alice","avatar_url":null,"created_at":"2026-08-09T05:00:00Z"}}}
+{"code":0,"msg":"ok","data":{"token":"eyJhbGciOi...","user":{"id":1,"username":"alice","email":"alice@example.com","email_verified":false,"nickname":"Alice","avatar_url":null,"created_at":"2026-08-09T05:00:00Z"}}}
 ```
+
+> 邮箱必填（缺失 422）；邮箱已注册返回 `{"code":40002,"msg":"该邮箱已被注册"}`。
 
 ## 2. 用户登录
 
@@ -1089,6 +1091,25 @@ curl "http://127.0.0.1:8000/api/v1/backtest/results/5" -H "Authorization: Bearer
 ```json
 {"code":0,"msg":"ok","data":{"id":5,"task_id":17,"strategy_id":1,"win_rate":0.25,"metrics_json":{...}}}
 ```
+
+**metrics_json 字段说明（P0-10b/G20 修复后口径）**
+
+| 字段 | 说明 |
+|---|---|
+| total_return | 总收益率（末值净值/初始资金-1，含期末未平仓浮动盈亏） |
+| total_trades | **完整交易回合数**（一次买→卖为一笔；FIFO 仅用于成本分摊） |
+| total_buys / total_sells | 累计买入/卖出笔数（流水笔数，非回合数） |
+| commission_total | 累计费用（佣金+印花税） |
+| bars_used | 回测使用 K 线根数 |
+| avg_holding_bars | 平均持仓 bar 数 |
+| annual_volatility | 年化波动率 |
+| best_trade / worst_trade | 最好/最差单笔盈亏（**净盈亏**，已扣费用） |
+| draws | **平手交易数**（毛盈亏为 0，单列，不计入胜率分母、不并入亏损） |
+| unrealized_pnl | **期末未平仓浮动盈亏**（按最后一根 bar 收盘价结算，未扣买入佣金） |
+| unrealized_count | 期末未平仓标的数（0 或 1） |
+
+> 胜率 `win_rate` 口径：仅统计**已实现**交易回合，分母 = 回合数 - draws；无已实现回合时为 null。
+> 盈亏比 `profit_loss_ratio` 按净盈亏均值计算，全胜无亏损时为 null。
 
 # Agent 运行记录与记忆文件 API（Agent-Ops）
 
