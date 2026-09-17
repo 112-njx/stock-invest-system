@@ -623,7 +623,27 @@ def _save_result(db, run, user_msg, conv, symbol_id, text, tokens, status, error
     agent_repo.finish_run(db, run, status=status, output=text, tokens=tokens, duration_ms=duration_ms, error=error)
     db.commit()
     db.refresh(assistant_msg)
+    # G16：深度分析（多智能体长任务）完成写站内通知（best-effort，不影响主链路）
+    _notify_agent_done(db, run, conv, status)
     return assistant_msg
+
+
+def _notify_agent_done(db, run, conv, status: str) -> None:
+    """深度分析完成/失败写站内通知（仅 DEEP_RUN_TYPES 长任务，避免普通对话刷屏）。"""
+    if getattr(run, "run_type", None) not in DEEP_RUN_TYPES:
+        return
+    try:
+        from app.services import notification_service
+
+        summary = None
+        if status == "success":
+            head = (run.output or "").strip().replace("\n", " ")[:80]
+            summary = f"{head}…" if head else None
+        notification_service.notify_agent_complete(db, conv.user_id, run.run_type, summary)
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("notify agent done failed run_id=%s (best-effort)", getattr(run, "id", None), exc_info=True)
+        db.rollback()
 
 
 async def _stream_with_timeouts(gen, db, run, user_msg, conv, symbol_id) -> AsyncIterator[dict]:

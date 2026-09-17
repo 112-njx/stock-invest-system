@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动钩子：管理员晋升 + 固定指数缓存预热（均 best-effort，不阻断启动）。"""
+    # G16：记录主事件循环，供同步上下文（Celery 任务/请求线程）跨线程调度 WS 通知推送
+    try:
+        import asyncio
+
+        from app.ws.manager import manager
+
+        manager.set_loop(asyncio.get_running_loop())
+    except Exception:  # noqa: BLE001
+        logger.warning("startup set ws loop failed (skip)", exc_info=True)
     _startup_tasks()
     yield
 

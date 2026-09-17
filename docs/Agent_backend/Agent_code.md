@@ -374,3 +374,11 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：V0.3 泳道A G30——用户输入校验 + 数据隔离审查（P0-6）。新增 app/schemas/validators.py：SafeText/SafeTextOptional（禁 C0/C1 控制字符，放行 \t\n\r）、HttpUrlTextOptional（仅 http/https/站内路径，拒 javascript:/data:/vbscript:）。各 schema 补限长：system_prompt 8000、策略 description 2000/code 20000、消息与聊天 content 20000、LoginIn username64/password128、token512、symbol 32、SR note 禁控制字符、agent name 禁控制字符、avatar_url 协议白名单；ChatIn.run_type 收敛为枚举。隔离审查结论：API 可达路径全部 WHERE user_id 隔离（服务层校验），未发现可利用遗漏；仓储层 backtest_repo/agent_repo.list_steps 无 user_id 属纵深防御缺口（当前调用方均先校验），已记录待后续加固。验收：test_g30_isolation.py 13 项全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道B G16（后端）——通知中心+系统公告（P1-8b）。Alembic 0014 建 notifications（user_id/type/title/content/is_read/created_at/read_at，FK CASCADE + 未读优先复合索引）与 admin_announcements（title/content/type/is_active/expires_at）两表；新增 models/notification.py、repositories/notification_repo.py（多租户强制 user_id 过滤）、services/notification_service.py（创建/列表/已读/公告发布分发 + best-effort WS 推送）、schemas/notification.py、api/v1/notifications.py（GET 列表未读优先、GET unread-count、PATCH {id}/read、PATCH read-all）、api/v1/announcements.py（GET active 公开、GET 历史、POST /admin/announcements is_admin 鉴权，ADMIN_USERNAMES 定稿方案）。WS 推送：ConnectionManager 新增 set_loop/get_loop/broadcast_all，main.py lifespan 记录主事件循环，服务层经 run_coroutine_threadsafe 跨线程推送 {"type":"notification","data":{...}}。通知类型 system/backtest_complete/agent_complete/security；回测完成/失败（backtest_service）与深度分析完成（chat_service._save_result 仅 DEEP_RUN_TYPES）写通知。验收：test_notifications.py 19 单测全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G16 环境说明——本地 PostgreSQL 缺 pgvector 致迁移 0009 无法执行，0014 亦无法经 alembic 落库；已按 0009/0012 同样方式手工建表（notifications/admin_announcements + 索引）供本地测试，正式环境须在装好 pgvector 后执行 alembic upgrade head 补 0009~0014。已记入 project_constraints_v0.3.md 第八章第 1 条。

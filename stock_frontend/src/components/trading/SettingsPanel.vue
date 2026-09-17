@@ -9,8 +9,10 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { changeEmailApi, changePasswordApi } from '@/api/auth'
+import { fetchAnnouncementHistory } from '@/api/notifications'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
+import type { Announcement } from '@/api/types'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
 import { toast } from '@/utils/toast'
@@ -98,6 +100,30 @@ async function submitEmail() {
   } finally {
     secLoading.value = false
   }
+}
+
+// ---- G16：系统公告入口（I 区查看历史公告）----
+const annOpen = ref(false)
+const annLoading = ref(false)
+const annList = ref<Announcement[]>([])
+
+async function openAnnouncements() {
+  annOpen.value = true
+  annLoading.value = true
+  try {
+    annList.value = await fetchAnnouncementHistory()
+  } catch {
+    annList.value = []
+  } finally {
+    annLoading.value = false
+  }
+}
+
+function annTimeText(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 onMounted(() => {
@@ -195,6 +221,11 @@ const menuStyle = computed(() => ({
           <span class="security-row__text">修改邮箱</span>
           <span class="security-row__arrow">›</span>
         </button>
+        <!-- G16：系统公告历史入口 -->
+        <button class="security-row" @click="openAnnouncements">
+          <span class="security-row__text">系统公告</span>
+          <span class="security-row__arrow">›</span>
+        </button>
       </div>
       <span class="security-note">
         当前邮箱：{{ user.user?.email || '未绑定' }}
@@ -205,6 +236,30 @@ const menuStyle = computed(() => ({
     <div class="settings-dev">
       <span class="settings-dev__text">本软件由 Xhope(发誓不做夜猫子)全程开发</span>
     </div>
+
+    <!-- G16：系统公告历史弹窗 -->
+    <Teleport to="body">
+      <div v-if="annOpen" class="sec-mask" @click.self="annOpen = false">
+        <div class="sec-dialog sec-dialog--wide">
+          <h3 class="sec-dialog__title">系统公告</h3>
+          <div v-if="annLoading" class="ann-empty">加载中…</div>
+          <div v-else-if="annList.length === 0" class="ann-empty">暂无公告</div>
+          <ul v-else class="ann-list">
+            <li v-for="a in annList" :key="a.id" class="ann-list__item">
+              <div class="ann-list__head">
+                <span class="ann-list__title">{{ a.title }}</span>
+                <span v-if="!a.is_active" class="ann-list__badge">已停用</span>
+              </div>
+              <p class="ann-list__content">{{ a.content }}</p>
+              <span class="ann-list__time">{{ annTimeText(a.created_at) }}</span>
+            </li>
+          </ul>
+          <div class="sec-dialog__actions">
+            <BaseButton type="button" variant="ghost" @click="annOpen = false">关闭</BaseButton>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- G33：改密 / 改邮箱弹窗 -->
     <Teleport to="body">
@@ -525,5 +580,57 @@ const menuStyle = computed(() => ({
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+
+/* G16：系统公告历史弹窗 */
+.sec-dialog--wide {
+  width: 460px;
+}
+.ann-empty {
+  padding: 24px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ann-list {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.ann-list__item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.ann-list__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ann-list__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ann-list__badge {
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.ann-list__content {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.ann-list__time {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 </style>

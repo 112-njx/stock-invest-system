@@ -6,6 +6,7 @@ from .v1 import (
     admin,
     agent_ops,
     agents,
+    announcements,
     auth,
     backtest,
     chat,
@@ -14,6 +15,7 @@ from .v1 import (
     indicators,
     market,
     memory,
+    notifications,
     strategies,
     strategy_templates,
     support_resistance,
@@ -39,4 +41,6 @@ api_router.include_router(agents.router)  # /api/v1/agents
 api_router.include_router(backtest.router)  # /api/v1/backtest
 api_router.include_router(agent_ops.router)  # /api/v1/agent/runs、/api/v1/memory/files
 api_router.include_router(memory.router)  # /api/v1/memory/facts（记忆管理，阶段六 6.4）
+api_router.include_router(notifications.router)  # /api/v1/notifications（G16 通知中心）
+api_router.include_router(announcements.router)  # /api/v1/announcements|admin/announcements（G16 公告）
 api_router.include_router(ws_market.router)  # WS /api/v1/ws/market（实时行情）

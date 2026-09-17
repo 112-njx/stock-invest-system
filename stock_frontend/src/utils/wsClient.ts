@@ -10,7 +10,7 @@
  * 纯基础设施，无 UI 依赖。
  */
 
-export type WsMessageType = 'snapshot' | 'kline' | 'ping' | 'pong' | 'error'
+export type WsMessageType = 'snapshot' | 'kline' | 'ping' | 'pong' | 'error' | 'notification'
 
 export interface WsSnapshotMessage {
   type: 'snapshot'
@@ -24,7 +24,27 @@ export interface WsKlineMessage {
   bar: Record<string, unknown>
 }
 
-export type WsMessage = WsSnapshotMessage | WsKlineMessage | { type: 'ping' } | { type: 'pong' } | { type: 'error'; message: string }
+/** G16：服务端推送的站内通知（回测完成 / Agent 完成 / 系统公告） */
+export interface WsNotificationMessage {
+  type: 'notification'
+  data: {
+    id: number
+    type: string
+    title: string
+    content?: string | null
+    is_read?: boolean
+    created_at?: string
+    read_at?: string | null
+  }
+}
+
+export type WsMessage =
+  | WsSnapshotMessage
+  | WsKlineMessage
+  | WsNotificationMessage
+  | { type: 'ping' }
+  | { type: 'pong' }
+  | { type: 'error'; message: string }
 
 type MessageHandler = (msg: WsMessage) => void
 type StatusHandler = (connected: boolean) => void

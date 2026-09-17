@@ -3,6 +3,7 @@
  * 顶部导航栏：品牌 + 路由 + 主题切换。
  * 优化1：删除顶部用户头像/用户名和退出按钮，统一收归行情页 I 区用户 Cell 下拉菜单。
  */
+import NotificationBell from '@/components/layout/NotificationBell.vue'
 import { useThemeStore } from '@/stores/theme'
 
 const theme = useThemeStore()
@@ -21,6 +22,8 @@ const theme = useThemeStore()
     </nav>
 
     <div class="appbar__right">
+      <!-- G16：通知铃铛（仅新增此区块，不改现有布局结构） -->
+      <NotificationBell />
       <button
         class="icon-btn"
         :title="theme.mode === 'dark' ? '切换到明亮模式' : '切换到暗黑模式'"

@@ -1331,9 +1331,159 @@ curl -X DELETE "http://127.0.0.1:8000/api/v1/memory/facts" -H "Authorization: Be
 {"code":0,"msg":"已清空","data":{"deleted":5}}
 ```
 
+# 通知中心 API（Notifications）
+
+## 1. 通知列表
+
+- **接口名称**：通知列表
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/notifications
+- **接口作用**：当前用户通知列表（**未读优先**，其次时间倒序），返回总数与未读数；铃铛下拉面板数据源。
+- **请求 Body**：无（Query：limit=50、offset=0；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/notifications?limit=50" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"items":[{"id":12,"type":"backtest_complete","title":"回测完成：贵州茅台","content":"胜率 50.0%，总收益 +10.00%。点击查看完整结果。","is_read":false,"created_at":"2026-09-17T08:00:00Z","read_at":null}],"total":1,"unread":1}}
+```
+
+## 2. 未读数
+
+- **接口名称**：未读通知数
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/notifications/unread-count
+- **接口作用**：未读通知数（铃铛红点/计数）。
+- **请求 Body**：无（Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/notifications/unread-count" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"unread":3}}
+```
+
+## 3. 单条标记已读
+
+- **接口名称**：标记通知已读
+- **请求 Method**：PATCH
+- **请求 Path**：/api/v1/notifications/{id}/read
+- **接口作用**：单条标记已读（仅本人通知，越权返回 404/40410）。
+- **请求 Body**：无（Path：id；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -X PATCH "http://127.0.0.1:8000/api/v1/notifications/12/read" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"id":12,"type":"backtest_complete","title":"回测完成：贵州茅台","is_read":true,"read_at":"2026-09-17T08:05:00Z"}}
+```
+
+## 4. 全部标记已读
+
+- **接口名称**：全部标记已读
+- **请求 Method**：PATCH
+- **请求 Path**：/api/v1/notifications/read-all
+- **接口作用**：当前用户全部未读通知置已读，返回受影响条数。
+- **请求 Body**：无（Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -X PATCH "http://127.0.0.1:8000/api/v1/notifications/read-all" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"updated":3}}
+```
+
+> **WS 推送**：服务端在回测完成/失败、深度分析完成、管理员发布公告时推送
+> `{"type":"notification","data":{"id":0,"type":"system","title":"系统公告：xxx","content":"...","is_read":false,"created_at":"..."}}`。
+> 前端收到后未读数 +1，打开面板时拉取列表。
+
+# 系统公告 API（Announcements）
+
+## 1. 活跃公告
+
+- **接口名称**：当前活跃公告
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/announcements/active
+- **接口作用**：`is_active=true` 且未过期的公告（按创建倒序），前端顶部 banner 数据源。**公开免鉴权**。
+- **请求 Body**：无（Query：limit=10）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/announcements/active"
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":[{"id":1,"title":"系统维护通知","content":"今晚 22:00 例行维护","type":"maintenance","is_active":true,"created_at":"2026-09-17T08:00:00Z","expires_at":null}]}
+```
+
+## 2. 公告历史
+
+- **接口名称**：公告历史列表
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/announcements
+- **接口作用**：全部公告（含历史/已停用），I 区「系统公告」入口查看。
+- **请求 Body**：无（Query：limit=50、offset=0；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/announcements" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":[{"id":1,"title":"系统维护通知","content":"...","type":"maintenance","is_active":false,"created_at":"...","expires_at":null}]}
+```
+
 # 管理员 API（Admin）
 
-## 1. Provider 健康检查
+## 1. 发布系统公告
+
+- **接口名称**：发布系统公告
+- **请求 Method**：POST
+- **请求 Path**：/api/v1/admin/announcements
+- **接口作用**：管理员发布公告（**is_admin 鉴权**）；可选向全部用户分发站内通知 + WS 全局广播。管理员由 `ADMIN_USERNAMES` 环境变量配置，正常注册后自动获得 is_admin。
+- **请求 Body**：有（Body-JSON：title、content、type=info|warning|maintenance、expires_at?、notify_users=true；Header：Authorization: Bearer <token>，需 is_admin）
+
+**请求示例（curl）**
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/admin/announcements" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"title":"系统维护通知","content":"今晚 22:00 例行维护","type":"maintenance","notify_users":true}'
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"announcement":{"id":1,"title":"系统维护通知","content":"今晚 22:00 例行维护","type":"maintenance","is_active":true,"created_at":"2026-09-17T08:00:00Z","expires_at":null},"notified_users":13}}
+```
+
+（非管理员返回 `{"code":40300,"msg":"需要管理员权限"}`；type 非法返回 422）
+
+## 2. Provider 健康检查
 
 - **接口名称**：行情 Provider 健康状态
 - **请求 Method**：GET

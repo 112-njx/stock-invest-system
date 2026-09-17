@@ -36,3 +36,32 @@ export interface SessionInfo {
   expires_at: string
   is_current: boolean
 }
+
+/** G16：站内通知 */
+export interface NotificationItem {
+  id: number
+  type: string
+  title: string
+  content?: string | null
+  is_read: boolean
+  created_at: string
+  read_at?: string | null
+}
+
+/** G16：通知列表响应（含总数与未读数） */
+export interface NotificationList {
+  items: NotificationItem[]
+  total: number
+  unread: number
+}
+
+/** G16：系统公告 */
+export interface Announcement {
+  id: number
+  title: string
+  content: string
+  type: string
+  is_active: boolean
+  created_at: string
+  expires_at?: string | null
+}

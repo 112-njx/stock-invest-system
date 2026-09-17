@@ -182,3 +182,7 @@ Agent的前端编码记录,你需要按照：
 
 编码时间：2026-09-17
 编码内容（描述）：V0.3 泳道A G30 前端——DOMPurify 消毒 + 表单限长。utils/markdown.ts 引入 DOMPurify（v3），renderMarkdown 输出经 sanitizeHtml() 消毒（FORBID_TAGS: script/iframe/object/embed/form/input/textarea/button/style/link/base/meta；FORBID_ATTR: style；ADD_ATTR: target 保住外链新标签页）。新增 scripts/verify-xss.mjs + npm run verify:xss：esbuild 打包真实 markdown.ts → jsdom 渲染 22 个 XSS payload → DOM 解析断言无可执行元素/on* 事件/javascript: 协议，并校验正常内容不被误伤。表单补 maxlength 与后端一致：agent 名称64/system_prompt8000、昵称64、聊天输入20000、策略代码20000。v-html 排查：10 处中 7 处为静态 SVG 常量，3 处渲染 LLM 内容均经 renderMarkdown→消毒管线。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 G16（前端）——通知中心 + 系统公告。新增 api/notifications.ts（列表/未读数/单条已读/全部已读/活跃公告/公告历史 6 函数）、stores/notification.ts（unread + items + announcements；init 绑定 WS notification 消息实时递增未读、拉未读数与活跃公告；markRead/markAllRead 乐观更新；dismissAnnouncement 按 id 记 localStorage）、components/layout/NotificationBell.vue（铃铛 + 未读红点计数 99+ + 下拉面板，未读优先列表、类型标签、相对时间、全部已读、点击标记已读；scoped 样式自带 icon-btn 以免依赖 AppBar 样式穿透）、components/layout/AnnouncementBanner.vue（活跃公告 banner，info/warning/maintenance 三色，可关闭且关闭状态持久化）。AppBar.vue 仅新增 <NotificationBell/> 区块（不改现有布局结构，与 G35 头像弹窗并存）；App.vue 挂载 AnnouncementBanner + 登录态 watch 初始化/清理通知 store。utils/wsClient.ts 扩展 WsMessage 联合类型新增 WsNotificationMessage（增量，不改既有分发逻辑）。SettingsPanel.vue 在「账号安全」区块内追加「系统公告」入口 + 历史公告弹窗（G33 改密/改邮箱、G18 删除账户、G19 设备管理并存）。验收：vue-tsc + eslint + build 全通过。

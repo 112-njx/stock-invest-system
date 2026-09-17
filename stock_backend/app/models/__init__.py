@@ -4,6 +4,7 @@ from .agent import AgentRun, AgentStep, MemoryChunk, UserAgent
 from .base import Base
 from .email_log import EmailLog
 from .kline import KLINE_MODELS, Kline1d, Kline1mon, Kline1w, Kline15m
+from .notification import AdminAnnouncement, Notification
 from .ops import SyncTask, TaskLog
 from .session import UserSession
 from .snapshot import EtfPremium, IndexValuation, SnapshotRealtime, StockFundamental
@@ -12,6 +13,7 @@ from .symbol import Symbol
 from .user import SupportResistance, User, UserMemoryFile, UserWatchlist
 
 __all__ = [
+    "AdminAnnouncement",
     "AgentRun",
     "AgentStep",
     "BacktestResult",
@@ -28,6 +30,7 @@ __all__ = [
     "Kline1mon",
     "Kline1w",
     "MemoryChunk",
+    "Notification",
     "SnapshotRealtime",
     "StockFundamental",
     "StrategyTemplate",
