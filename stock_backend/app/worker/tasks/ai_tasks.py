@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 @celery_app.task(bind=True, name="app.worker.tasks.ai_tasks.memory_cleanup")
 def memory_cleanup(self) -> int:
-    """每日凌晨清理：删除重要性 < 3 且创建超过 30 天的记忆（PG + ChromaDB）。"""
+    """每日凌晨清理：删除重要性 < 3 且创建超过 30 天的记忆（memory_chunks）。"""
     db = get_session()
     try:
         deleted = memory_service.cleanup_expired_memories(db, importance_below=3, days=30)

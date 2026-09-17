@@ -1,9 +1,12 @@
-"""阶段六 6.1：ChromaDB collection 重建脚本（HashEmbedding → MiniLM 重新向量化）。
+"""阶段六 6.1（G21 改写）：按当前 embedding 模型重新向量化 memory_chunks。
 
-HashEmbedding 的向量与 MiniLM 不兼容，切换 EMBEDDING_MODEL=minilm 后需重建。
-记忆原文在 memory_chunks 表保留，可重新向量化（不需重新抽取）。
+HashEmbedding 与 MiniLM 的向量空间不兼容，切换 EMBEDDING_MODEL 后需重建。
+记忆原文在 memory_chunks.content 保留，可原地重新向量化（不需重新抽取）。
 
-用法（确保 .env 已设 EMBEDDING_MODEL=minilm）：
+G21 后向量与原文同表（memory_chunks.embedding / embedding_kind），故重建即「按当前模型重算两列」，
+不再需要删除/重建 collection。
+
+用法（确保 .env 已设目标 EMBEDDING_MODEL）：
     .venv/Scripts/python.exe scripts/rebuild_embeddings.py
 """
 
@@ -24,31 +27,25 @@ logger = logging.getLogger("rebuild_embeddings")
 
 def main() -> int:
     settings = get_settings()
-    emb = get_embedding()
-    if emb.kind != "minilm":
-        logger.warning("当前 EMBEDDING_MODEL=%s（非 minilm），无需重建，跳过。", settings.EMBEDDING_MODEL)
-        return 0
+    kind = get_embedding().kind
+    logger.info("当前 EMBEDDING_MODEL=%s（kind=%s）", settings.EMBEDDING_MODEL, kind)
 
     db = get_session()
     try:
         chunks = list(db.scalars(select(MemoryChunk).order_by(MemoryChunk.user_id, MemoryChunk.id)))
+        total = len(chunks)
+        logger.info("共 %d 条记忆待重新向量化", total)
+        by_user: dict[int, int] = {}
+        for c in chunks:
+            c.embedding = store.embed_text(c.content).tolist()
+            c.embedding_kind = kind
+            by_user[c.user_id] = by_user.get(c.user_id, 0) + 1
+        db.commit()
+        for user_id, n in by_user.items():
+            logger.info("用户 %d：重建 %d 条", user_id, n)
     finally:
         db.close()
-
-    by_user: dict[int, list[MemoryChunk]] = {}
-    for c in chunks:
-        by_user.setdefault(c.user_id, []).append(c)
-
-    logger.info("共 %d 个用户、%d 条记忆待重建", len(by_user), len(chunks))
-    for user_id, rows in by_user.items():
-        store.delete_collection(user_id)  # 删除旧 minilm collection（如存在）
-        for c in rows:
-            meta = {"source_type": c.source_type, "source_id": c.source_id, "file_path": c.file_path}
-            if getattr(c, "importance", None) is not None:
-                meta["importance"] = c.importance
-            store.add_chunk(user_id, c.vector_id, c.content, meta)
-        logger.info("用户 %d：重建 %d 条", user_id, len(rows))
-    logger.info("重建完成")
+    logger.info("重建完成：%d 条", total)
     return 0
 
 

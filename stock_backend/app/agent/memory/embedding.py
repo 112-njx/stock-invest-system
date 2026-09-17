@@ -3,6 +3,8 @@
 - MiniLM 默认加载 `paraphrase-multilingual-MiniLM-L12-v2`（384 维、多语言含中文）int8 量化 ONNX，
   首次使用自动下载到本地 models 目录（urllib 直连 HF，兼容 Windows 证书库），本地 CPU 推理无需外部 API。
 - `get_embedding()` 按配置选择模型，MiniLM 加载失败自动回退 HashEmbedding（保持记忆本地存储可用）。
+- G21（P1-12b）：去除 chromadb 依赖，EmbeddingFunction 改为项目自有可调用协议
+  （`__call__(list[str]) -> list[list[float]]`）；G31 后 Chroma 已整体下线。
 """
 
 import hashlib
@@ -14,15 +16,37 @@ import urllib.request
 from pathlib import Path
 
 import numpy as np
-from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# ---- 项目自有 embedding 协议 ----
+Documents = list[str]
+Embeddings = list[list[float]]
 
-class HashEmbedding(EmbeddingFunction[Documents]):
+
+class EmbeddingFunction:
+    """embedding 可调用协议：`__call__(list[str]) -> list[list[float]]`，向量 L2 归一。
+
+    仅作协议声明（鸭子类型），子类覆盖 `kind` / `__call__`；`name()` / `get_config()` 保留
+    用于 embedding 标识与配置快照。
+    """
+
+    kind: str = ""
+
+    def __call__(self, input: Documents) -> Embeddings:  # pragma: no cover - 协议声明
+        raise NotImplementedError
+
+    def name(self) -> str:  # pragma: no cover - 协议声明
+        raise NotImplementedError
+
+    def get_config(self) -> dict:  # pragma: no cover - 协议声明
+        raise NotImplementedError
+
+
+class HashEmbedding(EmbeddingFunction):
     """离线确定性 embedding：字符 n-gram 哈希到固定维度，无需下载模型（回退选项）。"""
 
     kind = "hash"
@@ -55,7 +79,7 @@ class HashEmbedding(EmbeddingFunction[Documents]):
         return [self._embed(t) for t in input]
 
 
-class MiniLMEmbedding(EmbeddingFunction[Documents]):
+class MiniLMEmbedding(EmbeddingFunction):
     """ONNX MiniLM 语义向量（int8/fp32 量化，本地 CPU 推理，mean pooling + L2 归一）。"""
 
     kind = "minilm"

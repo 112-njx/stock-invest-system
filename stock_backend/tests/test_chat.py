@@ -421,7 +421,7 @@ def test_stream_chat_emits_memory_saved(client: TestClient, monkeypatch):
         return facts
 
     monkeypatch.setattr(ms, "aextract_facts", _fake_extract)
-    monkeypatch.setattr(ms, "save_memory", lambda *a, **k: 1)  # 隔离真实 chroma/文件写入
+    monkeypatch.setattr(ms, "save_memory", lambda *a, **k: 1)  # 隔离真实向量/文件写入
 
     uname = _uname()
     try:

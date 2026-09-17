@@ -1,167 +1,224 @@
-"""本地记忆存储：ChromaDB 持久化（可插拔 embedding：MiniLM 语义 / hash 回退）+ 人类可读记忆文件。
+"""本地记忆存储：memory_chunks（PostgreSQL + pgvector）向量读写与检索 + 人类可读记忆文件。
 
-借鉴 TradingAgents-CN 记忆分层：长期记忆走本地向量库；文件保持人类可读（M 区「记忆文件」可打开）。
-Embedding 由 `embedding.get_embedding()` 按配置选择（阶段六 6.1），collection 名按 embedding 类型隔离，
-避免 hash 与 MiniLM 向量混用导致检索失真。
+G21（P1-12b）：由 ChromaDB PersistentClient 迁移到 SQLAlchemy + pgvector，检索全链路下推 SQL。
+- 向量列 `memory_chunks.embedding`（vector(384)）+ `embedding_kind`（hash/minilm）行级过滤，
+  取代原 per-user collection（`user_memory_{user_id}[_minilm]`）。
+- **召回口径锁定（G31 验收基准，勿改）**：`similarity = 1 - 余弦距离`，
+  `score = similarity × 0.7 + (importance / 10) × 0.3`，去重阈值 `similarity > 0.85`。
+  旧实现 Chroma 默认 `hnsw:space=l2` 返回平方 L2 距离，向量已 L2 归一（L2² = 2 - 2cos），
+  旧式 `1 - distance/2` 化简即 `cos`，与新式 `1 - 余弦距离` 数学等价 —— G31 TopK 对比依赖此等价性。
+- G31 已完成存量回填与 TopK 召回对比验证（4/4 一致），Chroma 依赖、`data/chroma/` 目录与
+  `CHROMA_DIR` / `MEMORY_DUAL_WRITE` 配置均已下线，PG 为向量存储唯一真源。
+- 人类可读记忆文件（M 区「记忆文件」可打开）保持原样，不随向量存储迁移改变。
 """
 
-# 惰性求值类型注解：chromadb.PersistentClient 在 1.5.x 为工厂函数（function），
-# Python 3.10-3.13 急切求值 `PersistentClient | None` 会报 TypeError，故统一惰性化（兼容 3.10-3.14）。
 from __future__ import annotations
 
 import logging
 import re
 from pathlib import Path
 
-import chromadb
 import numpy as np
+from sqlalchemy import Float, cast, func, select
+from sqlalchemy.orm import Session
 
 from app.agent.memory.embedding import get_embedding
 from app.core.config import get_settings
+from app.models.agent import MemoryChunk
+from app.repositories import agent_repo
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-
-_client_instance: chromadb.PersistentClient | None = None
-_client_path: str | None = None
-
-
-def _client() -> chromadb.PersistentClient:
-    """进程内按路径缓存的 PersistentClient：同一 client 上写入即时落盘（新建连接会丢未刷盘数据）。"""
-    global _client_instance, _client_path
-    if _client_instance is None or _client_path != settings.CHROMA_DIR:
-        _client_instance = chromadb.PersistentClient(path=settings.CHROMA_DIR)
-        _client_path = settings.CHROMA_DIR
-    return _client_instance
+# 检索加权系数（与旧实现一致，G31 对比基准）
+SIMILARITY_WEIGHT = 0.7
+IMPORTANCE_WEIGHT = 0.3
+# 去重合并阈值（余弦相似度）
+DEDUP_THRESHOLD = 0.85
 
 
-def _collection_name(user_id: int) -> str:
-    """collection 名按 embedding 类型隔离：hash 保持 `user_memory_{id}`（兼容旧数据），minilm 加后缀。"""
-    kind = get_embedding().kind
-    suffix = "" if kind == "hash" else f"_{kind}"
-    return f"user_memory_{user_id}{suffix}"
+def embedding_kind() -> str:
+    """当前 embedding 类型（hash / minilm），作为 embedding_kind 列取值与行级过滤条件。"""
+    return get_embedding().kind
 
 
-def collection(user_id: int):
-    """按用户取 collection（重开须传同一 embedding 函数）。"""
-    return _client().get_or_create_collection(_collection_name(user_id), embedding_function=get_embedding())
-
-
-# ---- 向量写入/检索 ----
-def add_chunk(user_id: int, chunk_id: str, content: str, meta: dict) -> None:
-    # ChromaDB 元数据不支持 None 值，过滤后写入
-    safe_meta = {k: v for k, v in (meta or {}).items() if v is not None}
-    try:
-        collection(user_id).add(ids=[chunk_id], documents=[content], metadatas=[safe_meta])
-    except Exception:  # noqa: BLE001
-        logger.warning("chroma add failed user=%s id=%s", user_id, chunk_id)
-
-
-def update_chunk(user_id: int, chunk_id: str, content: str, meta: dict) -> None:
-    """更新已有 chunk（内容变更触发重新向量化），供记忆去重合并使用。"""
-    safe_meta = {k: v for k, v in (meta or {}).items() if v is not None}
-    try:
-        collection(user_id).update(ids=[chunk_id], documents=[content], metadatas=[safe_meta])
-    except Exception:  # noqa: BLE001
-        logger.warning("chroma update failed user=%s id=%s", user_id, chunk_id)
-
-
-def delete_chunk(user_id: int, chunk_id: str) -> None:
-    try:
-        collection(user_id).delete(ids=[chunk_id])
-    except Exception:  # noqa: BLE001
-        logger.warning("chroma delete failed user=%s id=%s", user_id, chunk_id)
-
-
-def delete_collection(user_id: int) -> None:
-    """清空用户记忆时删除整个 collection（重建 collection）。"""
-    name = _collection_name(user_id)
-    try:
-        _client().delete_collection(name)
-    except Exception:  # noqa: BLE001
-        logger.warning("chroma delete collection failed user=%s", user_id)
-
-
-def _weighted_score(distance: float, importance: int) -> float:
-    """检索加权（阶段六 6.2）：相似度×0.7 + 重要性×0.3。"""
-    similarity = max(0.0, 1.0 - distance / 2.0)  # 距离（余弦/L2 归一向量均 ≤2）→ 相似度 [0,1]
-    return similarity * 0.7 + (importance / 10.0) * 0.3
-
-
-def _to_list(x) -> list:
-    """ChromaDB 返回可能是 list / numpy array，统一转 Python list。"""
-    if x is None:
-        return []
-    if isinstance(x, np.ndarray):
-        return x.tolist()
-    if isinstance(x, list):
-        return x
-    return [x]
-
-
+# ---- 向量计算 ----
 def embed_text(text: str) -> np.ndarray:
-    """单条文本向量化（归一向量，用于去重余弦相似度）。"""
+    """单条文本向量化（归一向量，用于余弦相似度检索/去重）。"""
     return np.asarray(get_embedding()([text])[0], dtype=np.float32)
 
 
-def find_duplicate(user_id: int, content: str, threshold: float = 0.85) -> dict | None:
-    """查找与 content 余弦相似度 > threshold 的已有记忆（阶段六 6.3 去重合并）。"""
+def _usable(vec: np.ndarray) -> bool:
+    """零向量无法定义余弦相似度（pgvector 返回 NaN），直接判为不可用。"""
+    return bool(np.any(vec))
+
+
+# ---- 向量写入/检索（memory_chunks 行级增删改）----
+def add_chunk(db: Session, user_id: int, chunk_id: str, content: str, meta: dict) -> MemoryChunk:
+    """写入一条记忆切片：content + embedding + embedding_kind 一次落库（G31 回填的对照基准）。"""
+    meta = meta or {}
     vec = embed_text(content)
-    try:
-        r = collection(user_id).get(include=["embeddings", "documents", "metadatas"])
-    except Exception:  # noqa: BLE001
-        logger.warning("chroma get failed user=%s", user_id)
-        return None
-    ids = _to_list(r.get("ids"))
-    embs = _to_list(r.get("embeddings"))
-    docs = _to_list(r.get("documents"))
-    metas = _to_list(r.get("metadatas"))
-    best: dict | None = None
-    best_sim = 0.0
-    for cid, e, doc, meta in zip(ids, embs, docs, metas, strict=False):
-        if e is None or not doc:
-            continue
-        sim = float(np.dot(vec, np.asarray(e)))  # 向量已归一，点积即余弦相似度
-        if sim > best_sim:
-            best_sim = sim
-            best = {"chunk_id": cid, "content": doc, "meta": meta or {}}
-    if best is not None and best_sim > threshold:
-        best["similarity"] = best_sim
-        return best
-    return None
+    row = agent_repo.add_memory_chunk(
+        db,
+        user_id,
+        str(meta.get("source_type") or ""),
+        meta.get("source_id"),
+        content,
+        chunk_id,
+        meta.get("file_path"),
+        importance=int(meta.get("importance", 5)),
+    )
+    row.embedding = vec.tolist()
+    row.embedding_kind = embedding_kind()
+    db.flush()
+    return row
 
 
-def search(user_id: int, query: str, top_k: int | None = None) -> list[dict]:
-    """加权检索 TopK：先取候选再按 相似度×0.7 + 重要性×0.3 重排，返回含 importance/score。"""
+def update_chunk(db: Session, user_id: int, chunk_id: str, content: str, meta: dict) -> bool:
+    """更新已有切片（内容变更触发重新向量化），供记忆去重合并使用。"""
+    meta = meta or {}
+    row = agent_repo.get_memory_chunk_by_vector(db, user_id, chunk_id)
+    if row is None:
+        logger.warning("update_chunk miss user=%s id=%s", user_id, chunk_id)
+        return False
+    row.content = content
+    if meta.get("importance") is not None:
+        row.importance = int(meta["importance"])
+    row.embedding = embed_text(content).tolist()
+    row.embedding_kind = embedding_kind()
+    db.flush()
+    return True
+
+
+def delete_chunk(db: Session, user_id: int, chunk_id: str) -> bool:
+    """按 vector_id 删除切片。"""
+    row = agent_repo.get_memory_chunk_by_vector(db, user_id, chunk_id)
+    if row is None:
+        return False
+    db.delete(row)
+    db.flush()
+    return True
+
+
+def delete_chunk_by_id(db: Session, user_id: int, fact_id: int) -> bool:
+    """按主键删除切片（记忆管理 API / 过期清理用）。"""
+    row = agent_repo.get_memory_chunk_by_id(db, user_id, fact_id)
+    if row is None:
+        return False
+    db.delete(row)
+    db.flush()
+    return True
+
+
+def delete_collection(db: Session, user_id: int) -> int:
+    """清空用户全部记忆切片（等价于旧实现删除 per-user collection）。"""
+    deleted = agent_repo.delete_all_memory_chunks(db, user_id)
+    db.flush()
+    return deleted
+
+
+# ---- 检索 ----
+def _weighted_score(distance: float, importance: int) -> float:
+    """检索加权：相似度×0.7 + 重要性×0.3。
+
+    `distance` 为**余弦距离**（pgvector `<=>`，即 1 - 余弦相似度），故 `similarity = 1 - distance`。
+    与旧实现（Chroma 平方 L2 距离，`1 - distance/2`）在归一向量下数学等价 —— G31 对比基准。
+    """
+    similarity = max(0.0, 1.0 - distance)
+    return similarity * SIMILARITY_WEIGHT + (importance / 10.0) * IMPORTANCE_WEIGHT
+
+
+def _candidate_limit(k: int) -> int:
+    """多取候选供加权重排（与旧实现一致：max(k, min(3k, 30))）。"""
+    return max(k, min(k * 3, 30))
+
+
+def search(db: Session, user_id: int, query: str, top_k: int | None = None) -> list[dict]:
+    """加权检索 TopK：先按余弦距离取候选，再按 相似度×0.7 + 重要性×0.3 重排，返回含 importance/score。
+
+    两段式（候选按距离取 → 外层按 score 排序）与旧 Chroma 实现逐步对应，保证召回口径一致。
+    `user_id` + `embedding_kind` 行级过滤替代 per-user collection，实现多租户隔离与向量空间隔离。
+    """
     k = top_k or settings.MEMORY_TOP_K
-    fetch = max(k, min(k * 3, 30))  # 多取候选供重排
-    try:
-        r = collection(user_id).query(query_texts=[query], n_results=fetch)
-    except Exception:  # noqa: BLE001
-        logger.warning("chroma query failed user=%s", user_id)
+    fetch = _candidate_limit(k)
+    qvec = embed_text(query)
+    if not _usable(qvec):
         return []
+
+    dist = MemoryChunk.embedding.cosine_distance(qvec.tolist())
+    similarity = func.greatest(0.0, 1.0 - dist)
+    score = similarity * SIMILARITY_WEIGHT + (cast(MemoryChunk.importance, Float) / 10.0) * IMPORTANCE_WEIGHT
+
+    candidates = (
+        select(MemoryChunk.id.label("id"), dist.label("distance"), score.label("score"))
+        .where(
+            MemoryChunk.user_id == user_id,
+            MemoryChunk.embedding.is_not(None),
+            MemoryChunk.embedding_kind == embedding_kind(),
+        )
+        .order_by(dist)
+        .limit(fetch)
+        .subquery()
+    )
+    stmt = (
+        select(MemoryChunk, candidates.c.distance, candidates.c.score)
+        .join(candidates, MemoryChunk.id == candidates.c.id)
+        .order_by(candidates.c.score.desc())
+        .limit(k)
+    )
     hits: list[dict] = []
-    ids = (r.get("ids") or [[]])[0]
-    dists = (r.get("distances") or [[]])[0]
-    metas = (r.get("metadatas") or [[]])[0]
-    docs = (r.get("documents") or [[]])[0]
-    for cid, dist, meta, doc in zip(ids, dists, metas, docs, strict=False):
-        importance = int((meta or {}).get("importance", 5))
+    for chunk, distance, score_value in db.execute(stmt).all():
         hits.append(
             {
-                "chunk_id": cid,
-                "content": doc,
-                "distance": float(dist),
-                "importance": importance,
-                "score": _weighted_score(float(dist), importance),
-                "source_type": (meta or {}).get("source_type", ""),
-                "source_id": (meta or {}).get("source_id"),
-                "file_path": (meta or {}).get("file_path", ""),
+                "chunk_id": chunk.vector_id,
+                "content": chunk.content,
+                "distance": float(distance),
+                "importance": int(chunk.importance),
+                "score": float(score_value),
+                "source_type": chunk.source_type or "",
+                "source_id": chunk.source_id,
+                "file_path": chunk.file_path or "",
             }
         )
-    hits.sort(key=lambda h: h["score"], reverse=True)
-    return hits[:k]
+    return hits
+
+
+def find_duplicate(db: Session, user_id: int, content: str, threshold: float = DEDUP_THRESHOLD) -> dict | None:
+    """查找与 content 余弦相似度 > threshold 的已有记忆（阶段六 6.3 去重合并）。
+
+    取相似度最高的一条，超阈值才返回；`embedding_kind` 隔离避免 hash/minilm 向量混算。
+    """
+    qvec = embed_text(content)
+    if not _usable(qvec):
+        return None
+    similarity = 1.0 - MemoryChunk.embedding.cosine_distance(qvec.tolist())
+    stmt = (
+        select(MemoryChunk, similarity.label("similarity"))
+        .where(
+            MemoryChunk.user_id == user_id,
+            MemoryChunk.embedding.is_not(None),
+            MemoryChunk.embedding_kind == embedding_kind(),
+        )
+        .order_by(similarity.desc())
+        .limit(1)
+    )
+    row = db.execute(stmt).first()
+    if row is None:
+        return None
+    chunk, sim = row
+    if sim is None or float(sim) <= threshold:
+        return None
+    return {
+        "chunk_id": chunk.vector_id,
+        "content": chunk.content,
+        "meta": {
+            "source_type": chunk.source_type,
+            "source_id": chunk.source_id,
+            "file_path": chunk.file_path,
+            "importance": chunk.importance,
+        },
+        "similarity": float(sim),
+    }
 
 
 # ---- 人类可读记忆文件 ----

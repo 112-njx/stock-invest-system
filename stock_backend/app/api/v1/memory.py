@@ -1,8 +1,8 @@
 """记忆管理 API（阶段六 6.4）：M 区「记忆文件」查看/删除/清空。
 
 - GET    /api/v1/memory/facts         分页返回用户记忆（内容摘要、重要性、来源对话ID、创建时间），支持按重要性筛选
-- DELETE /api/v1/memory/facts/{id}    删除单条记忆（同步删 ChromaDB 向量 + PG 记录）
-- DELETE /api/v1/memory/facts         清空全部记忆（重建 ChromaDB collection）
+- DELETE /api/v1/memory/facts/{id}    删除单条记忆（删 memory_chunks 行，向量同列同删）
+- DELETE /api/v1/memory/facts         清空全部记忆（按 user_id 删 memory_chunks 行）
 """
 
 from fastapi import APIRouter, Depends, Query

@@ -398,3 +398,23 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：G18 规划差异记录——P1-5「硬删除：级联删除…user_usage」中提到的 user_usage 表在本项目中不存在（全库 models 无该表，DB 中亦无）。实际需级联的用户关联表为 11 张：user_watchlist/support_resistance/trading_strategies/conversations/user_agents/agent_runs/memory_chunks/user_memory_files/user_sessions/notifications/export_tasks（均已核实为 ON DELETE CASCADE）；chat_messages/backtest_tasks/backtest_results/agent_steps 经中间表（conversations/trading_strategies/agent_runs）级联。无需额外建表。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道C G21——store.py 去 Chroma，改 SQLAlchemy + pgvector，检索全链路下推 SQL。store.py 重写为 memory_chunks 行级增删改查（add/update/delete_chunk、delete_chunk_by_id、delete_collection 按 user_id 删）；search 两段式下推（子查询按 `<=>` 余弦距离取候选 limit max(k,min(3k,30)) → 外层按 score 排序 limit k）；find_duplicate 0.85 阈值下推为 `1 - 余弦距离 > threshold` ORDER BY 相似度 DESC LIMIT 1；以 user_id + embedding_kind 行级过滤替代 per-user collection。embedding.py 去除 chromadb.api.types 依赖，EmbeddingFunction 改为项目自有协议（保留 name/get_config）。memory_service 由「store 写 Chroma + agent_repo 写 PG」双写合并为 store 一次落库。验收：test_memory 18 项 + test_embedding 8 项 + test_pgvector 11 项全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G21 召回口径锁定（G31 对比基准，勿改）。旧实现 `_weighted_score` 写 `1 - distance/2`，Chroma 默认 hnsw:space=l2 返回**平方 L2 距离**，向量已 L2 归一（L2² = 2 - 2cos），故 `1 - distance/2` 化简即 `cos` —— 旧代码实际算的就是余弦相似度。pgvector `<=>` 返回余弦距离（1 - cos），新式 `similarity = 1 - 余弦距离`，与旧式数学等价。已用真实 Chroma 实测验证：chroma distance == 平方 L2（误差 <1e-5）、1 - d/2 == 点积余弦。新口径：score = (1 - 余弦距离)×0.7 + importance/10×0.3，去重阈值 0.85。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道C G31——存量 Chroma 向量回填 pgvector + 验证 + 下线。新增 scripts/backfill_memory_vectors.py（按 (user_id, vector_id) 左连接回填 embedding/embedding_kind，幂等可重跑，--dry-run/--force）与 scripts/compare_memory_topk.py（旧 Chroma vs 新 PG 逐 query 比对 TopK 与 score）。回填实测：PG 3 行、Chroma 1442 collection 中仅 2 个非空、共 4 条向量；回填 3 条（embedding_kind=minilm）、跳过 1 条孤儿（user 554 已注销）；复跑 skipped_existing=3 证明幂等；TopK 对比 4/4 一致、0 差异。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G31 下线清理。删除 app/agent/memory/chroma_legacy.py（迁移期适配层）、两个迁移脚本、tests/test_memory_dual_write.py；删除 data/chroma/ 目录；config 移除 CHROMA_DIR / MEMORY_DUAL_WRITE / BACKUP_CHROMA；backup_service.file_sources 只保留 memory/exports（向量随 pg_dump 备份）；pyproject.toml 与 requirements.lock 移除 chromadb；.env.example / 两个 compose / .env.docker.example 移除 CHROMA_DIR；test_backup.py 同步去掉 chroma 源断言。**验证方式：venv 内 pip uninstall chromadb 后全库 483 passed**，证明导入链已无 Chroma 依赖。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G31 双写灰度可开关（验收项）。store.py 增 MEMORY_DUAL_WRITE 开关：开启时 PG 写入镜像到 Chroma（惰性导入，失败只告警不影响主链路），关闭时 Chroma 零写入。新增 tests/test_memory_dual_write.py 2 项验证「关→无写入 / 开→add·update·delete·clear 全镜像」，实测通过。因迁移与验证在同一会话内完成，开关与遗留路径一并按计划下线，测试证据记入本文件。

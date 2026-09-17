@@ -323,3 +323,9 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 时间：2026-09-17
 修复bug内容（描述）：G19 refresh token 复用检测失效（安全缺陷）。根因：services/session_service.py 的 validate_refresh_token 检查顺序错误——revoked_at 判断排在 Redis 黑名单判断之前。refresh 轮换时旧 session 会被同时 revoke_session（写 revoked_at）+ blacklist_refresh_token（写 Redis），于是被盗用的旧 token 再次请求时先命中"已吊销"分支短路返回，永远走不到 error=="已轮换" 分支，revoke_all_user_sessions 从不执行——即同一 refresh token 被用两次本应触发"吊销该用户全部会话"，实际只返回 401 而不踢出任何设备。修复：把 is_refresh_token_blacklisted 提到 find_session 之后第一位（Redis 黑名单是"已轮换"的唯一信号），revoked_at 降为第二位。实测：修复前复用后 active=2（未踢出），修复后 active=0（全设备踢出）；tests/test_g19_dual_token.py::test_refresh_reuse_detection 转绿。
 需要我手动配置（如果有的话）：无。
+
+---
+
+时间：2026-09-17
+修复bug内容（描述）：G31 迁移前后差异记录（Chroma 存量 4 条 vs memory_chunks 3 行）。按 project_constraints 约束 4 已停机报告，经确认采用方案 A（以 PG 为准，孤儿跳过）。**差异明细**：Chroma `user_memory_643_minilm` 3 条 vs PG 3 行——vector_id 逐一完全一致（u643_backtest_84bb70aa27b4 / u643_backtest_2442e926e5fa / u643_rule_e0ab5ff048ad），无差异；Chroma `user_memory_554` 1 条（u554_backtest_b93db8f574d1）在 PG 中无对应行，为**孤儿向量**。**根因**（已实证，非推测）：`SELECT id,username FROM users WHERE id IN (554,643)` 仅 643(root) 存在，554 已注销；其 memory_chunks 行随外键 CASCADE 删除，而 Chroma 无外键约束、旧 delete_chunk 失败仅记 warning，故 collection 残留。同一原因遗留 data/memory/554/experience.md 孤儿文件（信息未丢失，故删除 data/chroma/ 无数据损失）。**TopK 召回对比**：4 条 query（3 条存量原文 + 1 条主题词）逐条比对旧 Chroma 与新 pgvector，TopK 序列与 score **4/4 完全一致、0 差异**；user_memory_554 因 kind=hash 与当前配置 minilm 不一致被跳过（本就不可比）。结论：迁移无召回损失。
+需要我手动配置（如果有的话）：无。
