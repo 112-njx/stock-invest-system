@@ -15,9 +15,11 @@ export default defineConfig({
     allowedHosts: ['2d83faea.r27.cpolar.top'],
     proxy: {
       // 开发环境代理到后端 FastAPI，生产由 Nginx 反向代理
+      // G29：ws=true 让 WS 也走本代理，保证与页面同源 → Cookie 正常携带
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        ws: true,
       },
     },
   },

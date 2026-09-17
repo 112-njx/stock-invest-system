@@ -15,15 +15,16 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectionState:
-    """单条连接状态：用户、订阅集合、最近活动时间（心跳判活）。"""
+    """单条连接状态：用户、订阅集合、最近活动时间（心跳判活）、access token jti（黑名单复查）。"""
 
-    __slots__ = ("user_id", "ws", "subscribed", "last_activity")
+    __slots__ = ("user_id", "ws", "subscribed", "last_activity", "jti")
 
-    def __init__(self, user_id: int, ws: WebSocket) -> None:
+    def __init__(self, user_id: int, ws: WebSocket, jti: str | None = None) -> None:
         self.user_id = user_id
         self.ws = ws
         self.subscribed: set[int] = set()
         self.last_activity = datetime.now(UTC)
+        self.jti = jti  # G29：心跳时复查黑名单，登出/踢出后及时断开
 
 
 class ConnectionManager:
@@ -33,9 +34,14 @@ class ConnectionManager:
         self._connections: dict[int, list[ConnectionState]] = {}
         self._lock = asyncio.Lock()
 
-    async def connect(self, user_id: int, ws: WebSocket) -> ConnectionState:
+    async def connect(self, user_id: int, ws: WebSocket, jti: str | None = None) -> ConnectionState:
+        """accept 握手并注册连接（浏览器 Cookie 鉴权路径）。"""
         await ws.accept()
-        state = ConnectionState(user_id, ws)
+        return await self.register(user_id, ws, jti)
+
+    async def register(self, user_id: int, ws: WebSocket, jti: str | None = None) -> ConnectionState:
+        """仅注册已 accept 的连接（G29：首条 auth 消息兜底路径，握手已 accept）。"""
+        state = ConnectionState(user_id, ws, jti)
         async with self._lock:
             self._connections.setdefault(user_id, []).append(state)
         logger.info("[ws] connect user=%s total=%d", user_id, self.count())

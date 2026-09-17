@@ -1,6 +1,7 @@
 /**
  * V0.2 阶段二：WebSocket 实时行情单例客户端。
- * - 连接 ws(s)://{host}/api/v1/ws/market?token={jwt}
+ * - G29（P0-5）：连接 ws(s)://{host}/api/v1/ws/market，**token 不再放 URL**
+ *   鉴权依赖 HttpOnly Cookie 在握手时自动携带（服务端从 Cookie 读 access token）
  * - 自动重连：指数退避 1s/2s/4s/8s，最大 30s
  * - 心跳：收到 {"type":"ping"} 自动回 {"type":"pong"}；30s 无消息主动断开重连
  * - 消息分发：按 type 路由（snapshot/kline/error），支持回调注册
@@ -8,7 +9,6 @@
  * - BroadcastChannel：同浏览器只保持一个 WS 连接，其他标签页通过 BroadcastChannel 接收消息
  * 纯基础设施，无 UI 依赖。
  */
-import { useUserStore } from '@/stores/user'
 
 export type WsMessageType = 'snapshot' | 'kline' | 'ping' | 'pong' | 'error'
 
@@ -39,14 +39,15 @@ const LEADER_HEARTBEAT_MS = 2000
 /** leader 超时阈值（ms）：时间戳超过该值视为 leader 已死，可抢占 */
 const LEADER_TIMEOUT_MS = 8000
 
+/**
+ * G29：统一走同源，不带 token 参数。
+ * - 生产：Nginx 反代 /api → 后端，Cookie 同源自动携带
+ * - 开发：vite dev server 代理（vite.config.ts 已开 ws: true），同样同源，
+ *   避免直连 127.0.0.1:8000 时因 localhost/127.0.0.1 域名不一致导致 Cookie 丢失
+ */
 function buildWsUrl(): string {
-  const user = useUserStore()
-  const token = user.token
-  if (import.meta.env.DEV) {
-    return `ws://127.0.0.1:8000/api/v1/ws/market?token=${encodeURIComponent(token)}`
-  }
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${location.host}/api/v1/ws/market?token=${encodeURIComponent(token)}`
+  return `${proto}//${location.host}/api/v1/ws/market`
 }
 
 class WsClient {

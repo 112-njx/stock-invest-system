@@ -7,8 +7,10 @@ from app.api.deps import get_current_user, get_db
 from app.core.config import get_settings
 from app.core.response import ok
 from app.core.security import (
+    clear_access_token_cookie,
     clear_refresh_token_cookie,
     hash_refresh_token,
+    set_access_token_cookie,
     set_refresh_token_cookie,
 )
 from app.models.user import User
@@ -26,13 +28,21 @@ def _get_client_info(request: Request) -> tuple[str | None, str | None]:
     return user_agent, ip
 
 
+def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    """种下双 token Cookie（G29：access Cookie 供 WS 握手鉴权，浏览器 WS 无法带 header）。"""
+    set_access_token_cookie(
+        response, access_token, max_age=_settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+    set_refresh_token_cookie(
+        response, refresh_token, max_age=_settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400
+    )
+
+
 @router.post("/register")
 def register(payload: RegisterIn, request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
     ua, ip = _get_client_info(request)
     result = auth_service.register(db, payload, user_agent=ua, ip_address=ip)
-    # 设置 refresh token HttpOnly Cookie
-    refresh_max_age = _settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400
-    set_refresh_token_cookie(response, result["refresh_token"], max_age=refresh_max_age)
+    _set_auth_cookies(response, result["token"], result["refresh_token"])
     return ok(data={"token": result["token"], "user": result["user"]})
 
 
@@ -40,8 +50,7 @@ def register(payload: RegisterIn, request: Request, response: Response, db: Sess
 def login(payload: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
     ua, ip = _get_client_info(request)
     result = auth_service.login(db, payload, user_agent=ua, ip_address=ip)
-    refresh_max_age = _settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400
-    set_refresh_token_cookie(response, result["refresh_token"], max_age=refresh_max_age)
+    _set_auth_cookies(response, result["token"], result["refresh_token"])
     return ok(data={"token": result["token"], "user": result["user"]})
 
 
@@ -57,9 +66,8 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
     ua, ip = _get_client_info(request)
     result = auth_service.refresh(db, old_refresh, user_agent=ua, ip_address=ip)
 
-    # 设置新 refresh token Cookie
-    refresh_max_age = _settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400
-    set_refresh_token_cookie(response, result["refresh_token"], max_age=refresh_max_age)
+    # 轮换后同步刷新双 Cookie（access Cookie 供 WS 握手使用）
+    _set_auth_cookies(response, result["token"], result["refresh_token"])
     return ok(data={"token": result["token"]})
 
 
@@ -70,14 +78,17 @@ def logout(
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """登出：吊销 access + refresh + 清 Cookie。"""
-    # 从 Authorization header 获取 access token
+    """登出：吊销 access + refresh + 清双 Cookie。"""
+    # access token 优先取 header，回退 Cookie（G29：WS 场景只有 Cookie）
     auth_header = request.headers.get("authorization", "")
-    access_token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
-    # 从 Cookie 获取 refresh token
+    if auth_header.startswith("Bearer "):
+        access_token = auth_header.replace("Bearer ", "")
+    else:
+        access_token = request.cookies.get(_settings.ACCESS_TOKEN_COOKIE_NAME, "")
     refresh_token = request.cookies.get(_settings.REFRESH_TOKEN_COOKIE_NAME)
 
     auth_service.logout(db, access_token, refresh_token)
+    clear_access_token_cookie(response)
     clear_refresh_token_cookie(response)
     return ok(data=None)
 

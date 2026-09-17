@@ -1,6 +1,11 @@
 """实时行情 WebSocket：WS /api/v1/ws/market。
 
-- JWT 鉴权：query 参数 token。
+鉴权（G29 / P0-5，token 不再出现在 URL）：
+- 浏览器：握手时从 HttpOnly Cookie 读 access token 并校验（含 Redis 黑名单）。
+- 非浏览器客户端：握手未认证时先 accept，等待首条 {"action":"auth","token":"..."} 兜底。
+- 心跳期间复查 jti 黑名单，登出/踢出后及时断开连接。
+- query 参数 token 鉴权已移除（避免 Nginx/代理日志泄露）。
+
 - 心跳：服务端每 15s 发 {"type":"ping"}，30s 无活动断开。
 - 订阅：{"action":"subscribe","symbol_ids":[...]} / unsubscribe。
 - 断线补拉：{"action":"sync","since":"ISO时间"} → 批量返回该时间后更新的快照。
@@ -13,9 +18,10 @@ import logging
 import time
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.core.security import decode_access_token
+from app.core.config import get_settings
+from app.core.security import decode_access_token_full, is_access_token_blacklisted
 from app.repositories import snapshot_repo
 from app.utils.db import get_session
 from app.ws.manager import ConnectionState, manager
@@ -23,28 +29,73 @@ from app.ws.manager import ConnectionState, manager
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_settings = get_settings()
 
 PING_INTERVAL = 15  # 秒：服务端心跳间隔
 INACTIVE_TIMEOUT = 30  # 秒：超过该时长无任何消息（含 pong）则断开
+AUTH_TIMEOUT = 5  # 秒：未认证连接等待首条 auth 消息的最长时间
 
 
-@router.websocket("/api/v1/ws/market")
-async def ws_market(ws: WebSocket, token: str = Query("")) -> None:
-    user_id = decode_access_token(token)
-    if user_id is None:
-        await ws.close(code=4001, reason="unauthorized")
-        return
+def _authenticate(token: str) -> tuple[int | None, str | None]:
+    """校验 access token：JWT 有效 + 未入黑名单 + 用户存在。返回 (user_id, jti)。"""
+    if not token:
+        return None, None
+    payload = decode_access_token_full(token)
+    if payload is None:
+        return None, None
+    jti = payload.get("jti")
+    if jti and is_access_token_blacklisted(jti):
+        return None, None
+    user_id = int(payload.get("sub", 0))
+    if not user_id:
+        return None, None
     db = get_session()
     try:
-        # 校验用户仍存在（token 有效但用户被删则拒绝）
         from app.repositories import user_repo
 
         if user_repo.get_by_id(db, user_id) is None:
-            await ws.close(code=4001, reason="unauthorized")
-            return
+            return None, None
     finally:
         db.close()
-    state = await manager.connect(user_id, ws)
+    return user_id, jti
+
+
+async def _await_auth_message(ws: WebSocket) -> tuple[int | None, str | None]:
+    """等待首条 auth 消息（非浏览器客户端兜底），超时或非法返回 (None, None)。"""
+    try:
+        raw = await asyncio.wait_for(ws.receive_text(), timeout=AUTH_TIMEOUT)
+    except (TimeoutError, WebSocketDisconnect, RuntimeError):
+        return None, None
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, None
+    if msg.get("action") != "auth":
+        return None, None
+    return _authenticate(str(msg.get("token") or ""))
+
+
+@router.websocket("/api/v1/ws/market")
+async def ws_market(ws: WebSocket) -> None:
+    cookie_token = ws.cookies.get(_settings.ACCESS_TOKEN_COOKIE_NAME, "")
+
+    if cookie_token:
+        # ---- 路径一：浏览器 Cookie 鉴权（握手自动携带）----
+        user_id, jti = _authenticate(cookie_token)
+        if user_id is None:
+            # Cookie 存在但无效/过期/已吊销 → 直接拒绝握手（浏览器会收到握手失败）
+            await ws.close(code=4001, reason="unauthorized")
+            return
+        state = await manager.connect(user_id, ws, jti)
+    else:
+        # ---- 路径二：无 Cookie，可能是非浏览器客户端 → accept 后等首条 auth 消息兜底 ----
+        await ws.accept()
+        user_id, jti = await _await_auth_message(ws)
+        if user_id is None:
+            await ws.close(code=4001, reason="unauthorized")
+            return
+        state = await manager.register(user_id, ws, jti)
+
     try:
         receive_task = asyncio.create_task(_receive_loop(state))
         ping_task = asyncio.create_task(_ping_loop(state))
@@ -63,12 +114,17 @@ async def ws_market(ws: WebSocket, token: str = Query("")) -> None:
 
 
 async def _ping_loop(state: ConnectionState) -> None:
-    """每 15s 发 ping；30s 无活动（未收到 pong/任何消息）则断开连接。"""
+    """每 15s 发 ping；30s 无活动则断开；G29：复查 jti 黑名单（登出/踢出即时生效）。"""
     while True:
         await asyncio.sleep(PING_INTERVAL)
         if (time.time() - state.last_activity.timestamp()) > INACTIVE_TIMEOUT:
             logger.info("[ws] heartbeat timeout, close user=%s", state.user_id)
             await state.ws.close(code=4000, reason="heartbeat timeout")
+            return
+        # G29：登出/踢出后 jti 入黑名单，心跳时复查并断开
+        if state.jti and is_access_token_blacklisted(state.jti):
+            logger.info("[ws] token revoked, close user=%s", state.user_id)
+            await state.ws.close(code=4001, reason="token revoked")
             return
         try:
             await state.ws.send_text(json.dumps({"type": "ping"}))

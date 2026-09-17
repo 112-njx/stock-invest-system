@@ -1,13 +1,20 @@
-"""API 公共依赖：数据库会话、Redis 客户端、当前用户（G19 含黑名单检查）。"""
+"""API 公共依赖：数据库会话、Redis 客户端、当前用户（G19 含黑名单检查）。
+
+鉴权口径（G29 定稿）：
+- HTTP 端点：**只认 Authorization: Bearer**，不读 Cookie。
+  理由：① 浏览器 WS 无法带 header，但 WS 由 ws_market.py 自行读 Cookie 鉴权，
+  不经本模块；② HTTP 侧若接受 Cookie 鉴权会引入 CSRF 面（第三方站点可诱导浏览器
+  自动携带 Cookie 发起写操作）。Cookie 仅用于 WS 握手。
+- 所有路径统一做 access token jti 黑名单检查（登出/踢出即时失效）。
+"""
 
 from collections.abc import Generator
 
-from fastapi import Depends, Request
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis import Redis
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.core.security import decode_access_token_full, is_access_token_blacklisted
 from app.models.user import User
@@ -15,7 +22,6 @@ from app.repositories import user_repo
 from app.utils.db import SessionLocal
 from app.utils.redis_client import get_redis_client
 
-_settings = get_settings()
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -32,42 +38,28 @@ def get_redis() -> Redis:
     return get_redis_client()
 
 
-def _extract_token(
-    credentials: HTTPAuthorizationCredentials | None,
-    request: Request,
-) -> str | None:
-    """从 Bearer header 或 Cookie 提取 access token（header 优先）。"""
-    if credentials and credentials.credentials:
-        return credentials.credentials
-    # G19: 回退到 Cookie（为 G29 WS 握手 Cookie 鉴权预留）
-    return request.cookies.get(_settings.ACCESS_TOKEN_COOKIE_NAME)
+def _resolve_user_id(token: str) -> int | None:
+    """解析 access token → user_id；JWT 无效或 jti 已入黑名单返回 None。"""
+    payload = decode_access_token_full(token)
+    if payload is None:
+        return None
+    jti = payload.get("jti")
+    if jti and is_access_token_blacklisted(jti):
+        return None
+    user_id = int(payload.get("sub", 0))
+    return user_id or None
 
 
 def get_current_user(
-    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    """当前用户依赖：解析 JWT → 黑名单检查 → 返回 User；失败抛 401。"""
-    token = _extract_token(credentials, request)
-    if token is None:
+    """当前用户依赖：解析 Bearer JWT → 黑名单检查 → 返回 User；失败抛 401。"""
+    if credentials is None or not credentials.credentials:
         raise ApiError(status_code=401, code=40100, msg="未登录")
-
-    # 解析 JWT
-    payload = decode_access_token_full(token)
-    if payload is None:
+    user_id = _resolve_user_id(credentials.credentials)
+    if user_id is None:
         raise ApiError(status_code=401, code=40100, msg="登录已过期或无效")
-
-    # G19: access token 黑名单检查（登出/踢出后 jti 入黑名单）
-    jti = payload.get("jti")
-    if jti and is_access_token_blacklisted(jti):
-        raise ApiError(status_code=401, code=40100, msg="登录已失效，请重新登录")
-
-    # 向后兼容：旧 token 无 jti 也放行（不强制 jti）
-    user_id = int(payload.get("sub", 0))
-    if not user_id:
-        raise ApiError(status_code=401, code=40100, msg="登录已过期或无效")
-
     user = user_repo.get_by_id(db, user_id)
     if user is None:
         raise ApiError(status_code=401, code=40100, msg="用户不存在")
@@ -75,22 +67,14 @@ def get_current_user(
 
 
 def get_current_user_optional(
-    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User | None:
     """可选鉴权：token 缺失/无效返回 None 而非 401（如 /snapshot 按关注集缓存的场景）。"""
-    token = _extract_token(credentials, request)
-    if token is None:
+    if credentials is None or not credentials.credentials:
         return None
-    payload = decode_access_token_full(token)
-    if payload is None:
-        return None
-    jti = payload.get("jti")
-    if jti and is_access_token_blacklisted(jti):
-        return None
-    user_id = int(payload.get("sub", 0))
-    if not user_id:
+    user_id = _resolve_user_id(credentials.credentials)
+    if user_id is None:
         return None
     return user_repo.get_by_id(db, user_id)
 
