@@ -161,8 +161,32 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 建议（属该用例 owner）：断言放宽为「delta 数 ≥5 或含 done(truncated) 时跳过」，或为流式超时注入可控时钟。本轮未改他人测试文件。
    - 需人工操作：无。
 
-14. **【泳道 C · G31】记忆模块 Chroma 下线在途，`CHROMA_DIR` 配置项已删但代码/测试仍引用（进行中，非回归）**
+14. **【泳道 C · G31】记忆模块 Chroma 下线在途，`CHROMA_DIR` 配置项已删但代码/测试仍引用 —— 已解决**
    - 现象：全库 `pytest` 20 failed / 465 passed，失败集中在 `test_memory.py` 与 `test_memory_dual_write.py`，报 `AttributeError: Settings(...) has no attribute 'CHROMA_DIR'`。
    - 根因：G31（Chroma→pgvector 下线）从 `config.py` 移除了 `CHROMA_DIR`，但 `app/agent/memory/store.py`、`scripts/rebuild_embeddings.py`、`tests/test_memory*.py` 中仍有引用。属该泳道**未完成的在途改动**（工作区未提交）。
-   - 影响：仅该泳道范围内；与本轮泳道 B 的 G03（纯前端）无关，G03 未改任何后端文件。
-   - 需人工操作：无（泳道 C 完成后自愈）。若长期未收敛，需泳道 C 补齐 `store.py` 与 `test_memory*.py` 的引用清理。
+   - **解决（2026-09-17 由泳道 B 复核确认）**：泳道 C 已自行完成清理——`store.py` / `scripts/rebuild_embeddings.py` 不再引用该配置，`chroma_legacy.py` 与 `tests/test_memory_dual_write.py` 已下线删除，`config.py` 与 `store.py` 仅保留两条说明性注释（记录迁移事实，属正确文档）。复核后 `tests/test_memory.py` 19/19 全绿。
+   - 泳道 B 附带清理：删除仓库内残留的过期 `.pyc` 缓存（`tests/__pycache__/test_memory_dual_write.*.pyc`、`app/agent/memory/__pycache__/chroma_legacy.*.pyc` 及全仓 `__pycache__`）。
+   - 需人工操作：无。
+
+15. **【泳道 F · G05】备份目录与异地对象存储凭据未配置，异地备份处于模拟模式**
+   - 现状：`BACKUP_DIR` 默认落 `backenddata` 卷内（`/app/data/backups`），与数据**同盘**——数据盘损坏会同时丢数据和备份；`RCLONE_REMOTE` 为空时异地同步进入模拟模式（日志 `[SIMULATED]`，只记清单不真同步，任务不算失败）。
+   - 需人工操作（两步）：
+     ① **备份盘独立**：在 `.env.docker` 设 `BACKUP_DIR=/backup`，并给 `deploy/docker-compose.yml` 的 `api`/`worker` 两个服务各加一条绑定挂载 `- /mnt/backup:/backup`（宿主机独立磁盘）。**改 `BACKUP_DIR` 必须同时挂载对应路径**，否则备份写进容器可写层，容器重建即丢。
+     ② **异地备份**：`.env.docker` 设 `RCLONE_REMOTE=oss:<bucket>`（或 `s3:` 等），凭据用环境变量传（`RCLONE_CONFIG_<REMOTE>_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` / `_ENDPOINT` 等，**勿写进 compose 或代码**）。配置后执行 `bash stock_backend/scripts/backup_pg.sh offsite` 验证一次。
+   - 附：保留期 90 天由同步后自动执行的 `rclone delete <remote> --min-age 90d` 实现。
+
+16. **【泳道 F · G05】WAL 归档需重建 db 容器才生效（存量环境）**
+   - 现状：两个 compose 的 `db` 已配 `archive_mode=on` + `wal_level=replica` + `archive_timeout=300` + `archive_command` 写 `/wal-archive`，并配了一次性 sidecar `wal-init`（把归档卷属主改成 postgres:999 —— 该卷由 Docker 以 root 创建，不改属主 `archive_command` 会持续失败，已实测）。
+   - 需人工操作：**已存在的 dev/生产 db 容器需重建才生效**：`docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d --force-recreate db`（数据在 `pgdata` 命名卷内，重建不丢）。重建后校验：
+     `docker exec <db容器> psql -U postgres -tAc "select archived_count, failed_count from pg_stat_archiver"` —— `failed_count` 必须为 0。
+   - 注意：**本步未对正在运行的 dev 库执行重建**（避免打断其它泳道并发的测试），归档配置已用一次性容器实测验证通过（`archived_count=2 / failed_count=0`）。
+
+17. **【泳道 F · G05】本机无 PG 客户端，备份/恢复经 docker exec 借用 db 容器**
+   - 现状：本机（Windows 开发机）`pg_dump`/`psql` 均不在 PATH，`C:\Program Files\PostgreSQL` 不存在；`BACKUP_PG_DUMP_MODE=auto` 会自动退回 `docker exec -i <容器> pg_dump`，`BACKUP_PG_CONTAINER` 默认 `stock-invest-dev-db-1`。生产容器内已装 `postgresql-client-16`（PGDG），走 local 模式。
+   - 需人工操作：无（本地开箱可用）；若容器名不同，在 `.env` 设 `BACKUP_PG_CONTAINER=<实际名>`。
+   - 附：**pg_dump 客户端主版本必须 ≥ 服务端主版本**（本项目服务端 PG16）；若镜像构建时 PGDG 源不可达会自动回退发行版 client-15，此时备份任务会在 `check_client_version()` 明确失败并提示，不会产出坏备份。
+
+18. **【泳道 F · G05】发现现存 bug：行情新鲜度指标一直采集失败（留待 G24 修复）**
+   - 现象：`/metrics` 抓取时日志报 `market freshness collect failed: can't subtract offset-naive and offset-aware datetimes`，`market_data_freshness_seconds` 指标**从未真正上报**，`MarketDataStale` 告警规则因此永不触发（监控盲区）。
+   - 根因：`app/core/metrics_ext.py::_refresh_market_freshness` 用 `datetime.now(UTC) - row`，而 `snapshot_realtime.updated_at` 是 naive（`timestamp without time zone`），aware 减 naive 抛 TypeError。属 P1-3（G24 时区统一）的典型症状，非 G05 引入。
+   - 需人工操作：无。已记录，G24 完成 timestamptz 迁移后该指标自动恢复（迁移后 ORM 返回 aware datetime）；G24 需补回归断言。
