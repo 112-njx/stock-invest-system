@@ -1,31 +1,22 @@
-"""P0-10 回测正确性回归测试（G06 · 测试先行）。
+"""P0-10 回测正确性回归测试（G06 测试先行 → G20 修复后锁定）。
 
-构造确定性交易单覆盖 6 类场景，每场景锁定：
-- 修复前基线值（baseline，当前引擎输出，断言 PASS）
-- 修复后目标值（target，G20 修复后期望，当前 xfail 标记）
+本文件在 G06 阶段以「修复前基线 + 修复后目标（xfail）」形式落地，
+G20 修复完成后转为纯目标断言（本版本），锁定修复后的净盈亏/回合/期末结算口径。
 
-G20 修复流程：
-1. 修改 engine.py / metrics.py 实现净盈亏配对、期末结算、统一回合口径、撮合现实性
-2. 移除 xfail 标记，将 baseline 断言替换为 target 断言
-3. 全量 pytest 通过
-
-场景覆盖：
-- 费用影响（毛赚 vs 净盈亏）
-- 分批配对（一次卖单配多段买单）
-- 期末未平仓持仓结算
-- 平手交易分类
-- 涨停不买入
-- 跌停不卖出
-- 同 bar 止损后禁止再开同向仓
+覆盖 6 类缺陷修复：
+1. 净盈亏配对（扣买卖费用）
+2. 期末未平仓浮动结算
+3. 完整交易回合口径（FIFO 仅用于成本分摊）
+4. 平手（draw）单列不并入亏损
+5. 统一成本法（FIFO 用于止损触发价）
+6. 撮合现实性（滑点/成交量/涨跌停/同 bar 禁止再入）
 """
 
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from app.backtest import metrics
 from app.backtest.engine import BacktestConfig, BacktestEngine
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,14 +26,16 @@ def _bars(specs: list[dict]) -> list[dict]:
     """构造确定性 K 线序列。
 
     specs: [{"c": close}, ...] 或完整 {"o","h","l","c","v","a"}
+    默认 high/low 加微小价差，避免 o=h=l=c（一字板）被涨跌停检查拦截；
+    显式传 o/h/l/c 全等时即构造一字板（用于涨跌停场景）。
     """
     result = []
     ts = datetime(2024, 1, 1, tzinfo=UTC)
     for i, s in enumerate(specs):
         c = s["c"]
         o = s.get("o", c)
-        h = s.get("h", max(o, c))
-        lo = s.get("l", min(o, c))
+        h = s.get("h", max(o, c) * 1.001)
+        lo = s.get("l", min(o, c) * 0.999)
         v = s.get("v", 100_000)
         a = s.get("a", float(c) * v)
         result.append({
@@ -70,6 +63,15 @@ def _run(code: str, params: dict | None, bars: list[dict], **cfg_kw) -> dict:
     """运行策略，返回 engine output dict。"""
     eng = BacktestEngine(config=_config(**cfg_kw))
     return eng.run(code, params or {}, bars)
+
+
+def _metrics(out: dict) -> dict:
+    """按服务层口径计算指标（含期末持仓结算）。"""
+    return metrics.compute_metrics(
+        out["trades"], out["equity_curve"], out["initial_cash"],
+        out["start_ts"], out["end_ts"], "1d",
+        open_position=out.get("open_position"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +114,7 @@ def on_bar(bar, context):
         context.sell(100)
 """
 
-# 涨停场景：bar0 空仓，bar1 涨停时买入，bar2 卖出
+# 涨停场景：bar1 涨停时尝试买入，bar2 卖出
 _LIMIT_UP_STRATEGY = """
 def on_bar(bar, context):
     if context.bar_index == 1 and context.pos == 0:
@@ -121,265 +123,170 @@ def on_bar(bar, context):
         context.sell()
 """
 
-# 止损后同 bar 再买入
-_STOPLOSS_REENTRY = """
-def on_bar(bar, context):
-    if context.bar_index == 0:
-        context.buy(100)
-    elif context.bar_index == 1 and context.pos == 0:
-        context.buy(100)
-    elif context.bar_index == 1 and context.pos > 0:
-        pass
-    elif context.bar_index == 2:
-        pass
-    # bar2: 如果仍持仓，不做任何事（让 auto stop-loss 处理）
-    # 如果 bar2 止损卖出了，则 on_bar 可能尝试再买
-"""
-
-# 止损后尝试再买入
+# 止损后尝试再买入（验证同 bar 禁止再入）
 _STOPLOSS_THEN_BUY = """
 def on_bar(bar, context):
     if context.bar_index == 0:
         context.buy(100)
     elif context.bar_index == 1:
         context.buy(100)
-    # bar2: stop-loss triggers, then try to buy
     elif context.bar_index == 2:
         if context.pos == 0:
             context.buy(100)
 """
 
+# 微利交易（毛赚净亏）
+_STRATEGY_MICRO_PROFIT = """
+def on_bar(bar, context):
+    if context.bar_index == 0:
+        context.buy(100)
+    elif context.bar_index == 1:
+        context.sell(100)
+"""
+
+# 大额买入（验证成交量限制）
+_STRATEGY_BULK_BUY = """
+def on_bar(bar, context):
+    if context.bar_index == 0:
+        context.buy(10000)
+    elif context.bar_index == 1:
+        context.sell()
+"""
+
 
 # ===========================================================================
-# 场景 1：费用影响 — 毛盈亏 vs 净盈亏
+# 场景 1：净盈亏配对 — 配对 PnL 扣除买卖费用
 # ===========================================================================
-# Buy 100@10.0, Sell 100@12.0
-# 佣金 0.1%，印花税 0.05%（卖出单边）
-#
-# 毛 PnL = (12.0-10.0)*100 = +200
-# 买入佣金 = 10*100*0.001 = 1.0
-# 卖出佣金 = 12*100*0.001 = 1.2
-# 卖出印花税 = 12*100*0.0005 = 0.6
-# 总费用 = 1.0+1.2+0.6 = 2.8
-# 净 PnL = 200-2.8 = +197.2
-#
-# 当前(修复前): 配对 pnl=200(毛), 判定为 win
-# 目标(修复后): 配对 pnl=197.2(净), 判定为 win
-# 差异: 本场景毛/净均 win, 但数值不同; 影响盈亏比和 best/worst_trade
+# Buy 100@10.0, Sell 100@12.0；佣金 0.1%，印花税 0.05%
+#   毛 PnL = 200
+#   买入佣金 = 10*100*0.001 = 1.0
+#   卖出佣金 = 12*100*0.001 = 1.2，印花税 = 12*100*0.0005 = 0.6
+#   净 PnL = 200 - 1.0 - 1.2 - 0.6 = 197.2
 
-class TestFeeImpact:
+class TestNetPnlPairing:
     bars = _bars([{"c": 10.0}, {"c": 12.0}])
 
-    def test_baseline_gross_pnl(self):
-        """修复前基线：配对用毛 PnL，不扣费用。"""
+    def test_pair_net_pnl_deducts_fees(self):
+        """配对净 PnL 扣除买入佣金 + 卖出佣金 + 印花税。"""
         out = _run(_BUY_THEN_SELL, {}, self.bars)
         pairs = metrics._pair_trades(out["trades"])
         assert len(pairs) == 1
-        # 毛 PnL = (12-10)*100 = 200
-        assert pairs[0]["pnl"] == pytest.approx(200.0)
+        assert pairs[0]["pnl"] == pytest.approx(200.0)        # 毛
+        assert pairs[0]["net_pnl"] == pytest.approx(197.2)    # 净
 
-    def test_baseline_win_rate_gross(self):
-        """修复前基线：胜率按毛盈亏判定。"""
+    def test_win_rate_and_best_use_net(self):
+        """win_rate/best_trade/worst_trade 按净盈亏。"""
         out = _run(_BUY_THEN_SELL, {}, self.bars)
-        m = metrics.compute_metrics(
-            out["trades"], out["equity_curve"],
-            out["initial_cash"], out["start_ts"], out["end_ts"], "1d",
-        )
+        m = _metrics(out)
         assert m["win_rate"] == pytest.approx(1.0)
         assert m["metrics_json"]["total_trades"] == 1
-        assert m["metrics_json"]["best_trade"] == pytest.approx(200.0)
+        assert m["metrics_json"]["best_trade"] == pytest.approx(197.2)
+        assert m["metrics_json"]["worst_trade"] == pytest.approx(197.2)
 
-    @pytest.mark.xfail(reason="G20: 配对 PnL 应扣除费用(净=197.2)，非毛=200")
-    def test_target_net_pnl(self):
-        """目标：配对 PnL 扣除买卖全部费用。"""
+    def test_total_return_reflects_fees(self):
+        """总收益率反映实际现金变化（含费用）。"""
         out = _run(_BUY_THEN_SELL, {}, self.bars)
-        pairs = metrics._pair_trades(out["trades"])
-        assert len(pairs) == 1
-        # 净 PnL = 200 - 2.8 = 197.2
-        assert pairs[0]["pnl"] == pytest.approx(197.2, abs=0.01)
-
-    @pytest.mark.xfail(reason="G20: best_trade 应按净盈亏=197.2")
-    def test_target_best_trade_net(self):
-        """目标：best_trade 反映净盈亏。"""
-        out = _run(_BUY_THEN_SELL, {}, self.bars)
-        m = metrics.compute_metrics(
-            out["trades"], out["equity_curve"],
-            out["initial_cash"], out["start_ts"], out["end_ts"], "1d",
-        )
-        assert m["metrics_json"]["best_trade"] == pytest.approx(197.2, abs=0.1)
+        m = _metrics(out)
+        # 现金 = 100000-1001+1197.6 = 100196.6 → 0.1966%
+        assert m["metrics_json"]["total_return"] == pytest.approx(0.001966, abs=1e-5)
 
 
 # ===========================================================================
-# 场景 2：分批配对 — 一次卖单拆配多段买单
+# 场景 2：完整交易回合口径 — 一次卖单配多段买单算一笔
 # ===========================================================================
 # Buy 100@10.0, Buy 100@11.0, Sell 200@12.0
-# FIFO: pair1=(12-10)*100=200, pair2=(12-11)*100=100
-#
-# 当前(修复前):
-#   total_trades=2 (FIFO 段数), win_rate=100%, profit_loss_ratio=None
-#   费用: buy_fee1=1.0, buy_fee2=1.1, sell_fee=3.6 → 总=5.7
-#   最终权益 = 100000-1001-1101.1+2396.4 = 100294.3
-# 目标(修复后):
-#   total_trades=1 (完整回合), win_rate=100%
-#   净 PnL = 300-5.7 = 294.3
+#   FIFO 配对 2 段（成本分摊），但属于 1 个完整买→卖回合
 
-class TestSplitFill:
+class TestRoundTripCounting:
     bars = _bars([{"c": 10.0}, {"c": 11.0}, {"c": 12.0}])
 
-    def test_baseline_fifo_segments(self):
-        """修复前基线：一次卖单被 FIFO 拆为 2 段配对。"""
+    def test_fifo_segments_still_two(self):
+        """FIFO 仍按成本分摊拆段（用于费用/成本核算）。"""
         out = _run(_SPLIT_BUY, {}, self.bars)
         pairs = metrics._pair_trades(out["trades"])
         assert len(pairs) == 2
-        assert pairs[0]["pnl"] == pytest.approx(200.0)  # (12-10)*100
-        assert pairs[1]["pnl"] == pytest.approx(100.0)  # (12-11)*100
+        assert pairs[0]["net_pnl"] == pytest.approx(197.2)  # (12-10)*100 - 费用
+        assert pairs[1]["net_pnl"] == pytest.approx(97.1)   # (12-11)*100 - 费用
 
-    def test_baseline_trade_count_is_segments(self):
-        """修复前基线：total_trades=配对段数而非完整回合。"""
+    def test_total_trades_is_round_count(self):
+        """total_trades 按完整回合计数（非 FIFO 段数）。"""
         out = _run(_SPLIT_BUY, {}, self.bars)
-        m = metrics.compute_metrics(
-            out["trades"], out["equity_curve"],
-            out["initial_cash"], out["start_ts"], out["end_ts"], "1d",
-        )
-        assert m["metrics_json"]["total_trades"] == 2  # FIFO 段数
-        assert m["win_rate"] == pytest.approx(1.0)
-        assert m["profit_loss_ratio"] is None  # 全胜无亏损
-
-    @pytest.mark.xfail(reason="G20: total_trades 应为 1(完整回合)，非 FIFO 段数 2")
-    def test_target_single_round(self):
-        """目标：一次完整买→卖回合计为一笔交易。"""
-        out = _run(_SPLIT_BUY, {}, self.bars)
-        m = metrics.compute_metrics(
-            out["trades"], out["equity_curve"],
-            out["initial_cash"], out["start_ts"], out["end_ts"], "1d",
-        )
+        m = _metrics(out)
         assert m["metrics_json"]["total_trades"] == 1
+        assert m["win_rate"] == pytest.approx(1.0)
 
-    def test_baseline_equity(self):
-        """修复前基线：最终权益验证。"""
+    def test_round_close_flag(self):
+        """round_close 标记回合闭合位置（仅最后一段为 True）。"""
         out = _run(_SPLIT_BUY, {}, self.bars)
-        # cash = 100000-1001-1101.1+2396.4 = 100294.3
-        final_eq = out["equity_curve"][-1]["equity"]
-        assert final_eq == pytest.approx(100_294.3, abs=0.5)
+        pairs = metrics._pair_trades(out["trades"])
+        assert pairs[0]["round_close"] is False
+        assert pairs[1]["round_close"] is True
 
 
 # ===========================================================================
-# 场景 3：期末未平仓持仓结算
+# 场景 3：期末未平仓浮动结算
 # ===========================================================================
-# Buy 100@10.0, 持有至期末（最后 bar close=15.0）
-#
-# 当前(修复前):
-#   无卖出 → pairs=[] → total_trades=0, win_rate=None
-#   equity_curve 末值含持仓市值: cash=98999 + 100*15=1500 → 100499
-#   total_return = (100499-100000)/100000 = 0.00499 (浮盈体现在权益但无交易统计)
-#   metrics_json 无 unrealized_pnl 字段，浮盈不单独记录
-# 目标(修复后):
-#   期末持仓按最后 bar 收盘价浮动结算 → unrealized_pnl ≈ +498.5
-#   metrics_json 单列 unrealized_pnl/unrealized_count
-#   total_return 含浮动盈亏
+# Buy 100@10.0，持有至期末（最后 bar close=15.0）
+#   浮动盈亏 = (15.0 - 10.0) * 100 = 500
 
 class TestEndOfPeriodSettlement:
     bars = _bars([{"c": 10.0}, {"c": 12.0}, {"c": 15.0}])
 
-    def test_baseline_no_settlement(self):
-        """修复前基线：期末持仓不参与配对，浮盈不计入指标。"""
+    def test_open_position_reported(self):
+        """引擎输出期末未平仓信息。"""
         out = _run(_HOLD_ONLY, {}, self.bars)
-        m = metrics.compute_metrics(
-            out["trades"], out["equity_curve"],
-            out["initial_cash"], out["start_ts"], out["end_ts"], "1d",
-        )
-        # 无卖出 → 无配对
+        op = out["open_position"]
+        assert op is not None
+        assert op["shares"] == 100
+        assert op["fifo_cost"] == pytest.approx(10.0)
+        assert op["last_close"] == pytest.approx(15.0)
+
+    def test_unrealized_pnl_settled(self):
+        """期末持仓按最后收盘价浮动结算，metrics_json 单列。"""
+        out = _run(_HOLD_ONLY, {}, self.bars)
+        m = _metrics(out)
+        mj = m["metrics_json"]
+        assert mj["unrealized_count"] == 1
+        assert mj["unrealized_pnl"] == pytest.approx(500.0)
+
+    def test_no_realized_round(self):
+        """未平仓不产生已实现回合（胜率口径区分已实现/未实现）。"""
+        out = _run(_HOLD_ONLY, {}, self.bars)
+        m = _metrics(out)
         assert m["metrics_json"]["total_trades"] == 0
         assert m["win_rate"] is None
-        assert m["total_buys"] == 1
-        assert m["total_sells"] == 0
-        # total_return 基于 equity_curve 末值（含持仓市值），浮盈体现在权益但不在交易统计中
-        # cash=98999, pos=100@15 → equity=100499 → return=0.499%
-        assert m["metrics_json"]["total_return"] == pytest.approx(0.00499, abs=0.001)
-
-    def test_baseline_open_position_exists(self):
-        """修复前基线：持仓 100 股在期末，equity_curve 记录市值。"""
-        out = _run(_HOLD_ONLY, {}, self.bars)
-        last = out["equity_curve"][-1]
-        assert last["pos"] == 100
-        # cash=98999 + pos=100*close=15 → equity=100499
-        assert last["equity"] == pytest.approx(100_499.0, abs=1.0)
-
-    @pytest.mark.xfail(reason="G20: 期末持仓应按最后收盘价浮动结算，metrics_json 单列 unrealized_pnl/unrealized_count")
-    def test_target_unrealized_settlement(self):
-        """目标：期末 100 股@15.0 浮动结算，unrealized_pnl ≈ 499 (浮盈-手续费)。"""
-        out = _run(_HOLD_ONLY, {}, self.bars)
-        m = metrics.compute_metrics(
-            out["trades"], out["equity_curve"],
-            out["initial_cash"], out["start_ts"], out["end_ts"], "1d",
-        )
-        mj = m["metrics_json"]
-        # 应有未平仓记录
-        assert mj.get("unrealized_count", 0) == 1
-        # 浮动 PnL = (15.0-10.0)*100 - buy_fee = 500-1.0 = 499.0
-        assert mj.get("unrealized_pnl", 0) == pytest.approx(499.0, abs=1.0)
+        assert m["total_buys"] == 1 and m["total_sells"] == 0
 
 
 # ===========================================================================
-# 场景 4：平手交易 — pnl==0 不应计为亏损
+# 场景 4：平手交易单列 draw，不并入亏损
 # ===========================================================================
-# Buy 100@10.0, Sell 100@10.0（同价卖出）
-# 毛 PnL = 0, 费用 = 1.0(buy) + 1.0(sell) + 0.5(stamp) = 2.5
-# 净 PnL = -2.5
-#
-# 当前(修复前):
-#   配对 pnl=0(毛), losses=[p for p in pairs if pnl<=0] → 计入亏损
-#   win_rate=0%, total_trades=1
-# 目标(修复后):
-#   毛 PnL=0 → 标记为 draw（平手），不计入亏损统计
-#   metrics_json 单列 draws/draw_count
+# Buy 100@10.0, Sell 100@10.0（毛 PnL = 0）
 
-class TestEvenMoneyTrade:
+class TestDrawClassification:
     bars = _bars([{"c": 10.0}, {"c": 10.0}])
 
-    def test_baseline_zero_pnl_counted_as_loss(self):
-        """修复前基线：平手(pnl=0)被计入亏损（pnl<=0）。"""
+    def test_gross_zero_is_draw(self):
+        """毛盈亏为 0 → draw，不计入 win/loss。"""
         out = _run(_EVEN_MONEY, {}, self.bars)
         pairs = metrics._pair_trades(out["trades"])
-        assert len(pairs) == 1
         assert pairs[0]["pnl"] == pytest.approx(0.0)
+        assert pairs[0]["net_pnl"] == pytest.approx(-2.5)  # 费用 1.0+1.0+0.5
 
-        m = metrics.compute_metrics(
-            out["trades"], out["equity_curve"],
-            out["initial_cash"], out["start_ts"], out["end_ts"], "1d",
-        )
-        # 当前：pnl=0 进 losses → win_rate=0%
-        assert m["win_rate"] == pytest.approx(0.0)
-        assert m["metrics_json"]["worst_trade"] == pytest.approx(0.0)
-
-    @pytest.mark.xfail(reason="G20: 平手应标记为 draw，不计入亏损；metrics_json 应有 draws 字段")
-    def test_target_draw_classification(self):
-        """目标：平手交易单列为 draw，不并入亏损。"""
+    def test_draw_counted_separately(self):
+        """draws 单列，win_rate 分母排除平手。"""
         out = _run(_EVEN_MONEY, {}, self.bars)
-        m = metrics.compute_metrics(
-            out["trades"], out["equity_curve"],
-            out["initial_cash"], out["start_ts"], out["end_ts"], "1d",
-        )
-        mj = m["metrics_json"]
-        # draw 应单独统计
-        assert mj.get("draws", 0) == 1 or mj.get("draw_count", 0) == 1
-        # 亏损统计不应包含平手
-        # win_rate 分母应排除 draws
-        assert m["win_rate"] is None or m["win_rate"] == pytest.approx(0.0)
+        m = _metrics(out)
+        assert m["metrics_json"]["draws"] == 1
+        # 无 win/loss 交易 → win_rate 无意义
+        assert m["win_rate"] is None
+        assert m["metrics_json"]["total_trades"] == 1
 
 
 # ===========================================================================
-# 场景 5a：涨停不买入
+# 场景 5：撮合现实性 — 涨停不买入
 # ===========================================================================
-# bar0: c=10.0 (空仓)
-# bar1: o=h=l=c=10.8 (涨停: close=high=low=open → 一字板涨停)
-# bar2: c=11.0
-#
-# 当前(修复前):
-#   bar1 涨停时引擎照常买入（无涨跌停检查）→ 产生交易
-# 目标(修复后):
-#   bar1 涨停(close=high) → 拒绝买入 → 无交易
-#   total_trades=0, total_return=0
+# bar1 一字板涨停（o=h=l=c=10.8）→ 拒绝买入
 
 class TestLimitUpNoBuy:
     bars = _bars([
@@ -388,34 +295,23 @@ class TestLimitUpNoBuy:
         {"c": 11.0},
     ])
 
-    def test_baseline_buy_at_limit_up(self):
-        """修复前基线：涨停时照常买入（无涨跌停检查）。"""
-        out = _run(_LIMIT_UP_STRATEGY, {}, self.bars)
-        buys = [t for t in out["trades"] if t["side"] == "buy"]
-        sells = [t for t in out["trades"] if t["side"] == "sell"]
-        # 当前引擎在涨停时仍然买入
-        assert len(buys) == 1
-        assert len(sells) == 1
-
-    @pytest.mark.xfail(reason="G20: 触及涨停应拒绝买入")
-    def test_target_no_buy_at_limit_up(self):
-        """目标：涨停时拒绝买入。"""
+    def test_no_buy_at_limit_up(self):
+        """触及涨停拒绝买入。"""
         out = _run(_LIMIT_UP_STRATEGY, {}, self.bars)
         buys = [t for t in out["trades"] if t["side"] == "buy"]
         assert len(buys) == 0
 
+    def test_no_trades_at_all(self):
+        """涨停无法建仓 → 后续也无卖出，权益不变。"""
+        out = _run(_LIMIT_UP_STRATEGY, {}, self.bars)
+        assert out["trades"] == []
+        assert out["equity_curve"][-1]["equity"] == pytest.approx(100_000.0)
+
 
 # ===========================================================================
-# 场景 5b：跌停不卖出
+# 场景 5b：撮合现实性 — 跌停不卖出
 # ===========================================================================
-# bar0: c=10.0 → 买入
-# bar1: o=h=l=c=9.0 (一字跌停), 带 stop_loss 10%
-#   stop_price = 10*(1-0.1) = 9.0, low=9.0 <= 9.0 → 触发止损
-#
-# 当前(修复前):
-#   止损触发卖出@9.0（跌停也能卖出，不现实）
-# 目标(修复后):
-#   跌停(close=low) → 拒绝卖出 → 持仓保留
+# bar1 一字板跌停（o=h=l=c=9.0）→ 拒绝卖出（含自动止损）
 
 class TestLimitDownNoSell:
     bars = _bars([
@@ -425,175 +321,115 @@ class TestLimitDownNoSell:
     ])
     params = {"stop_loss": {"pct": 0.10}}
 
-    def test_baseline_sell_at_limit_down(self):
-        """修复前基线：跌停时止损仍能卖出（不现实）。"""
+    def test_no_sell_on_limit_down_bar(self):
+        """跌停当日拒绝卖出（止损触发也被拒）。"""
         out = _run(_BUY_THEN_SELL, self.params, self.bars)
-        sells = [t for t in out["trades"] if t["side"] == "sell"]
-        # 当前引擎在跌停时仍能卖出
-        assert len(sells) >= 1
-
-    @pytest.mark.xfail(reason="G20: 触及跌停应拒绝卖出")
-    def test_target_no_sell_at_limit_down(self):
-        """目标：跌停时拒绝卖出（含止损）。"""
-        out = _run(_BUY_THEN_SELL, self.params, self.bars)
-        # bar1 跌停：止损触发但被拒绝 → 持仓保留
-        bar1_sells = [t for t in out["trades"]
-                      if t["side"] == "sell" and t["ts"] == self.bars[1]["ts"]]
+        bar1_ts = self.bars[1]["ts"]
+        bar1_sells = [t for t in out["trades"] if t["side"] == "sell" and t["ts"] == bar1_ts]
         assert len(bar1_sells) == 0
 
+    def test_position_retained_after_limit_down(self):
+        """跌停未卖出 → 持仓保留至下一根 bar 才平仓。"""
+        out = _run(_BUY_THEN_SELL, self.params, self.bars)
+        sells = [t for t in out["trades"] if t["side"] == "sell"]
+        assert len(sells) == 1
+        assert sells[0]["ts"] == self.bars[2]["ts"]  # 跌停次根 bar 才成交
+
 
 # ===========================================================================
-# 场景 6：同 bar 止损后禁止再开同向仓
+# 场景 6：同 bar 自动止损后禁止再开同向仓
 # ===========================================================================
-# bar0: buy 100@10.0
-# bar1: buy 100@11.0 → 持仓 200, 加权均价=10.5
-# bar2: h=12.0, l=9.0, c=10.0
-#   stop_price = 10.5*(1-0.1) = 9.45
-#   low=9.0 <= 9.45 → 止损卖出 200@9.45
-#   on_bar 检测到 pos=0 → 再买 100@10.0
-#
-# 当前(修复前):
-#   止损卖 200@9.45 + 再买 100@10.0（同 bar 先卖后买）
-#   共 3 笔卖单(2 配对) + 1 笔未配对买单
-# 目标(修复后):
-#   止损卖出后，同一根 bar 禁止再开同向仓位
-#   仅止损卖 200@9.45，不再买入
+# bar0 buy 100@10.0, bar1 buy 100@11.0（FIFO 成本 10.0）
+# bar2 h=12.0 l=9.0 c=10.0：止损价 = 10.0*0.9 = 9.0，low=9.0 触发
+#   止损卖出 200@9.0 后，on_bar 见 pos==0 尝试再买 → 应被拒绝
 
-class TestSameBarStopThenReentry:
+class TestSameBarNoReentry:
     bars = _bars([
         {"c": 10.0},
         {"c": 11.0},
-        {"o": 10.0, "h": 12.0, "l": 9.0, "c": 10.0},  # 大幅波动
+        {"o": 10.0, "h": 12.0, "l": 9.0, "c": 10.0},
     ])
     params = {"stop_loss": {"pct": 0.10}}
 
-    def test_baseline_stoploss_then_rebuy(self):
-        """修复前基线：止损卖出后同 bar 可以再买入。"""
+    def test_stoploss_fires_with_fifo_cost(self):
+        """统一成本法：止损触发价基于 FIFO 首批成本 10.0 → 9.0。"""
         out = _run(_STOPLOSS_THEN_BUY, self.params, self.bars)
-        buys = [t for t in out["trades"] if t["side"] == "buy"]
         sells = [t for t in out["trades"] if t["side"] == "sell"]
-        # bar0: buy, bar1: buy, bar2: stop-sell(200) + re-buy(100)
-        assert len(buys) == 3  # bar0+bar1+bar2(re-buy)
-        assert len(sells) == 1  # bar2 stop-loss
+        assert len(sells) == 1
+        assert sells[0]["reason"] == "stop_loss"
+        assert sells[0]["price"] == pytest.approx(9.0)
+        assert sells[0]["shares"] == 200
 
-    @pytest.mark.xfail(reason="G20: 同 bar 止损后应禁止再开同向仓位")
-    def test_target_no_reentry_after_stoploss(self):
-        """目标：止损卖出后同一根 bar 不再允许买入。"""
+    def test_no_reentry_after_stoploss(self):
+        """同 bar 止损平仓后禁止再开同向仓。"""
         out = _run(_STOPLOSS_THEN_BUY, self.params, self.bars)
         buys = [t for t in out["trades"] if t["side"] == "buy"]
-        sells = [t for t in out["trades"] if t["side"] == "sell"]
-        # bar0: buy, bar1: buy, bar2: stop-sell only (no re-buy)
-        assert len(buys) == 2  # 仅 bar0+bar1
-        assert len(sells) == 1  # bar2 stop-loss
+        # 仅 bar0 + bar1 两次买入；bar2 止损后的再买被拒
+        assert len(buys) == 2
+        assert all(t["ts"] != self.bars[2]["ts"] for t in buys)
 
 
 # ===========================================================================
-# 场景 7：费用对微利交易的影响（毛赚净亏）
+# 场景 7：微利交易毛赚净亏 → 判定为 loss
 # ===========================================================================
-# Buy 100@10.0, Sell 100@10.01 (微利)
-# 毛 PnL = 0.01*100 = 1.0
-# 买费 = 10*100*0.001 = 1.0
-# 卖费 = 10.01*100*(0.001+0.0005) = 1.5015
-# 净 PnL = 1.0 - 1.0 - 1.5015 = -1.5015
-#
-# 当前(修复前): 配对 pnl=1.0(毛) → win
-# 目标(修复后): 配对 pnl=-1.5015(净) → loss
+# Buy 100@10.0, Sell 100@10.01；毛 PnL=+1.0，净 PnL=-1.5015
 
-_STRATEGY_MICRO_PROFIT = """
-def on_bar(bar, context):
-    if context.bar_index == 0:
-        context.buy(100)
-    elif context.bar_index == 1:
-        context.sell(100)
-"""
-
-
-class TestMicroProfitGrossWinNetLoss:
+class TestMicroProfitNetLoss:
     bars = _bars([{"c": 10.0}, {"c": 10.01}])
 
-    def test_baseline_gross_win(self):
-        """修复前基线：微利(毛+1.0)判定为 win。"""
+    def test_net_pnl_negative(self):
+        """毛赚但净亏：净 PnL 为负。"""
         out = _run(_STRATEGY_MICRO_PROFIT, {}, self.bars)
         pairs = metrics._pair_trades(out["trades"])
-        assert len(pairs) == 1
         assert pairs[0]["pnl"] == pytest.approx(1.0, abs=0.01)
-        m = metrics.compute_metrics(
-            out["trades"], out["equity_curve"],
-            out["initial_cash"], out["start_ts"], out["end_ts"], "1d",
-        )
-        assert m["win_rate"] == pytest.approx(1.0)  # 毛赚→win
+        assert pairs[0]["net_pnl"] == pytest.approx(-1.5015, abs=0.01)
 
-    @pytest.mark.xfail(reason="G20: 净 PnL=-1.5 应为 loss，非毛赚 win")
-    def test_target_net_loss(self):
-        """目标：微利毛赚但净亏 → 判定为 loss。"""
+    def test_win_rate_zero(self):
+        """毛赚净亏 → 判定为 loss，胜率 0。"""
         out = _run(_STRATEGY_MICRO_PROFIT, {}, self.bars)
-        pairs = metrics._pair_trades(out["trades"])
-        assert len(pairs) == 1
-        assert pairs[0]["pnl"] < 0  # 净 PnL 为负
-        m = metrics.compute_metrics(
-            out["trades"], out["equity_curve"],
-            out["initial_cash"], out["start_ts"], out["end_ts"], "1d",
-        )
-        assert m["win_rate"] == pytest.approx(0.0)  # 净亏→loss
+        m = _metrics(out)
+        assert m["win_rate"] == pytest.approx(0.0)
+        assert m["metrics_json"]["worst_trade"] < 0
 
 
 # ===========================================================================
-# 场景 8：撮合现实性 — 滑点（G20 新增，当前恒 0）
+# 场景 8：撮合现实性 — 滑点
 # ===========================================================================
 
 class TestSlippage:
     bars = _bars([{"c": 10.0}, {"c": 12.0}])
 
-    def test_baseline_no_slippage(self):
-        """修复前基线：slippage_pct 配置后对买入价无效（默认 0）。"""
-        out = _run(_BUY_THEN_SELL, {}, self.bars, slippage_pct=0.01)
-        buy = out["trades"][0]
-        # 当前引擎 slippage_pct 已实现但默认 0; 这里验证 1% 滑点生效
-        # engine._fill_price: buy → price*(1+slippage) = 10*1.01 = 10.1
-        assert buy["price"] == pytest.approx(10.1, abs=0.01)
-
     def test_slippage_affects_fill_price(self):
-        """验证：配置 slippage_pct 后买入价上浮、卖出价下浮。"""
+        """滑点：买入价上浮、卖出价下浮。"""
         out = _run(_BUY_THEN_SELL, {}, self.bars, slippage_pct=0.01)
         buy, sell = out["trades"][0], out["trades"][1]
         assert buy["price"] == pytest.approx(10.0 * 1.01, abs=0.01)
         assert sell["price"] == pytest.approx(12.0 * 0.99, abs=0.01)
 
+    def test_no_slippage_by_default(self):
+        """默认无滑点：按收盘价成交。"""
+        out = _run(_BUY_THEN_SELL, {}, self.bars)
+        assert out["trades"][0]["price"] == pytest.approx(10.0)
+
 
 # ===========================================================================
-# 场景 9：成交量限制（G20 新增，当前不校验）
+# 场景 9：撮合现实性 — 成交量限制
 # ===========================================================================
 
-class TestVolumeLimit:
-    def test_baseline_no_volume_check(self):
-        """修复前基线：不校验成交量，大量买入不受限制。"""
-        # 成交量仅 100 股，但策略尝试买 10000 股
-        bars = _bars([{"c": 10.0, "v": 100}, {"c": 12.0, "v": 100}])
-        strategy = """
-def on_bar(bar, context):
-    if context.bar_index == 0:
-        context.buy(10000)
-    elif context.bar_index == 1:
-        context.sell(10000)
-"""
-        out = _run(strategy, {}, bars)
-        buys = [t for t in out["trades"] if t["side"] == "buy"]
-        # 当前引擎不校验成交量，买入可能受资金限制但不受量能限制
-        assert len(buys) >= 1
+class TestVolumeCap:
+    bars = _bars([{"c": 10.0, "v": 100}, {"c": 12.0, "v": 100}])
 
-    @pytest.mark.xfail(reason="G20: 单笔成交应不超过当根 bar 成交量的可配置比例")
-    def test_target_volume_cap(self):
-        """目标：买入量不超过 volume * max_volume_pct。"""
-        bars = _bars([{"c": 10.0, "v": 100}, {"c": 12.0, "v": 100}])
-        strategy = """
-def on_bar(bar, context):
-    if context.bar_index == 0:
-        context.buy(10000)
-    elif context.bar_index == 1:
-        context.sell()
-"""
-        out = _run(strategy, {}, bars)
+    def test_volume_cap_limits_shares(self):
+        """单笔成交不超过 bar.volume × max_volume_pct。"""
+        out = _run(_STRATEGY_BULK_BUY, {}, self.bars, max_volume_pct=0.1)
         buys = [t for t in out["trades"] if t["side"] == "buy"]
-        if buys:
-            # 买入量应受限于 volume(100) * max_volume_pct
-            assert buys[0]["shares"] <= 100  # 最多买 100 股
+        assert len(buys) == 1
+        assert buys[0]["shares"] == 10  # 100 * 0.1
+
+    def test_no_cap_by_default(self):
+        """默认 max_volume_pct=1.0：仅受资金约束。"""
+        out = _run(_STRATEGY_BULK_BUY, {}, self.bars)
+        buys = [t for t in out["trades"] if t["side"] == "buy"]
+        assert len(buys) == 1
+        # 资金 100000，价格 10，佣金 0.1% → 可买约 9990 股
+        assert buys[0]["shares"] > 100

@@ -99,3 +99,13 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
 3. **【泳道 B · G02/G23】SMTP 凭据未配置，邮件走模拟模式**
    - 现象：`SMTP_HOST` 为空时邮件不真发，落盘到 `stock_backend/data/email_outbox/*.eml`，日志标注 `[SIMULATED]`。
    - 需人工操作：部署时配置 `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM_EMAIL`（`SMTP_USE_TLS=true` 走 587 STARTTLS，`false` 走 465 SSL），否则邮箱验证/密码重置链接无法真实送达。
+
+4. **【泳道 D · G20】回测撮合现实性参数为代码默认值，尚未接入环境变量配置**
+   - 现状：`BacktestConfig.slippage_pct` 默认 `0.0`（无滑点）、`max_volume_pct` 默认 `1.0`（不限制成交量占比），二者仅在引擎内可配，未暴露为 `.env` 配置项，也未接入回测 API 请求参数。
+   - 影响：生产环境若需要更贴近真实的撮合（如 0.1% 滑点、单笔不超过成交量 10%），当前只能改代码。
+   - 需人工确认：是否需要新增 `BACKTEST_SLIPPAGE_PCT` / `BACKTEST_MAX_VOLUME_PCT` 环境变量（默认值保持与现在一致以保证向后兼容），并允许 `POST /api/v1/backtest` 按次覆盖。确认后由泳道 D 在后续步骤补配置与端点参数。
+
+5. **【泳道 D · G20】涨跌停判定依赖 K 线形态，建议数据源补显式标记**
+   - 现状：引擎按「一字板」形态（`open == high == low == close`）判定涨跌停并拒绝买入/卖出；若 bar 数据带 `limit_up` / `limit_down` 显式布尔字段则优先采用。
+   - 影响：盘中打开涨停后回落（非一字板）不会被判定为涨停，仍可买入——属当前口径的有意取舍（避免误拦正常收盘价等于最高价的交易日）。
+   - 需人工确认：行情同步层（`kline` 表）是否需要新增涨跌停标记字段。注意本项目禁止直接改表结构，若需新增须走 Alembic 迁移；当前不改表，保持一字板判定。

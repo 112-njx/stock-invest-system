@@ -113,7 +113,11 @@ def execute_backtest(task_id: int) -> dict:
             backtest_repo.update_task(db, task_id, progress=pct)
 
         out = BacktestEngine(config).run(strategy.code, strategy.params, bars_dict, progress_cb=_progress)
-        m = metrics.compute_metrics(out["trades"], out["equity_curve"], out["initial_cash"], out["start_ts"], out["end_ts"], task.period)
+        m = metrics.compute_metrics(
+            out["trades"], out["equity_curve"], out["initial_cash"],
+            out["start_ts"], out["end_ts"], task.period,
+            open_position=out.get("open_position"),
+        )
         result = backtest_repo.create_result(db, task_id, task.strategy_id, task.symbol_id, m, out["start_ts"], out["end_ts"])
         backtest_repo.update_task(db, task_id, status="success", progress=100, error=None)
         db.commit()  # 结果 + 任务 success 原子写入

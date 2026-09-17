@@ -281,3 +281,39 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 6. **撮合不现实**：滑点恒 0（配置 slippage_pct 有效但默认 0）；不校验当根 bar 成交量；无涨跌停检查（一字涨停可买、跌停可卖）；同 bar 止损后可再开同向仓。基线实测：涨停 close=high=10.8 照常买入、跌停 close=low=9.0 止损照常卖出、bar2 止损卖 200 后同 bar 再买 100。
 
 **基线锁定**：tests/test_backtest_correctness.py 15 个 baseline 断言全部 PASS，10 个 target 断言标记 xfail（G20 修复后移除 xfail 并切换为 target 断言）。
+
+---
+
+## 2026-09-17 G20 回测引擎修复（P0-10b）与修复前后对比
+
+**修复内容**（`app/backtest/engine.py` + `app/backtest/metrics.py` + `app/services/backtest_service.py`）：
+
+1. **净盈亏配对**：`_pair_trades` 按配对股数占比分摊买入佣金与卖出佣金+印花税，输出 `net_pnl`；`win/loss` 一律按净盈亏判定，`best/worst_trade` 改用净盈亏。
+2. **期末持仓结算**：引擎新增 `open_position`（shares/fifo_cost/last_close）输出；`compute_metrics` 按最后 bar 收盘价浮动结算，`metrics_json` 单列 `unrealized_pnl`/`unrealized_count`；胜率仅统计已实现回合。
+3. **统一交易回合口径**：`total_trades` 改为完整买→卖回合数（FIFO 仅用于成本分摊，配对项带 `round_close` 标记）；平手（毛 PnL=0）计入 `draws` 单列，不并入亏损，胜率分母排除平手。
+4. **统一成本法**：止损止盈触发价由加权平均 `entry_price` 改为 **FIFO 首批成本**（与配对口径一致），加权平均保留供策略参考。
+5. **撮合现实性**：一字板涨跌停（open==high==low==close，或 bar 显式 `limit_up`/`limit_down`）涨停禁买、跌停禁卖；新增 `max_volume_pct` 成交量占比上限；同 bar 自动止损/止盈平仓后禁止再开同向仓（`_auto_exited_this_bar`）。
+
+**修复前后对比**（同一策略：双均线5 + 止损10% + 止盈20%，125 根合成日K，初始资金 100 万）：
+
+| 指标 | 修复前 | 修复后 | 差异 |
+|---|---|---|---|
+| 胜率 | 60.00% | 55.56% | -4.44pp |
+| 盈亏比 | 1.8109 | 1.6052 | -0.21 |
+| 总收益率 | 85.30% | 58.59% | -26.70pp |
+| 年化收益 | 515.20% | 288.98% | -226.22pp |
+| 最大回撤 | 35.03% | 35.02% | -0.01pp |
+| 夏普 | 4.4065 | 3.4847 | -0.92 |
+| 交易回合 total_trades | 10 | 9 | -1 |
+| 累计买入/卖出 | 11 / 10 | 10 / 9 | -1 / -1 |
+| 总费用 | 12719.70 | 10816.92 | -1902.78 |
+| best_trade（毛→净） | 273456.90 | 226102.32 | - |
+| worst_trade（毛→净） | -121843.50 | -121747.49 | - |
+| draws / unrealized_pnl | 无字段 | 0 / 162289.20 | 新增 |
+| 交易流水笔数 | 21 | 19 | -2 |
+
+**差异归因**（逐笔比对确认）：前 2 笔交易完全一致（单笔持仓时 FIFO 成本 == 加权平均）；自第 3 笔起分化，根因是**同 bar 再入禁止**——修复前止盈平仓当根 bar 立即再买入，修复后延后至下一根 bar 成交，进场价与股数随之变化，经 95% 仓位复利放大为 26.7pp 的收益差。止损触发价（FIFO vs 加权平均）在单笔持仓场景下两者相等，未单独产生差异。结论：差异全部来自预期修复项，非回归。
+
+**口径变更说明**（向后兼容）：`metrics_json` 为新增字段（`draws`/`unrealized_pnl`/`unrealized_count`），原有字段名与 API 响应结构不变；`total_trades` 语义由「FIFO 配对段数」变为「完整交易回合数」，数值可能变小，前端展示无需改动（仍为整数笔数）。
+
+**验证**：新增/重写 tests/test_backtest_correctness.py 23 项全绿（净盈亏/回合/期末结算/draw/涨跌停/同bar/滑点/量限）；tests/test_backtest_engine.py 15 项全绿；tests/test_backtest_api.py 6 项全绿。

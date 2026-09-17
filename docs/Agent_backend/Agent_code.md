@@ -326,3 +326,23 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：G23 连带改造——注册 email 必填的测试夹具同步。16 个测试文件（test_admin_api/agent_ops/agents/backtest_api/catalog_search/chat/conversations/memory/research_graph/sse/strategies/strategy_templates/support_resistance/watchlist/ws_market）的注册调用统一补 email=f"{username}@test.local"，共 19 处；test_auth.py 的 _register 帮助函数默认补 email 参数。属 email 必填契约变更的机械适配，不改变测试语义。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道C G04（P1-12a）——pgvector 扩展 + memory_chunks 加列 + HNSW 索引。新增 Alembic 0009_pgvector_memory：CREATE EXTENSION IF NOT EXISTS vector → memory_chunks 加 embedding vector(384)（nullable，迁移期存量行为空待 G31 回填）+ embedding_kind varchar(16)（hash/minilm，等价原 Chroma collection 名后缀隔离）→ HNSW 索引 ix_memory_chunks_embedding_hnsw（vector_cosine_ops）+ 复合索引 ix_memory_chunks_user_embedding_kind（user_id+embedding_kind 行级过滤）。downgrade 逆序删索引/列（不 DROP EXTENSION，避免影响他表）。MemoryChunk 模型同步加两列 + EMBEDDING_DIM=384 常量。依赖：pyproject/requirements.lock 加 pgvector==0.5.0；deploy 两个 compose 的 db 镜像 postgres:16-alpine → pgvector/pgvector:pg16。新增 tests/test_pgvector.py 11 项（5 模型元数据 + 6 集成：扩展/列类型/长度/HNSW/复合索引/向量写入与余弦距离，后者无 pgvector 时 skipif 优雅跳过）。验收：pgvector/pgvector:pg16 容器实测 11/11 全绿，迁移链 0001→0012 线性无分叉，test_memory/test_models/test_embedding 17 项无回归。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道D G20（P0-10b）——回测引擎正确性修复。engine.py：新增 FIFO 成本队列 `_fifo_cost`（统一成本法，止损止盈触发价改用首批成本，加权平均保留供策略参考）；`_is_limit_up/_is_limit_down` 一字板涨跌停判定（支持 bar 显式 limit_up/limit_down 覆盖）→ 涨停禁买、跌停禁卖；新增 `max_volume_pct` 单笔成交量占比上限；`_auto_exited_this_bar` 标记使自动止损/止盈平仓后当根 bar 禁止再开同向仓；`_output` 新增 `open_position`（shares/fifo_cost/last_close）。metrics.py：`_pair_trades` 按股数占比分摊买卖费用输出 `net_pnl` + `round_close` 回合闭合标记；`compute_metrics` 新增 `open_position` 参数做期末浮动结算，win/loss 按净盈亏、平手单列 `draws` 且胜率分母排除平手、`total_trades` 改完整回合口径、best/worst_trade 用净盈亏，metrics_json 新增 draws/unrealized_pnl/unrealized_count。backtest_service 传 open_position。验收：correctness 23 项 + engine 15 项 + api 6 项全绿，修复前后对比见 fixed.md。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道D G20 连带测试适配。tests/test_backtest_engine.py：`make_bars` 默认 high/low 加 ±0.1% 价差（避免 o=h=l=c 一字板形态被新涨跌停检查误拦）；`test_auto_stop_loss` 的 bar0 补非一字板 OHLC；`test_metrics_known_case` 移除 fee 字段使净盈亏==毛盈亏（聚焦指标计算，费用分摊由 correctness 测试覆盖）。tests/test_backtest_api.py 的 `_register` 补 email（配合泳道B G23 email 必填契约）。验收：三文件 44 项全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道A G19——双 token + 会话管理（P0-1）。config 新增 ACCESS_TOKEN_EXPIRE_MINUTES(15)/REFRESH_TOKEN_EXPIRE_DAYS(7)/REFRESH_TOKEN_COOKIE_NAME；security.py 重构：access token 加 jti+iat、新增 generate_refresh_token(token_urlsafe48)/hash_refresh_token(sha256)、Redis 黑名单 4 函数(token_blacklist:{jti} / refresh_blacklist:{hash})、set/clear_refresh_token_cookie(Path=/api/v1/auth)；新增 models/session.py UserSession 表 + Alembic 0010；新增 services/session_service.py(创建/查询/吊销/轮换/复用检测)；auth_service 改造 register/login/refresh/logout/get_sessions/revoke_session_by_id；auth.py 新增 POST /refresh、POST /logout、GET /sessions、DELETE /sessions/{id}；deps.py get_current_user 加黑名单检查 + Cookie 回退。验收：test_g19_dual_token.py 13 项全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G19 修复 refresh 复用检测失效（严重）。根因：session_service.validate_refresh_token 的检查顺序把 revoked_at 排在 Redis 黑名单之前，而轮换时旧 session 同时被 revoke_session + 入黑名单，导致复用请求永远命中"已吊销"分支短路，revoke_all_user_sessions 从不执行——即同一 refresh token 被盗用后无法触发全设备踢出。修复：把 is_refresh_token_blacklisted 检查提到 find_session 之后第一位（黑名单是"已轮换"的唯一信号），revoked_at 降为第二位。实测修复前 active=2（复用未触发）、修复后 active=0（全踢出）。

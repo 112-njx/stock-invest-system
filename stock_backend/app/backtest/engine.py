@@ -1,16 +1,25 @@
-"""回测撮合引擎（4.1）：策略沙箱执行 + 撮合规则 + 持仓与交易流水。
+"""回测撮合引擎（4.1 → P0-10b 修复）：策略沙箱执行 + 撮合规则 + 持仓与交易流水。
 
-借鉴 QuantDinger 策略 API（initialize / on_bar 回调）与撮合思路：
+G20 修复要点：
+- 统一成本法：止损止盈触发价改用 FIFO 首批成本（与配对一致，见 _fifo_entry_cost）
+- 涨跌停检查：一字板（open==high==low==close）时涨停禁买入、跌停禁卖出；
+  若 bar 带 limit_up/limit_down 显式标记则优先采用（供数据源精确标记）
+- 成交量限制：单笔成交 ≤ bar.volume × max_volume_pct（可配置，默认 1.0 不限制）
+- 同 bar 逻辑：自动止损/止盈平仓后，当根 bar 禁止再开同向仓（_auto_exited_this_bar）
+- 期末持仓输出：open_position（shares/fifo_cost/last_close）供 metrics 浮动结算
+
+原始设计：
 - 每根 bar：先按 params 自动止损止盈结算，再调用策略 on_bar 决策；
 - 撮合价默认收盘价（fill_on="close"），"open" 模式策略触发延迟到下一根 bar 开盘成交；
 - 自动止损止盈按触发价（entry ± pct）成交，不受 fill_on 影响；
 - A 股 T+1：当日买入次日起方可卖出；
 - 费用：佣金双边（默认万分之三）+ 印花税卖出单边（默认万分之五）；
-- 时间预算：逐 bar 检查，超预算抛 BacktestTimeout（策略死循环兜底走 Celery 硬超时）。
+- 时间预算：逐 bar 检查，超预算抛 BacktestTimeout。
 """
 
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass
 
 from .sandbox import SandboxError, compile_strategy
@@ -29,15 +38,32 @@ class BacktestTimeout(Exception):
     """回测执行超时（时间预算耗尽）。"""
 
 
+def _is_limit_up(bar: dict) -> bool:
+    """涨停判定：数据源显式标记优先，否则按一字板形态（open==high==low==close）。"""
+    if bar.get("limit_up") is not None:
+        return bool(bar["limit_up"])
+    c, h, low, o = float(bar["close"]), float(bar["high"]), float(bar["low"]), float(bar["open"])
+    return c > 0 and c == h == low == o
+
+
+def _is_limit_down(bar: dict) -> bool:
+    """跌停判定：数据源显式标记优先，否则按一字板形态（open==high==low==close）。"""
+    if bar.get("limit_down") is not None:
+        return bool(bar["limit_down"])
+    c, h, low, o = float(bar["close"]), float(bar["high"]), float(bar["low"]), float(bar["open"])
+    return c > 0 and c == h == low == o
+
+
 @dataclass
 class BacktestConfig:
     initial_cash: float = 1_000_000
     commission_rate: float = 0.0003  # 佣金（双边）
     stamp_duty_rate: float = 0.0005  # 印花税（卖出单边）
     fill_on: str = "close"  # close / open
-    slippage_pct: float = 0.0  # 滑点（第一版默认 0）
+    slippage_pct: float = 0.0  # 滑点百分比（0=无滑点）
     time_budget: float = 30.0  # 秒
     period: str = "1d"  # 用于指标年化折算
+    max_volume_pct: float = 1.0  # 单笔成交占当根 bar 成交量比例上限（1.0=不限制）
 
     def __post_init__(self) -> None:
         if self.fill_on not in ("close", "open"):
@@ -51,14 +77,18 @@ class BacktestContext:
         self.params: dict = params or {}
         self.cash: float = engine.config.initial_cash
         self.pos: int = 0  # 持仓数量（股）
-        self.entry_price: float | None = None  # 持仓成本价（无持仓为 None）
+        self.entry_price: float | None = None  # 持仓成本价（加权平均，仅供策略参考）
         self.price: float = fill_price  # 当前 bar 撮合参考价
         self.bar_index: int = 0
         self.history: list[dict] = []  # 已处理 bar（不含当前）
         self._engine = engine
         self._sellable = 0  # 可卖出数量（T+1 结算后）
         self._pending = 0  # 当日买入、次日方可卖出的数量
-        self._current_bar: dict | None = None  # 当前处理中的 bar（下划线开头，受限代码不可访问）
+        self._current_bar: dict | None = None
+        # G20: FIFO 成本追踪（统一成本法）
+        self._fifo_cost: deque = deque()  # [{price, shares}]
+        # G20: 同 bar 自动止损后禁止再入
+        self._auto_exited_this_bar: bool = False
 
     # ---- 策略便捷属性 ----
     @property
@@ -118,6 +148,9 @@ class BacktestEngine:
                 raise BacktestTimeout(f"回测执行超过时间预算 {self.config.time_budget}s")
 
             context._current_bar = bar
+            # G20: 重置同 bar 自动退出标记
+            context._auto_exited_this_bar = False
+
             # 1. T+1 结算：昨日买入转为可卖
             context._sellable += context._pending
             context._pending = 0
@@ -169,7 +202,7 @@ class BacktestEngine:
             if progress_cb and idx % _PROGRESS_EVERY_BARS == 0:
                 progress_cb(round(idx / n_bars * 100))
 
-        return self._output(params, bars)
+        return self._output(params, bars, context)
 
     # ---- 策略加载与初始化 ----
     def _load_strategy(self, code: str) -> dict:
@@ -191,7 +224,19 @@ class BacktestEngine:
     def _fill_buy(self, context: BacktestContext, bar: dict, shares: int, reason: str = "signal") -> None:
         if shares is None or shares <= 0:
             return
+        # G20: 涨停禁买入
+        if _is_limit_up(bar):
+            return
+        # G20: 同 bar 自动退出后禁止再入
+        if context._auto_exited_this_bar:
+            return
         price = self._fill_price(bar, "buy")
+        # G20: 成交量限制
+        bar_volume = bar.get("volume", 0)
+        if bar_volume and self.config.max_volume_pct < 1.0:
+            max_shares_vol = int(bar_volume * self.config.max_volume_pct)
+            if max_shares_vol > 0:
+                shares = min(shares, max_shares_vol)
         amount = price * shares
         fee = amount * self.config.commission_rate
         # 资金不足：按可买股数重算（不足一股放弃）
@@ -205,10 +250,13 @@ class BacktestEngine:
         context.cash -= amount + fee
         context.pos += shares
         context._pending += shares  # T+1：当日不可卖
+        # 加权平均成本（策略参考用）
         if context.entry_price is None:
             context.entry_price = price
         else:
             context.entry_price = (context.entry_price * (context.pos - shares) + amount) / context.pos
+        # G20: FIFO 成本追踪
+        context._fifo_cost.append({"price": price, "shares": shares})
         self.trades.append({"ts": bar["ts"], "side": "buy", "price": price, "shares": shares, "amount": amount, "fee": fee, "reason": reason})
 
     def _fill_sell(self, context: BacktestContext, bar: dict, shares: int, reason: str, price: float | None = None) -> None:
@@ -217,19 +265,46 @@ class BacktestEngine:
         sellable = min(shares, context._sellable)
         if sellable <= 0:
             return
+        # G20: 跌停禁卖出（含自动止损止盈）
+        if _is_limit_down(bar):
+            return
         px = price if price is not None else self._fill_price(bar, "sell")
+        # G20: 成交量限制
+        bar_volume = bar.get("volume", 0)
+        if bar_volume and self.config.max_volume_pct < 1.0:
+            max_shares_vol = int(bar_volume * self.config.max_volume_pct)
+            if max_shares_vol > 0:
+                sellable = min(sellable, max_shares_vol)
+        if sellable <= 0:
+            return
         amount = px * sellable
         fee = amount * (self.config.commission_rate + self.config.stamp_duty_rate)
         context.cash += amount - fee
         context.pos -= sellable
         context._sellable -= sellable
+        # G20: FIFO 成本扣减
+        remaining = sellable
+        while remaining > 0 and context._fifo_cost:
+            lot = context._fifo_cost[0]
+            take = min(remaining, lot["shares"])
+            lot["shares"] -= take
+            remaining -= take
+            if lot["shares"] == 0:
+                context._fifo_cost.popleft()
         if context.pos <= 0:
             context.pos = 0
             context.entry_price = None
+            context._fifo_cost.clear()
+            # G20: 标记同 bar 自动退出（止损/止盈触发后禁止 on_bar 再开仓）
+            if reason in ("stop_loss", "take_profit"):
+                context._auto_exited_this_bar = True
         self.trades.append({"ts": bar["ts"], "side": "sell", "price": px, "shares": sellable, "amount": amount, "fee": fee, "reason": reason})
 
     # ---- 策略买卖入口 ----
     def _do_buy(self, context: BacktestContext, shares: int | None) -> None:
+        # G20: 同 bar 自动退出后禁止再入
+        if context._auto_exited_this_bar:
+            return
         if shares is None:
             pct = float((context.params or {}).get("position", {}).get("max_pct") or _POSITION_DEFAULT_PCT)
             price = context.price
@@ -260,7 +335,9 @@ class BacktestEngine:
         params = context.params or {}
         stop_pct = float((params.get("stop_loss") or {}).get("pct") or 0)
         take_pct = float((params.get("take_profit") or {}).get("pct") or 0)
-        entry = context.entry_price or context.price
+        # G20: 统一成本法 — 止损止盈用 FIFO 首批成本（与配对一致）
+        fifo_cost = self._fifo_entry_cost(context)
+        entry = fifo_cost if fifo_cost > 0 else (context.entry_price or context.price)
         stop_price = entry * (1 - stop_pct) if stop_pct > 0 else None
         take_price = entry * (1 + take_pct) if take_pct > 0 else None
         low, high = float(bar["low"]), float(bar["high"])
@@ -268,6 +345,12 @@ class BacktestEngine:
             self._fill_sell(context, bar, context._sellable, reason="stop_loss", price=stop_price)
         elif take_price and high >= take_price:
             self._fill_sell(context, bar, context._sellable, reason="take_profit", price=take_price)
+
+    def _fifo_entry_cost(self, context: BacktestContext) -> float:
+        """FIFO 首批成本价（用于止损止盈触发价计算）。"""
+        if context._fifo_cost:
+            return context._fifo_cost[0]["price"]
+        return 0.0
 
     # ---- 辅助 ----
     def _fill_price(self, bar: dict, side: str) -> float:
@@ -278,7 +361,17 @@ class BacktestEngine:
             price *= 1 + self.config.slippage_pct if side == "buy" else 1 - self.config.slippage_pct
         return round(price, 4)
 
-    def _output(self, params: dict, bars: list[dict]) -> dict:
+    def _output(self, params: dict, bars: list[dict], context: BacktestContext) -> dict:
+        # G20: 期末未平仓信息（供 metrics 浮动结算）
+        open_position = None
+        if context.pos > 0 and context._fifo_cost:
+            fifo_cost = self._fifo_entry_cost(context)
+            last_close = float(bars[-1]["close"]) if bars else 0
+            open_position = {
+                "shares": context.pos,
+                "fifo_cost": fifo_cost,
+                "last_close": last_close,
+            }
         return {
             "params": params,
             "trades": self.trades,
@@ -289,4 +382,5 @@ class BacktestEngine:
             "final_equity": round(self.equity_curve[-1]["equity"], 2) if self.equity_curve else self.config.initial_cash,
             "start_ts": bars[0]["ts"] if bars else None,
             "end_ts": bars[-1]["ts"] if bars else None,
+            "open_position": open_position,
         }

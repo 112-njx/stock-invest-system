@@ -13,8 +13,9 @@ def make_bars(closes, opens=None, highs=None, lows=None, start=None, step_days=1
     ts = start or datetime(2024, 1, 1, tzinfo=UTC)
     for i, c in enumerate(closes):
         o = opens[i] if opens else c
-        h = highs[i] if highs else max(o, c)
-        lo = lows[i] if lows else min(o, c)
+        # G20: 默认 high/low 加微小差异，避免 open=high=low=close（一字板）触发涨跌停检查
+        h = highs[i] if highs else max(o, c) * 1.001
+        lo = lows[i] if lows else min(o, c) * 0.999
         bars.append(
             {"ts": ts + timedelta(days=i * step_days), "open": o, "high": h, "low": lo, "close": c, "volume": 1000, "amount": float(c) * 1000}
         )
@@ -113,7 +114,8 @@ def on_bar(bar, context):
 """
     eng = BacktestEngine(config=BacktestConfig(initial_cash=100_000))
     # 买入价 101；bar1 低点 85 触发止损 101*0.9=90.9
-    bars = make_bars([101.0, 90.0], highs=[101.0, 95.0], lows=[101.0, 85.0])
+    # G20: bar0 给非一字板形态（o/h/l/c 不全等），避免被涨跌停检查拦截
+    bars = make_bars([101.0, 90.0], opens=[100.0, 89.0], highs=[102.0, 95.0], lows=[99.0, 85.0])
     out = eng.run(strategy, {"stop_loss": {"pct": 0.10}, "take_profit": {"pct": 0.20}}, bars)
     sells = [t for t in out["trades"] if t["side"] == "sell"]
     assert sells and sells[0]["reason"] == "stop_loss"
@@ -159,11 +161,12 @@ def test_invalid_strategy_code():
 
 # ---- 4.2 指标 ----
 def test_metrics_known_case():
+    # G20: 不含 fee → net_pnl = pnl（保持测试聚焦指标计算，费用分摊由 correctness 测试覆盖）
     trades = [
-        {"side": "buy", "price": 10.0, "shares": 100, "ts": datetime(2024, 1, 1, tzinfo=UTC), "fee": 0.3},
-        {"side": "sell", "price": 12.0, "shares": 100, "ts": datetime(2024, 1, 2, tzinfo=UTC), "fee": 0.96},  # 盈利 +200
-        {"side": "buy", "price": 20.0, "shares": 100, "ts": datetime(2024, 2, 1, tzinfo=UTC), "fee": 0.6},
-        {"side": "sell", "price": 18.0, "shares": 100, "ts": datetime(2024, 2, 2, tzinfo=UTC), "fee": 1.44},  # 亏损 -200
+        {"side": "buy", "price": 10.0, "shares": 100, "ts": datetime(2024, 1, 1, tzinfo=UTC)},
+        {"side": "sell", "price": 12.0, "shares": 100, "ts": datetime(2024, 1, 2, tzinfo=UTC)},  # 盈利 +200
+        {"side": "buy", "price": 20.0, "shares": 100, "ts": datetime(2024, 2, 1, tzinfo=UTC)},
+        {"side": "sell", "price": 18.0, "shares": 100, "ts": datetime(2024, 2, 2, tzinfo=UTC)},  # 亏损 -200
     ]
     equity = [
         {"ts": datetime(2024, 1, 1, tzinfo=UTC), "equity": 100_000},
