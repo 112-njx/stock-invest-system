@@ -186,3 +186,7 @@ Agent的前端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：V0.3 G16（前端）——通知中心 + 系统公告。新增 api/notifications.ts（列表/未读数/单条已读/全部已读/活跃公告/公告历史 6 函数）、stores/notification.ts（unread + items + announcements；init 绑定 WS notification 消息实时递增未读、拉未读数与活跃公告；markRead/markAllRead 乐观更新；dismissAnnouncement 按 id 记 localStorage）、components/layout/NotificationBell.vue（铃铛 + 未读红点计数 99+ + 下拉面板，未读优先列表、类型标签、相对时间、全部已读、点击标记已读；scoped 样式自带 icon-btn 以免依赖 AppBar 样式穿透）、components/layout/AnnouncementBanner.vue（活跃公告 banner，info/warning/maintenance 三色，可关闭且关闭状态持久化）。AppBar.vue 仅新增 <NotificationBell/> 区块（不改现有布局结构，与 G35 头像弹窗并存）；App.vue 挂载 AnnouncementBanner + 登录态 watch 初始化/清理通知 store。utils/wsClient.ts 扩展 WsMessage 联合类型新增 WsNotificationMessage（增量，不改既有分发逻辑）。SettingsPanel.vue 在「账号安全」区块内追加「系统公告」入口 + 历史公告弹窗（G33 改密/改邮箱、G18 删除账户、G19 设备管理并存）。验收：vue-tsc + eslint + build 全通过。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 G17/G18（前端）——数据导出 + 账户删除 + 账户恢复。新增 api/account.ts（createExport/fetchExportStatus/deleteAccount/restoreAccount + ExportTaskInfo 类型）。SettingsPanel.vue 新增两个区块：「数据与隐私」（导出我的数据按钮 → 2s 轮询进度 → 成功后显示带体积的下载入口；组件卸载清理定时器）与「危险操作」（红色删除账户按钮 + 二次确认弹窗，需输入「确认删除我的账户和所有数据」才启用确认按钮，确认后清通知 store + 清登录态跳登录页）。LoginView.vue 新增「恢复账户」入口 + 弹窗（用户名+密码 → POST /auth/restore-account → 成功写入 token 并跳转），与「忘记密码？」并排；为避免改泳道A 的 http.ts（未透出业务码），采用常驻入口而非错误码探测。验收：vue-tsc + eslint + build 全通过。

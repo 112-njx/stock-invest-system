@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useUserStore } from '@/stores/user'
+import { restoreAccount } from '@/api/account'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
+import { useUserStore } from '@/stores/user'
+import { toast } from '@/utils/toast'
 
 const route = useRoute()
 const router = useRouter()
@@ -63,6 +65,49 @@ async function submit() {
 
 function goForgot() {
   router.push({ name: 'forgot-password' })
+}
+
+// ---- G18：账户恢复（注销后 30 天宽限期内可自助恢复）----
+const restoreOpen = ref(false)
+const restorePassword = ref('')
+const restoreError = ref('')
+const restoreLoading = ref(false)
+
+function openRestore() {
+  restoreOpen.value = true
+  restorePassword.value = ''
+  restoreError.value = ''
+}
+
+function closeRestore() {
+  if (restoreLoading.value) return
+  restoreOpen.value = false
+}
+
+async function submitRestore() {
+  const name = username.value.trim()
+  if (!name) {
+    restoreError.value = '请输入用户名'
+    return
+  }
+  if (!restorePassword.value) {
+    restoreError.value = '请输入密码'
+    return
+  }
+  restoreError.value = ''
+  restoreLoading.value = true
+  try {
+    const data = await restoreAccount(name, restorePassword.value)
+    userStore.token = data.token
+    await userStore.fetchMe().catch(() => {})
+    toast.success('账户已恢复')
+    restoreOpen.value = false
+    router.push((route.query.redirect as string) || '/market')
+  } catch {
+    // 错误提示由 axios 拦截器统一 toast
+  } finally {
+    restoreLoading.value = false
+  }
 }
 </script>
 
@@ -134,9 +179,11 @@ function goForgot() {
           <p class="form__hint">注册后将向该邮箱发送验证链接（10 分钟内有效）。</p>
         </template>
 
-        <!-- G33：忘记密码入口（仅登录态展示） -->
+        <!-- G33：忘记密码入口 / G18：账户恢复入口（仅登录态展示） -->
         <div v-if="tab === 'login'" class="form__aux">
           <button type="button" class="link" @click="goForgot">忘记密码？</button>
+          <span class="divider">·</span>
+          <button type="button" class="link" @click="openRestore">恢复账户</button>
         </div>
 
         <BaseButton type="submit" block size="lg" :loading="loading" class="submit">
@@ -144,6 +191,36 @@ function goForgot() {
         </BaseButton>
       </form>
     </div>
+
+    <!-- G18：账户恢复弹窗（注销后 30 天宽限期内） -->
+    <Teleport to="body">
+      <div v-if="restoreOpen" class="restore-mask" @click.self="closeRestore">
+        <div class="restore-dialog">
+          <h3 class="restore-dialog__title">恢复账户</h3>
+          <p class="restore-dialog__hint">
+            若您的账户在 30 天内被注销，可用原用户名与密码恢复。逾期数据已永久删除，无法恢复。
+          </p>
+          <BaseInput
+            v-model="username"
+            label="用户名"
+            placeholder="请输入原用户名"
+            autocomplete="username"
+          />
+          <BaseInput
+            v-model="restorePassword"
+            label="密码"
+            type="password"
+            placeholder="请输入原密码"
+            :error="restoreError"
+            autocomplete="current-password"
+          />
+          <div class="restore-dialog__actions">
+            <BaseButton type="button" variant="ghost" @click="closeRestore">取消</BaseButton>
+            <BaseButton type="button" :loading="restoreLoading" @click="submitRestore">确认恢复</BaseButton>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -230,8 +307,14 @@ function goForgot() {
 }
 .form__aux {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 6px;
   margin-top: -4px;
+}
+.divider {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 .link {
   font-size: 13px;
@@ -240,5 +323,43 @@ function goForgot() {
 }
 .link:hover {
   text-decoration: underline;
+}
+
+/* G18：账户恢复弹窗 */
+.restore-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+.restore-dialog {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 22px 22px 18px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.restore-dialog__title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.restore-dialog__hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.restore-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 </style>

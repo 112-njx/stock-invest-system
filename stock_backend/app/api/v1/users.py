@@ -141,3 +141,23 @@ def download_export(
         media_type="application/zip",
         filename=path.name,
     )
+
+
+# ==================================================================
+# G18：账户删除（P1-5b 删除权）
+# ==================================================================
+
+
+@router.delete("/me")
+def delete_me(
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """G18：注销账户（软删除）。
+
+    置 is_deleted/deleted_at + 立即吊销全部 refresh session；access token 因
+    get_current_user 的 is_deleted 检查即刻失效。30 天宽限期内可经
+    POST /api/v1/auth/restore-account 恢复，逾期由 beat 硬删级联清理全部数据。
+    """
+    result = user_service.delete_account(db, current)
+    return ok(data=result, msg="账户已注销")

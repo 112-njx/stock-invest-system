@@ -340,9 +340,32 @@ curl -X POST "http://127.0.0.1:8000/api/v1/auth/reset-password" -H "Content-Type
 
 （token 无效/过期返回 `{"code":40012,"msg":"重置链接无效或已过期"}`）
 
+## 10. 恢复账户（G18）
+
+- **接口名称**：恢复已注销账户
+- **请求 Method**：POST
+- **请求 Path**：/api/v1/auth/restore-account
+- **接口作用**：**30 天宽限期内**用原用户名+密码恢复已注销账户，成功后签发新双 token（access + refresh Cookie）。超过宽限期返回 `410/41001`。
+- **请求 Body**：有（Body-JSON：username、password）
+
+**请求示例（curl）**
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/auth/restore-account" -H "Content-Type: application/json" -d '{"username":"alice","password":"pass123456"}'
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"账户已恢复","data":{"token":"eyJhbGciOi...","user":{"id":1,"username":"alice","is_deleted":false}}}
+```
+
+（用户名/密码错误返回 401/40101；账户未注销返回 `400/40041`；超宽限期返回 `410/41001`）
+
 # 用户信息 API（Users）
 
 ## 1. 当前用户信息
+
 
 - **接口名称**：当前用户信息
 - **请求 Method**：GET
@@ -1390,6 +1413,29 @@ curl -X DELETE "http://127.0.0.1:8000/api/v1/memory/facts" -H "Authorization: Be
 ```json
 {"code":0,"msg":"已清空","data":{"deleted":5}}
 ```
+
+## 8. 注销账户（G18）
+
+- **接口名称**：注销账户（软删除）
+- **请求 Method**：DELETE
+- **请求 Path**：/api/v1/users/me
+- **接口作用**：注销当前账户。置 `is_deleted/deleted_at` + **立即吊销全部 refresh session**；access token 因 `get_current_user` 的 is_deleted 检查**即刻失效**。**30 天宽限期内**可经 `POST /api/v1/auth/restore-account` 恢复，逾期由 beat 每日 4:45 硬删级联清理全部数据（含记忆目录与导出文件）。
+- **请求 Body**：无（Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -X DELETE "http://127.0.0.1:8000/api/v1/users/me" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"账户已注销","data":{"message":"账户已注销，30 天内可登录后申请恢复，逾期将永久删除全部数据","grace_days":30}}
+```
+
+> 注销后所有受保护端点返回 `{"code":40103,"msg":"账户已注销"}`；登录返回 `{"code":40310,"msg":"账户已注销。如需恢复，请在 30 天宽限期内使用「恢复账户」功能"}`。
+> 硬删级联范围：user_watchlist / support_resistance / trading_strategies / conversations / user_agents / agent_runs / memory_chunks / user_memory_files / user_sessions / notifications / export_tasks（DB 层均为 ON DELETE CASCADE），chat_messages / backtest_tasks / backtest_results / agent_steps 经中间表级联；另删除 `data/memory/{user_id}/` 目录与导出 ZIP。
 
 # 通知中心 API（Notifications）
 

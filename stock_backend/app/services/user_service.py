@@ -1,7 +1,9 @@
-"""用户域服务：资料更新、重点关注股票（合并实时价 + 自动同步 + Redis 缓存）、支撑/压力位。"""
+"""用户域服务：资料更新、重点关注股票（合并实时价 + 自动同步 + Redis 缓存）、支撑/压力位、账户删除。"""
 
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
@@ -11,6 +13,8 @@ from app.repositories import symbol_repo, user_repo
 from app.schemas.user import WatchlistOut
 from app.services import market_service
 from app.utils import market_cache
+
+logger = logging.getLogger(__name__)
 
 
 def update_profile(db: Session, user: User, nickname: str | None = None, avatar_url: str | None = None) -> User:
@@ -76,6 +80,110 @@ def change_email(db: Session, user: User, password: str, new_email: str) -> dict
 
         logging.getLogger(__name__).warning("send verify email failed for %s (best-effort)", new_email, exc_info=True)
     return {"message": "邮箱已更新，请查收验证邮件完成验证"}
+
+
+# ==================================================================
+# G18：账户删除（P1-5b 删除权）——软删 → 30 天宽限 → 硬删级联
+# ==================================================================
+
+ACCOUNT_GRACE_DAYS = 30  # 软删除后的恢复宽限期
+
+
+def delete_account(db: Session, user: User) -> dict:
+    """软删除账户：置 is_deleted/deleted_at + 立即吊销全部 refresh session。
+
+    access token 失效由 deps.get_current_user 的 is_deleted 检查保证（无需黑名单遍历）。
+    """
+    from app.services import session_service
+
+    if user.is_deleted:
+        raise ApiError(status_code=400, code=40040, msg="账户已处于注销状态")
+    user.is_deleted = True
+    user.deleted_at = datetime.now(UTC)
+    session_service.revoke_all_user_sessions(db, user.id)
+    db.commit()
+    logger.info("account soft-deleted: user_id=%s", user.id)
+    return {
+        "message": f"账户已注销，{ACCOUNT_GRACE_DAYS} 天内可登录后申请恢复，逾期将永久删除全部数据",
+        "grace_days": ACCOUNT_GRACE_DAYS,
+    }
+
+
+def restore_account(db: Session, username: str, password: str) -> User:
+    """宽限期内恢复账户（校验用户名+密码）。超过宽限期则拒绝。"""
+    from app.core.security import verify_password
+
+    user = user_repo.get_by_username(db, username.strip())
+    if user is None or not verify_password(password, user.password_hash):
+        raise ApiError(status_code=401, code=40101, msg="用户名或密码错误")
+    if not user.is_deleted:
+        raise ApiError(status_code=400, code=40041, msg="账户未被注销，无需恢复")
+    if user.deleted_at is not None:
+        elapsed = datetime.now(UTC) - _as_utc(user.deleted_at)
+        if elapsed.days >= ACCOUNT_GRACE_DAYS:
+            raise ApiError(status_code=410, code=41001, msg="恢复期已过，账户数据已被永久删除")
+    user.is_deleted = False
+    user.deleted_at = None
+    db.commit()
+    db.refresh(user)
+    logger.info("account restored: user_id=%s", user.id)
+    return user
+
+
+def _as_utc(dt: datetime) -> datetime:
+    """DB naive 时间按 UTC 归一（项目惯例：库内一律 UTC）。"""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def hard_delete_account(db: Session, user_id: int) -> dict:
+    """硬删除：级联清理全部关联数据 + 记忆目录 + 导出文件。
+
+    11 张关联表（user_watchlist / support_resistance / trading_strategies /
+    conversations / user_agents / agent_runs / memory_chunks / user_memory_files /
+    user_sessions / notifications / export_tasks）在建表时均为 ON DELETE CASCADE，
+    chat_messages / backtest_tasks / backtest_results / agent_steps 经中间表级联；
+    故 db.delete(user) 即完成 DB 层全量级联。
+    """
+    import shutil
+    from pathlib import Path
+
+    from app.core.config import get_settings
+    from app.models.export_task import ExportTask
+
+    user = user_repo.get_by_id(db, user_id)
+    if user is None:
+        return {"deleted": False, "reason": "用户不存在"}
+
+    # 1) 先删导出文件（DB 级联会删 export_tasks 行，删行后拿不到路径）
+    export_rows = db.query(ExportTask).filter(ExportTask.user_id == user_id).all()
+    for row in export_rows:
+        from app.services.export_service import delete_export_file
+
+        delete_export_file(row.file_path)
+
+    # 2) DB 级联删除用户及其全部关联数据
+    db.delete(user)
+    db.commit()
+
+    # 3) 删除本地记忆目录（DB 之外的落盘数据）
+    memory_dir = Path(get_settings().MEMORY_DIR) / str(user_id)
+    if memory_dir.exists():
+        shutil.rmtree(memory_dir, ignore_errors=True)
+
+    logger.info("account hard-deleted: user_id=%s", user_id)
+    return {"deleted": True}
+
+
+def purge_expired_deleted_accounts(db: Session) -> int:
+    """扫描并硬删超过宽限期的软删账户，返回处理条数（beat 每日调用）。"""
+    cutoff = datetime.now(UTC) - timedelta(days=ACCOUNT_GRACE_DAYS)
+    rows = list(db.scalars(select(User).where(User.is_deleted.is_(True), User.deleted_at.is_not(None))))
+    purged = 0
+    for user in rows:
+        if _as_utc(user.deleted_at) <= cutoff:
+            hard_delete_account(db, user.id)
+            purged += 1
+    return purged
 
 
 def ensure_admins(db: Session) -> None:

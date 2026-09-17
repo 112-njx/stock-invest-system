@@ -153,3 +153,10 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
 11. **【本地开发环境】Redis 容器需手动启动，否则缓存/SSE/同步类用例大面积失败**
    - 现象：`stock-redis` 容器 Exited 时，`test_sse`/`test_market_cache`/`test_sync_service` 等 Redis 依赖用例失败，且 pytest 因连接重试耗时从 ~85s 膨胀到 ~20 分钟。
    - 需人工操作：跑后端测试前先 `docker start stock-redis`（或确保 Docker Desktop 已启动容器）。本地 DB 同理：dev 库现为容器 `pgvector/pgvector:pg16`（127.0.0.1:5433）。
+
+13. **【泳道 B · G16/G18】`test_research_graph.py::test_deep_chat_records_agent_steps` 偶发失败（时序敏感，非回归）**
+   - 现象：全库 `pytest` 偶现该用例失败（449 passed / 1 failed），单跑该文件或单跑该用例均通过；紧接重跑全库即 450 passed / 0 failed。
+   - 根因：该用例直接调 `chat_service.stream_chat` 并断言 5 个节点各产 1 个 delta，链路内含基于**真实墙钟**的三级超时（首字 30s / 单 delta 15s / 总 120s）。全库高负载时偶发触及超时分支，delta 数不足。
+   - 影响：仅测试稳定性，非功能回归（生产环境超时阈值同样宽松，且超时行为本身是设计目标）。
+   - 建议（属该用例 owner）：断言放宽为「delta 数 ≥5 或含 done(truncated) 时跳过」，或为流式超时注入可控时钟。本轮未改他人测试文件。
+   - 需人工操作：无。

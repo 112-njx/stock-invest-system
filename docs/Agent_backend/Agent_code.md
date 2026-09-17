@@ -390,3 +390,11 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：G17 待确认项——导出任务队列归属。worker 启动命令为 `-Q backtest,sync,ai`，新增独立 export 队列必须同步修改 deploy/docker-compose.yml 与 docker-compose.dev.yml（跨泳道文件）；放 sync 队列会阻塞 15s 实时轮询，放 backtest 语义不符。当前决策：task_routes 将 export_tasks 路由到 **ai 队列**（低频用户触发长任务，与 ai 队列特性相近，零部署改动）。若后续导出量大需隔离，请在两个 compose 的 worker command 加 `export` 队列并改路由。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道B G18——账户删除（P1-5b 删除权）。Alembic 0016 给 users 加 is_deleted/deleted_at（+索引）；user_service 增 delete_account（软删+复用 G19 session_service.revoke_all_user_sessions 吊销全部会话）/restore_account（宽限期内校验用户名密码恢复，超期 410/41001）/hard_delete_account（DB 层 11 张关联表均 ON DELETE CASCADE，db.delete(user) 即级联；另删导出文件与 data/memory/{user_id}/ 目录）/purge_expired_deleted_accounts（扫描超 30 天）。端点：DELETE /api/v1/users/me（软删）、POST /api/v1/auth/restore-account（恢复+签发双 token）。deps.get_current_user 增 is_deleted 检查（access token 即时失效，401/40103）；auth_service.login 遇软删用户返回 403/40310。worker/tasks/account_tasks.py 硬删任务 + beat 每日 4:45。验收：test_account_delete.py 13 单测全绿。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G18 规划差异记录——P1-5「硬删除：级联删除…user_usage」中提到的 user_usage 表在本项目中不存在（全库 models 无该表，DB 中亦无）。实际需级联的用户关联表为 11 张：user_watchlist/support_resistance/trading_strategies/conversations/user_agents/agent_runs/memory_chunks/user_memory_files/user_sessions/notifications/export_tasks（均已核实为 ON DELETE CASCADE）；chat_messages/backtest_tasks/backtest_results/agent_steps 经中间表（conversations/trading_strategies/agent_runs）级联。无需额外建表。

@@ -63,6 +63,9 @@ def get_current_user(
     user = user_repo.get_by_id(db, user_id)
     if user is None:
         raise ApiError(status_code=401, code=40100, msg="用户不存在")
+    # G18：已注销账户的 access token 立即失效（无需遍历黑名单）
+    if user.is_deleted:
+        raise ApiError(status_code=401, code=40103, msg="账户已注销")
     return user
 
 

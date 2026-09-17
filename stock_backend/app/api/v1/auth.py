@@ -150,3 +150,24 @@ def reset_password(
     """重置密码：校验 token → 更新密码 → 吊销所有会话。"""
     result = auth_service.reset_password(db, payload.token, payload.new_password)
     return ok(data=result)
+
+
+# ==================================================================
+# G18：账户恢复（宽限期内）
+# ==================================================================
+
+
+@router.post("/restore-account")
+def restore_account(
+    payload: LoginIn,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    """G18：宽限期内恢复已注销账户（用户名+密码校验），成功后签发新双 token。"""
+    ua, ip = _get_client_info(request)
+    result = auth_service.restore_account(
+        db, payload.username, payload.password, user_agent=ua, ip_address=ip
+    )
+    _set_auth_cookies(response, result["token"], result["refresh_token"])
+    return ok(data={"token": result["token"], "user": result["user"]}, msg="账户已恢复")

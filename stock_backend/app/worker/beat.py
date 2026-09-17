@@ -32,4 +32,21 @@ def build_beat_schedule() -> dict:
             "task": "app.worker.tasks.export_tasks.cleanup_expired_exports",
             "schedule": crontab(hour=4, minute=30),  # G17：每日凌晨 4:30 清理过期导出文件（24h TTL）
         },
+        "account-purge-daily": {
+            "task": "app.worker.tasks.account_tasks.purge_deleted_accounts",
+            "schedule": crontab(hour=4, minute=45),  # G18：每日凌晨 4:45 硬删超 30 天宽限期的已注销账户
+        },
+        # ---- G05（P1-1）备份与灾难恢复：全部排在业务空闲窗口 ----
+        "backup-daily": {
+            "task": "app.worker.tasks.backup_tasks.backup_daily",
+            "schedule": crontab(hour=2, minute=0),  # 每日 02:00 全量备份（pg_dump -Fc + 文件镜像 + 保留期清理）
+        },
+        "backup-offsite-daily": {
+            "task": "app.worker.tasks.backup_tasks.offsite_sync_daily",
+            "schedule": crontab(hour=2, minute=30),  # 每日 02:30 异地同步（rclone → 对象存储）
+        },
+        "backup-verify-weekly": {
+            "task": "app.worker.tasks.backup_tasks.verify_backup_weekly",
+            "schedule": crontab(day_of_week=0, hour=3, minute=30),  # 每周日 03:30 恢复演练（避开 03:00 catalog_sync）
+        },
     }

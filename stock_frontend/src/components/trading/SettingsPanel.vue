@@ -8,11 +8,14 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { createExport, deleteAccount, exportDownloadUrl, fetchExportStatus } from '@/api/account'
+import type { ExportTaskInfo } from '@/api/account'
 import { changeEmailApi, changePasswordApi } from '@/api/auth'
 import { fetchAnnouncementHistory } from '@/api/notifications'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import type { Announcement } from '@/api/types'
+import { useNotificationStore } from '@/stores/notification'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
 import { toast } from '@/utils/toast'
@@ -20,6 +23,7 @@ import { toast } from '@/utils/toast'
 const router = useRouter()
 const theme = useThemeStore()
 const user = useUserStore()
+const notification = useNotificationStore()
 
 const menuOpen = ref(false)
 const cellRef = ref<HTMLElement | null>(null)
@@ -124,6 +128,104 @@ function annTimeText(iso: string): string {
   if (Number.isNaN(d.getTime())) return iso
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// ---- G17：数据导出（个人设置页「导出我的数据」按钮 + 进度 + 下载链接）----
+const exportTask = ref<ExportTaskInfo | null>(null)
+const exportLoading = ref(false)
+let exportTimer: ReturnType<typeof setInterval> | null = null
+
+function stopExportPolling() {
+  if (exportTimer) {
+    clearInterval(exportTimer)
+    exportTimer = null
+  }
+}
+
+onBeforeUnmount(stopExportPolling)
+
+async function onExport() {
+  if (exportLoading.value) return
+  exportLoading.value = true
+  try {
+    exportTask.value = await createExport()
+    toast.info('导出任务已提交，正在打包…')
+    startExportPolling()
+  } catch {
+    // 错误提示由 axios 拦截器统一 toast
+  } finally {
+    exportLoading.value = false
+  }
+}
+
+function startExportPolling() {
+  stopExportPolling()
+  exportTimer = setInterval(async () => {
+    const id = exportTask.value?.task_id
+    if (!id) return stopExportPolling()
+    try {
+      const info = await fetchExportStatus(id)
+      exportTask.value = info
+      if (info.status === 'success' || info.status === 'failed' || info.status === 'expired') {
+        stopExportPolling()
+        if (info.status === 'success') toast.success('导出完成，可点击下载')
+        if (info.status === 'failed') toast.error('导出失败，请稍后重试')
+      }
+    } catch {
+      stopExportPolling()
+    }
+  }, 2000)
+}
+
+function onDownloadExport() {
+  const url = exportTask.value?.download_url
+  if (!url) return
+  window.open(exportDownloadUrl(url), '_blank')
+}
+
+function exportSizeText(size: number | null): string {
+  if (!size) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+// ---- G18：删除账户（红色危险区 + 二次确认需输入指定文字）----
+const DANGER_PHRASE = '确认删除我的账户和所有数据'
+const dangerOpen = ref(false)
+const dangerInput = ref('')
+const dangerLoading = ref(false)
+
+function openDanger() {
+  dangerOpen.value = false
+  dangerInput.value = ''
+  dangerOpen.value = true
+}
+
+function closeDanger() {
+  if (dangerLoading.value) return
+  dangerOpen.value = false
+  dangerInput.value = ''
+}
+
+async function confirmDelete() {
+  if (dangerInput.value.trim() !== DANGER_PHRASE) {
+    toast.error('请输入指定确认文字')
+    return
+  }
+  dangerLoading.value = true
+  try {
+    await deleteAccount()
+    toast.info('账户已注销，30 天内可恢复')
+    dangerOpen.value = false
+    notification.clear()
+    user.clearAuth()
+    router.push({ name: 'login' })
+  } catch {
+    // 错误提示由 axios 拦截器统一 toast
+  } finally {
+    dangerLoading.value = false
+  }
 }
 
 onMounted(() => {
@@ -233,6 +335,38 @@ const menuStyle = computed(() => ({
       </span>
     </div>
 
+    <!-- G17：数据与隐私（导出我的数据） -->
+    <div class="settings-block settings-block--col">
+      <span class="settings-block__label">数据与隐私</span>
+      <div class="security-rows">
+        <button class="security-row" :disabled="exportLoading" @click="onExport">
+          <span class="security-row__text">导出我的数据</span>
+          <span class="security-row__arrow">›</span>
+        </button>
+        <button
+          v-if="exportTask?.status === 'success' && exportTask.download_url"
+          class="security-row"
+          @click="onDownloadExport"
+        >
+          <span class="security-row__text security-row__text--accent">
+            下载导出文件（{{ exportSizeText(exportTask.file_size) }}）
+          </span>
+          <span class="security-row__arrow">›</span>
+        </button>
+      </div>
+      <span v-if="exportTask && exportTask.status !== 'success'" class="security-note">
+        导出进度：{{ exportTask.status === 'failed' ? '失败' : exportTask.progress + '%' }}
+      </span>
+      <span v-else class="security-note">导出包含账号、关注、策略、回测、会话与记忆等全部数据，24 小时内有效。</span>
+    </div>
+
+    <!-- G18：危险区（删除账户） -->
+    <div class="settings-block settings-block--col danger-block">
+      <span class="settings-block__label danger-block__label">危险操作</span>
+      <button class="danger-btn" @click="openDanger">删除账户</button>
+      <span class="security-note">注销后 30 天内可恢复，逾期将永久删除全部数据。</span>
+    </div>
+
     <div class="settings-dev">
       <span class="settings-dev__text">本软件由 Xhope(发誓不做夜猫子)全程开发</span>
     </div>
@@ -256,6 +390,38 @@ const menuStyle = computed(() => ({
           </ul>
           <div class="sec-dialog__actions">
             <BaseButton type="button" variant="ghost" @click="annOpen = false">关闭</BaseButton>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- G18：删除账户二次确认弹窗（需输入指定确认文字） -->
+    <Teleport to="body">
+      <div v-if="dangerOpen" class="sec-mask" @click.self="closeDanger">
+        <div class="sec-dialog danger-dialog">
+          <h3 class="sec-dialog__title danger-dialog__title">删除账户</h3>
+          <p class="danger-dialog__warn">
+            此操作将注销您的账户并删除全部数据（关注、策略、回测、会话、AI 记忆等）。
+            30 天内可登录后申请恢复，逾期将<strong>永久删除且不可恢复</strong>。
+          </p>
+          <BaseInput
+            v-model="dangerInput"
+            label="请输入以下文字以确认"
+            :placeholder="DANGER_PHRASE"
+            autocomplete="off"
+          />
+          <p class="danger-dialog__phrase">{{ DANGER_PHRASE }}</p>
+          <div class="sec-dialog__actions">
+            <BaseButton type="button" variant="ghost" @click="closeDanger">取消</BaseButton>
+            <BaseButton
+              type="button"
+              variant="danger"
+              :loading="dangerLoading"
+              :disabled="dangerInput.trim() !== DANGER_PHRASE"
+              @click="confirmDelete"
+            >
+              确认删除
+            </BaseButton>
           </div>
         </div>
       </div>
@@ -632,5 +798,54 @@ const menuStyle = computed(() => ({
   margin-top: 4px;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+/* G17：数据导出 */
+.security-row__text--accent {
+  color: var(--accent);
+}
+
+/* G18：危险区（删除账户） */
+.danger-block {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.danger-block__label {
+  color: var(--down, #ef4444);
+}
+.danger-btn {
+  padding: 7px 10px;
+  border: 1px solid var(--down, #ef4444);
+  border-radius: 4px;
+  color: var(--down, #ef4444);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.danger-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+.danger-dialog__title {
+  color: var(--down, #ef4444);
+}
+.danger-dialog__warn {
+  margin-bottom: 14px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+.danger-dialog__warn strong {
+  color: var(--down, #ef4444);
+}
+.danger-dialog__phrase {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--bg-panel-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text);
+  user-select: all;
 }
 </style>

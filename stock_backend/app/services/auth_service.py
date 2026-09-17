@@ -77,6 +77,14 @@ def login(
         _record_login_failure(username)
         raise ApiError(status_code=401, code=40101, msg="用户名或密码错误")
 
+    # G18：已注销账户拒绝登录（30 天宽限期内可经 /auth/restore-account 恢复）
+    if user.is_deleted:
+        raise ApiError(
+            status_code=403,
+            code=40310,
+            msg="账户已注销。如需恢复，请在 30 天宽限期内使用「恢复账户」功能",
+        )
+
     # 登录成功：清零计数器
     _clear_login_failures(username)
     return _build_auth_result(db, user, user_agent, ip_address)
@@ -185,6 +193,21 @@ def revoke_session_by_id(db: Session, user_id: int, session_id: int) -> None:
 # ==================================================================
 # G23：邮箱验证 / 密码重置 / 登录暴力保护
 # ==================================================================
+
+
+def restore_account(
+    db: Session,
+    username: str,
+    password: str,
+    user_agent: str | None = None,
+    ip_address: str | None = None,
+) -> dict:
+    """G18：宽限期内恢复已注销账户，成功后直接签发新双 token。"""
+    from app.services import user_service
+
+    user = user_service.restore_account(db, username, password)
+    _clear_login_failures(username.strip())
+    return _build_auth_result(db, user, user_agent, ip_address)
 
 
 def _frontend_base_url() -> str:
