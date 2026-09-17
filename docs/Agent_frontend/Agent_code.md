@@ -190,3 +190,11 @@ Agent的前端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：V0.3 G17/G18（前端）——数据导出 + 账户删除 + 账户恢复。新增 api/account.ts（createExport/fetchExportStatus/deleteAccount/restoreAccount + ExportTaskInfo 类型）。SettingsPanel.vue 新增两个区块：「数据与隐私」（导出我的数据按钮 → 2s 轮询进度 → 成功后显示带体积的下载入口；组件卸载清理定时器）与「危险操作」（红色删除账户按钮 + 二次确认弹窗，需输入「确认删除我的账户和所有数据」才启用确认按钮，确认后清通知 store + 清登录态跳登录页）。LoginView.vue 新增「恢复账户」入口 + 弹窗（用户名+密码 → POST /auth/restore-account → 成功写入 token 并跳转），与「忘记密码？」并排；为避免改泳道A 的 http.ts（未透出业务码），采用常驻入口而非错误码探测。验收：vue-tsc + eslint + build 全通过。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 G03——法律页面+版权条+免责声明（P0-8 合规）。新增 src/views/legal/{LegalPage,TermsView,PrivacyView,DisclaimerView}.vue：LegalPage 为公共骨架（标题/生效日期/正文排版/返回），三页按 P0-8 分节撰写——用户协议（服务条款/用户行为规范/知识产权/免责条款/争议解决）、隐私政策（收集信息类型/使用方式/存储方式/用户权利含访问·更正·导出·删除·记忆管理/数据安全措施/政策更新）、免责声明（产品定位声明/AI生成内容免责/数据与回测免责/投资风险提示/责任限制/附则）。新增 components/layout/AppFooter.vue 底部版权条「© 2026 stock-agent-聂久翔 | 免责声明 | 隐私政策」，挂 App.vue 全页面可见。router/index.ts 追加 /terms /privacy /disclaimer 三条 public 路由（仅追加，避让 G35）。LoginView.vue 注册 tab 新增协议勾选（默认不勾选，未勾选不能提交，三份文件新窗口打开）并加校验。SettingsPanel.vue 新增「关于/法律」区块（关于本产品弹窗含产品定位声明「本产品为量化研究辅助工具，非证券投资咨询服务」+ 三份法律文件入口）。验收：vue-tsc + eslint + build 全通过，三个法律页均已分包产出。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G03 AI 回复免责声明——实现方式为**前端 UI 元素**（非注入消息文本）。MessageBubble.vue 在 assistant 气泡 markdown 正文下方追加 `<p class="chat-msg__disclaimer">`，ChatMessages.vue 在流式完成（!streaming && streamingContent）后同样追加，两处样式一致（虚线分隔+小字灰色）。选此方案理由：① 历史消息与流式渲染两处统一，无需改后端；② 不污染 chat_messages 落库内容，导出数据与后续回显保持纯净；③ 避免后端若同时追加导致的重复。固定文案：以上分析由 AI 生成，仅供研究参考，不构成投资建议。投资有风险，决策需谨慎。

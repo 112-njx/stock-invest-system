@@ -27,6 +27,10 @@ function isDegradedContent(text?: string): boolean {
       </div>
       <div v-if="message.role === 'assistant'" class="md-body" v-html="renderMarkdown(message.content)" />
       <div v-else class="chat-msg__user">{{ message.content }}</div>
+      <!-- G03：AI 回复免责声明（前端 UI 元素，不注入消息文本，避免污染落库内容与重复追加） -->
+      <p v-if="message.role === 'assistant' && message.content" class="chat-msg__disclaimer">
+        以上分析由 AI 生成，仅供研究参考，不构成投资建议。投资有风险，决策需谨慎。
+      </p>
     </div>
     <div v-if="message.role === 'user'" class="chat-msg__avatar chat-msg__avatar--me">我</div>
   </div>
@@ -55,6 +59,14 @@ function isDegradedContent(text?: string): boolean {
 .chat-msg__avatar--ai {
   background: var(--accent-soft);
   color: var(--accent);
+}
+.chat-msg__disclaimer {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
 }
 .chat-msg__avatar--me {
   background: var(--bg-hover);

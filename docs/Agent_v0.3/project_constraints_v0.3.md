@@ -160,3 +160,9 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 影响：仅测试稳定性，非功能回归（生产环境超时阈值同样宽松，且超时行为本身是设计目标）。
    - 建议（属该用例 owner）：断言放宽为「delta 数 ≥5 或含 done(truncated) 时跳过」，或为流式超时注入可控时钟。本轮未改他人测试文件。
    - 需人工操作：无。
+
+14. **【泳道 C · G31】记忆模块 Chroma 下线在途，`CHROMA_DIR` 配置项已删但代码/测试仍引用（进行中，非回归）**
+   - 现象：全库 `pytest` 20 failed / 465 passed，失败集中在 `test_memory.py` 与 `test_memory_dual_write.py`，报 `AttributeError: Settings(...) has no attribute 'CHROMA_DIR'`。
+   - 根因：G31（Chroma→pgvector 下线）从 `config.py` 移除了 `CHROMA_DIR`，但 `app/agent/memory/store.py`、`scripts/rebuild_embeddings.py`、`tests/test_memory*.py` 中仍有引用。属该泳道**未完成的在途改动**（工作区未提交）。
+   - 影响：仅该泳道范围内；与本轮泳道 B 的 G03（纯前端）无关，G03 未改任何后端文件。
+   - 需人工操作：无（泳道 C 完成后自愈）。若长期未收敛，需泳道 C 补齐 `store.py` 与 `test_memory*.py` 的引用清理。

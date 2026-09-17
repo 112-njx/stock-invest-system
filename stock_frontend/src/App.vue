@@ -3,6 +3,7 @@ import { computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AnnouncementBanner from '@/components/layout/AnnouncementBanner.vue'
 import AppBar from '@/components/layout/AppBar.vue'
+import AppFooter from '@/components/layout/AppFooter.vue'
 import { useNotificationStore } from '@/stores/notification'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
@@ -37,6 +38,8 @@ watch(
     <main class="app-main">
       <RouterView />
     </main>
+    <!-- G03：底部版权条（所有页面可见，含登录/注册/法律页） -->
+    <AppFooter />
   </div>
 </template>
 

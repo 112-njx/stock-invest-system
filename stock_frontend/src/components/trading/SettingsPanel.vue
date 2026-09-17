@@ -190,7 +190,12 @@ function exportSizeText(size: number | null): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
-// ---- G18：删除账户（红色危险区 + 二次确认需输入指定文字）----
+// ---- G03：关于本产品（产品定位声明）----
+const aboutOpen = ref(false)
+
+function openAbout() {
+  aboutOpen.value = true
+}
 const DANGER_PHRASE = '确认删除我的账户和所有数据'
 const dangerOpen = ref(false)
 const dangerInput = ref('')
@@ -367,6 +372,29 @@ const menuStyle = computed(() => ({
       <span class="security-note">注销后 30 天内可恢复，逾期将永久删除全部数据。</span>
     </div>
 
+    <!-- G03：关于/法律入口 + 产品定位声明 -->
+    <div class="settings-block settings-block--col about-block">
+      <span class="settings-block__label">关于 / 法律</span>
+      <div class="security-rows">
+        <button class="security-row" @click="openAbout">
+          <span class="security-row__text">关于本产品</span>
+          <span class="security-row__arrow">›</span>
+        </button>
+        <RouterLink to="/terms" class="security-row">
+          <span class="security-row__text">用户协议</span>
+          <span class="security-row__arrow">›</span>
+        </RouterLink>
+        <RouterLink to="/privacy" class="security-row">
+          <span class="security-row__text">隐私政策</span>
+          <span class="security-row__arrow">›</span>
+        </RouterLink>
+        <RouterLink to="/disclaimer" class="security-row">
+          <span class="security-row__text">免责声明</span>
+          <span class="security-row__arrow">›</span>
+        </RouterLink>
+      </div>
+    </div>
+
     <div class="settings-dev">
       <span class="settings-dev__text">本软件由 Xhope(发誓不做夜猫子)全程开发</span>
     </div>
@@ -390,6 +418,34 @@ const menuStyle = computed(() => ({
           </ul>
           <div class="sec-dialog__actions">
             <BaseButton type="button" variant="ghost" @click="annOpen = false">关闭</BaseButton>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- G03：关于本产品弹窗（产品定位声明） -->
+    <Teleport to="body">
+      <div v-if="aboutOpen" class="sec-mask" @click.self="aboutOpen = false">
+        <div class="sec-dialog">
+          <h3 class="sec-dialog__title">关于量化回测助手</h3>
+          <div class="about-body">
+            <p class="about-claim">
+              <strong>本产品为量化研究辅助工具，非证券投资咨询服务。</strong>
+            </p>
+            <p>
+              量化回测助手面向个人投资者，提供行情数据展示、技术指标计算、
+              策略描述转写、历史回测验证与 AI 辅助分析等功能，
+              旨在帮助用户整理交易思路、验证策略逻辑、观察历史数据表现。
+            </p>
+            <p>
+              本产品不提供任何投资建议、荐股或代客理财服务，
+              所展示的数据、指标、回测结果与 AI 生成内容仅供研究参考。
+              投资有风险，决策需谨慎，请您独立判断并自行承担投资决策风险。
+            </p>
+            <p class="about-meta">版本 v0.3 · © 2026 stock-agent-聂久翔</p>
+          </div>
+          <div class="sec-dialog__actions">
+            <BaseButton type="button" variant="ghost" @click="aboutOpen = false">关闭</BaseButton>
           </div>
         </div>
       </div>
@@ -847,5 +903,30 @@ const menuStyle = computed(() => ({
   font-size: 12px;
   color: var(--text);
   user-select: all;
+}
+
+/* G03：关于/法律 */
+.about-block {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.about-body {
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+}
+.about-body p {
+  margin: 0 0 10px;
+}
+.about-claim {
+  padding: 8px 10px;
+  background: var(--bg-panel-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text);
+}
+.about-meta {
+  color: var(--text-muted);
+  font-size: 11.5px;
 }
 </style>

@@ -17,6 +17,7 @@ const password = ref('')
 const confirm = ref('')
 const nickname = ref('')
 const email = ref('')
+const agreed = ref(false) // G03：注册协议勾选（默认不勾选）
 const errors = ref<Record<string, string>>({})
 const loading = ref(false)
 
@@ -34,9 +35,16 @@ function validate(): boolean {
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) e.email = '邮箱格式不正确'
     if (!nickname.value.trim()) e.nickname = '请输入昵称'
     if (password.value !== confirm.value) e.confirm = '两次密码不一致'
+    // G03：未勾选协议不能注册
+    if (!agreed.value) e.agreed = '请先阅读并同意用户协议、隐私政策与免责声明'
   }
   errors.value = e
   return Object.keys(e).length === 0
+}
+
+function openLegal(name: 'terms' | 'privacy' | 'disclaimer') {
+  const url = router.resolve({ name }).href
+  window.open(url, '_blank')
 }
 
 async function submit() {
@@ -177,6 +185,18 @@ async function submitRestore() {
             :maxlength="64"
           />
           <p class="form__hint">注册后将向该邮箱发送验证链接（10 分钟内有效）。</p>
+
+          <!-- G03：注册协议勾选（默认不勾选，未勾选不能提交） -->
+          <label class="agree">
+            <input v-model="agreed" type="checkbox" class="agree__box" />
+            <span class="agree__text">
+              我已阅读并同意
+              <button type="button" class="link" @click.prevent="openLegal('terms')">《用户协议》</button>
+              <button type="button" class="link" @click.prevent="openLegal('privacy')">《隐私政策》</button>
+              <button type="button" class="link" @click.prevent="openLegal('disclaimer')">《免责声明》</button>
+            </span>
+          </label>
+          <span v-if="errors.agreed" class="agree__error">{{ errors.agreed }}</span>
         </template>
 
         <!-- G33：忘记密码入口 / G18：账户恢复入口（仅登录态展示） -->
@@ -315,6 +335,37 @@ async function submitRestore() {
 .divider {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* G03：注册协议勾选 */
+.agree {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  cursor: pointer;
+}
+.agree__box {
+  flex: none;
+  margin-top: 2px;
+  width: 13px;
+  height: 13px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.agree__text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.agree__text .link {
+  font-size: 12px;
+  padding: 0;
+  vertical-align: baseline;
+}
+.agree__error {
+  margin-top: -8px;
+  font-size: 11px;
+  color: var(--down, #ef4444);
 }
 .link {
   font-size: 13px;

@@ -39,6 +39,25 @@ const router = createRouter({
       component: () => import('@/views/VerifyEmailView.vue'),
       meta: { public: true },
     },
+    // G03：法律页面（公开，免登录）
+    {
+      path: '/terms',
+      name: 'terms',
+      component: () => import('@/views/legal/TermsView.vue'),
+      meta: { public: true },
+    },
+    {
+      path: '/privacy',
+      name: 'privacy',
+      component: () => import('@/views/legal/PrivacyView.vue'),
+      meta: { public: true },
+    },
+    {
+      path: '/disclaimer',
+      name: 'disclaimer',
+      component: () => import('@/views/legal/DisclaimerView.vue'),
+      meta: { public: true },
+    },
     {
       path: '/market',
       name: 'market',

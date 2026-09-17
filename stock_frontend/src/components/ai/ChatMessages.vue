@@ -109,6 +109,10 @@ function num(v?: number | null): string {
         </div>
         <div class="md-body" v-html="renderMarkdown(ai.streamingContent)" />
         <span v-if="!ai.streamingContent" class="chat-msg__cursor">AI 思考中…</span>
+        <!-- G03：AI 回复免责声明（流式完成后展示，与历史消息气泡一致） -->
+        <p v-if="!ai.streaming && ai.streamingContent" class="chat-msg__disclaimer">
+          以上分析由 AI 生成，仅供研究参考，不构成投资建议。投资有风险，决策需谨慎。
+        </p>
         <AgentStepsPanel
           v-if="ai.streamingSteps.length"
           :steps="ai.streamingSteps"
@@ -241,6 +245,15 @@ function num(v?: number | null): string {
   flex: 1;
   min-width: 0;
   max-width: 88%;
+}
+/* G03：AI 回复免责声明（与 MessageBubble 保持一致） */
+.chat-msg__disclaimer {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
 }
 .chat-msg__cursor {
   font-size: 12px;
