@@ -5,64 +5,25 @@ import { trackTiming } from '@/utils/monitor'
 
 declare module 'vue-router' {
   interface RouteMeta {
-    /** 无需登录即可访问（如登录页） */
-    public?: boolean
+    /**
+     * 独立页：不渲染顶部导航栏与系统公告条（登录 / 找回密码 / 法律页等）。
+     * G35 起与「是否需要登录」解耦——方案 B 下所有业务页均免登录可浏览。
+     */
+    bare?: boolean
   }
 }
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', redirect: '/market' },
+    // G35（方案 B）：`/` 为行情首页，免登录即可浏览；原登录页独立保留在 `/login`
     {
-      path: '/login',
-      name: 'login',
-      component: () => import('@/views/LoginView.vue'),
-      meta: { public: true },
-    },
-    // G33：忘记密码 / 重置密码 / 邮箱验证（公开页，免登录）
-    {
-      path: '/forgot-password',
-      name: 'forgot-password',
-      component: () => import('@/views/ForgotPasswordView.vue'),
-      meta: { public: true },
-    },
-    {
-      path: '/reset-password',
-      name: 'reset-password',
-      component: () => import('@/views/ResetPasswordView.vue'),
-      meta: { public: true },
-    },
-    {
-      path: '/verify-email',
-      name: 'verify-email',
-      component: () => import('@/views/VerifyEmailView.vue'),
-      meta: { public: true },
-    },
-    // G03：法律页面（公开，免登录）
-    {
-      path: '/terms',
-      name: 'terms',
-      component: () => import('@/views/legal/TermsView.vue'),
-      meta: { public: true },
-    },
-    {
-      path: '/privacy',
-      name: 'privacy',
-      component: () => import('@/views/legal/PrivacyView.vue'),
-      meta: { public: true },
-    },
-    {
-      path: '/disclaimer',
-      name: 'disclaimer',
-      component: () => import('@/views/legal/DisclaimerView.vue'),
-      meta: { public: true },
-    },
-    {
-      path: '/market',
-      name: 'market',
+      path: '/',
+      name: 'market-home',
       component: () => import('@/views/MarketView.vue'),
     },
+    // 兼容既有链接与外部 deep link
+    { path: '/market', redirect: '/' },
     {
       path: '/market/detail',
       name: 'market-detail',
@@ -73,17 +34,63 @@ const router = createRouter({
       name: 'ai',
       component: () => import('@/views/AIView.vue'),
     },
+    // 独立页（不显示顶部导航/公告条）
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/LoginView.vue'),
+      meta: { bare: true },
+    },
+    // G33：忘记密码 / 重置密码 / 邮箱验证
+    {
+      path: '/forgot-password',
+      name: 'forgot-password',
+      component: () => import('@/views/ForgotPasswordView.vue'),
+      meta: { bare: true },
+    },
+    {
+      path: '/reset-password',
+      name: 'reset-password',
+      component: () => import('@/views/ResetPasswordView.vue'),
+      meta: { bare: true },
+    },
+    {
+      path: '/verify-email',
+      name: 'verify-email',
+      component: () => import('@/views/VerifyEmailView.vue'),
+      meta: { bare: true },
+    },
+    // G03：法律页面
+    {
+      path: '/terms',
+      name: 'terms',
+      component: () => import('@/views/legal/TermsView.vue'),
+      meta: { bare: true },
+    },
+    {
+      path: '/privacy',
+      name: 'privacy',
+      component: () => import('@/views/legal/PrivacyView.vue'),
+      meta: { bare: true },
+    },
+    {
+      path: '/disclaimer',
+      name: 'disclaimer',
+      component: () => import('@/views/legal/DisclaimerView.vue'),
+      meta: { bare: true },
+    },
   ],
 })
 
-// 登录守卫：未登录跳登录页，已登录访问登录页跳行情页
+/**
+ * G35（方案 B）：免登录浏览，不再有「未登录强制跳登录页」的守卫。
+ * 唯一的方向性跳转是已登录用户访问 `/login` 时回到首页；直接访问 `/login`（deep link）
+ * 仍正常展示登录页，用于强制登录场景。
+ */
 router.beforeEach((to) => {
   const user = useUserStore()
-  if (!to.meta.public && !user.token) {
-    return { name: 'login', query: { redirect: to.fullPath } }
-  }
   if (to.name === 'login' && user.token) {
-    return { name: 'market' }
+    return { name: 'market-home' }
   }
 })
 

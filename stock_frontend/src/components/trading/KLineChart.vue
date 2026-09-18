@@ -40,6 +40,8 @@ import {
 import type { SymbolInfo } from '@/api/market'
 import type { BacktestTrade } from '@/api/ai'
 import { useMarketStore, type Period } from '@/stores/market'
+import { useAuthModalStore } from '@/stores/authModal'
+import { useUserStore } from '@/stores/user'
 import { useWsStore } from '@/stores/wsStore'
 import { useThemeStore } from '@/stores/theme'
 import { trackTiming } from '@/utils/monitor'
@@ -77,6 +79,8 @@ const emit = defineEmits<{
 }>()
 
 const market = useMarketStore()
+const user = useUserStore()
+const authModal = useAuthModalStore()
 const theme = useThemeStore()
 const ws = useWsStore()
 
@@ -550,6 +554,11 @@ function drawSRLines(list: SupportResistanceItem[]) {
 }
 async function loadSRLines() {
   if (!props.symbol) return
+  // G35：未登录不拉取支撑/压力位（401 会触发拦截器把访客弹去登录页）
+  if (!user.token) {
+    drawSRLines([])
+    return
+  }
   try {
     const list = await fetchSupportResistance(props.symbol.id)
     drawSRLines(list)
@@ -662,6 +671,11 @@ const srSubmitting = ref(false)
 
 async function openSrDialog() {
   if (!props.symbol) return
+  // G35：支撑/压力位是账号维度数据，未登录改为弹登录框（不发鉴权请求）
+  if (!user.token) {
+    authModal.show('login')
+    return
+  }
   srList.value = []
   srDialogOpen.value = true
   try { srList.value = await fetchSupportResistance(props.symbol.id) } catch { /* 静默 */ }

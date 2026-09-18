@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import AnnouncementBanner from '@/components/layout/AnnouncementBanner.vue'
 import AppBar from '@/components/layout/AppBar.vue'
 import AppFooter from '@/components/layout/AppFooter.vue'
+import LoginModal from '@/components/auth/LoginModal.vue'
 import { useNotificationStore } from '@/stores/notification'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
@@ -15,7 +16,8 @@ theme.init()
 const route = useRoute()
 const user = useUserStore()
 const notification = useNotificationStore()
-const showAppbar = computed(() => !route.meta.public)
+// G35：独立页（登录/找回密码/法律页）不显示顶部导航与公告条；其余页面一律显示
+const showAppbar = computed(() => !route.meta.bare)
 
 // G16：登录后初始化通知（WS 绑定 + 未读数 + 活跃公告），登出时清理
 onMounted(() => {
@@ -40,6 +42,8 @@ watch(
     </main>
     <!-- G03：底部版权条（所有页面可见，含登录/注册/法律页） -->
     <AppFooter />
+    <!-- G35：登录/注册弹窗（全局单例，由 authModal store 控制显隐） -->
+    <LoginModal />
   </div>
 </template>
 

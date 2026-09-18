@@ -12,7 +12,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.{ts,vue,css,json}\"",
     "verify:xss": "node scripts/verify-xss.mjs",
-    "verify:pagination": "node scripts/verify-pagination.mjs"
+    "verify:pagination": "node scripts/verify-pagination.mjs",
+    "verify:routing": "node scripts/verify-g35-routing.mjs"
   },
   "dependencies": {
     "axios": "^1.19.0",

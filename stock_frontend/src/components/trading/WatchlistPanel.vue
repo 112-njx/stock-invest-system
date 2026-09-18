@@ -5,6 +5,8 @@
  * - 底部搜索栏：6 位代码实时联想（GET /symbols/search），选中添加关注
  * - 行内删除（DELETE /watchlist）
  * - readonly：第二层 E 区只读模式——隐藏搜索栏与删除按钮，仅行点击联动
+ * - G35（方案 B）：未登录不发关注接口（避免 401 报错），改为「登录后同步您的关注股票」
+ *   引导卡片；登录成功后自动加载关注列表
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import {
@@ -16,6 +18,7 @@ import {
   type WatchlistItem,
 } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
+import { useUserStore } from '@/stores/user'
 import { useWsStore } from '@/stores/wsStore'
 import { formatPct, formatPrice, trendClass } from '@/utils/color'
 import { toast } from '@/utils/toast'
@@ -23,10 +26,18 @@ import ListRow from '@/components/base/ListRow.vue'
 
 withDefaults(defineProps<{ readonly?: boolean }>(), { readonly: false })
 
-const emit = defineEmits<{ (e: 'dblclick', item: WatchlistItem): void }>()
+const emit = defineEmits<{
+  (e: 'dblclick', item: WatchlistItem): void
+  /** G35：未登录时用户点击「登录 / 注册」或搜索添加 → 由父级打开登录弹窗 */
+  (e: 'require-login'): void
+}>()
 
 const market = useMarketStore()
 const ws = useWsStore()
+const user = useUserStore()
+
+/** G35：未登录态（引导卡片代替关注列表） */
+const isGuest = computed(() => !user.token)
 
 const loading = ref(false)
 const loadError = ref(false)
@@ -59,6 +70,7 @@ const groupedSuggestions = computed(() => {
 
 /** V0.2：关注列表失败项重试（重新添加触发 kline_init，幂等） */
 async function retrySync(item: WatchlistItem) {
+  if (requireLogin()) return
   try {
     await addWatchlist(item.code)
     toast.info(`正在重新同步 ${item.name}`)
@@ -66,6 +78,13 @@ async function retrySync(item: WatchlistItem) {
 }
 
 async function load() {
+  // G35：未登录不请求 /watchlist（必 401），直接清空并展示引导卡片
+  if (isGuest.value) {
+    market.setWatchlist([])
+    loading.value = false
+    loadError.value = false
+    return
+  }
   loading.value = true
   loadError.value = false
   try {
@@ -76,6 +95,16 @@ async function load() {
     loading.value = false
   }
 }
+
+/** 需要登录的动作（添加/重试同步）：未登录改为弹登录框，不发请求 */
+function requireLogin(): boolean {
+  if (!isGuest.value) return false
+  emit('require-login')
+  return true
+}
+
+// G35：登录/登出后重新加载关注列表（登出时清空为引导卡片）
+watch(() => user.token, () => void load())
 
 function onSelect(item: WatchlistItem) {
   market.setCurrent({
@@ -124,6 +153,7 @@ watch(query, (q) => {
 })
 
 async function onPickSuggestion(s: SymbolInfo) {
+  if (requireLogin()) return
   try {
     const item = await addWatchlist(s.code)
     market.addWatchlistItem(item)
@@ -155,7 +185,13 @@ onMounted(load)
     </header>
 
     <div class="watchlist-panel__list">
-      <div v-if="loading" class="watchlist-panel__empty">加载中…</div>
+      <!-- G35：未登录引导卡片（D/E 区） -->
+      <div v-if="isGuest" class="watchlist-panel__guest">
+        <p class="wl-guest__title">登录后同步您的关注股票</p>
+        <p class="wl-guest__desc">关注列表与账号绑定，可在多设备间同步</p>
+        <button class="wl-guest__btn" @click="emit('require-login')">登录 / 注册</button>
+      </div>
+      <div v-else-if="loading" class="watchlist-panel__empty">加载中…</div>
       <div v-else-if="loadError" class="watchlist-panel__empty watchlist-panel__empty--error">
         <span>加载失败</span>
         <button class="wl-retry" @click="load">点击重试</button>
@@ -197,7 +233,7 @@ onMounted(load)
       </template>
     </div>
 
-    <div v-if="!readonly" class="watchlist-panel__search">
+    <div v-if="!readonly && !isGuest" class="watchlist-panel__search">
       <div class="search-box">
         <input
           v-model="query"
@@ -281,6 +317,39 @@ onMounted(load)
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+/* G35：未登录引导卡片 */
+.watchlist-panel__guest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  padding: 20px 16px;
+  text-align: center;
+}
+.wl-guest__title {
+  font-size: 13px;
+  color: var(--text);
+}
+.wl-guest__desc {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.wl-guest__btn {
+  margin-top: 4px;
+  height: 28px;
+  padding: 0 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #fff;
+  background: var(--accent);
+  transition: filter 0.15s;
+}
+.wl-guest__btn:hover {
+  filter: brightness(1.1);
 }
 .watchlist-panel__empty {
   padding: 20px 12px;

@@ -23,6 +23,8 @@ export const useNotificationStore = defineStore('notification', {
     items: [] as NotificationItem[],
     total: 0,
     loading: false,
+    /** G35：铃铛下拉面板开关（提到 store，供头像下拉菜单「通知中心」复用） */
+    panelOpen: false,
     /** 活跃公告（banner 数据源） */
     announcements: [] as Announcement[],
     /** 本会话内已关闭的公告 id（localStorage 持久化） */
@@ -51,6 +53,15 @@ export const useNotificationStore = defineStore('notification', {
     dispose() {
       this._unsubscribe?.()
       this._unsubscribe = null
+    },
+
+    /** G35：切换铃铛面板（打开时按需拉取列表）；头像下拉「通知中心」复用同一入口 */
+    async togglePanel() {
+      this.panelOpen = !this.panelOpen
+      if (this.panelOpen) await this.load()
+    },
+    closePanel() {
+      this.panelOpen = false
     },
 
     async refreshUnread() {

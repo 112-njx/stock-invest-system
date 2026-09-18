@@ -6,9 +6,11 @@
  * - M 交易策略 + 记忆文件 + 我的 Agent + 运行记录
  * - N 交易策略显示区（点击 M/J 策略后替换 K+L）
  */
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useAiStore, type QuickCardType } from '@/stores/ai'
+import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore } from '@/stores/market'
+import { useUserStore } from '@/stores/user'
 import SessionSidebar from '@/components/ai/SessionSidebar.vue'
 import WelcomeHeader from '@/components/ai/WelcomeHeader.vue'
 import ChatMessages from '@/components/ai/ChatMessages.vue'
@@ -19,6 +21,8 @@ import AgentRunDetailPanel from '@/components/ai/AgentRunDetailPanel.vue'
 
 const ai = useAiStore()
 const market = useMarketStore()
+const user = useUserStore()
+const authModal = useAuthModalStore()
 
 /** 功能卡片 → run_type（发送时映射，create 对应后端 strategy） */
 const CARD_RUN_TYPE: Record<QuickCardType, string> = {
@@ -86,6 +90,11 @@ function onCardClick(card: QuickCardType) {
 async function send() {
   const content = ai.inputText.trim()
   if (!content || ai.streaming) return
+  // G35（方案 B）：AI 页未登录可浏览布局，提交时才引导登录（不跳转页面）
+  if (!user.token) {
+    authModal.show('login')
+    return
+  }
   if (!ai.activeConversationId) await ai.createConversation()
 
   const finalContent = ai.strategyMode ? `${content}\n${buildRuleText()}`.trim() : content
@@ -122,15 +131,30 @@ async function send() {
   })
 }
 
-onMounted(() => {
+/** G35：会话/策略/Agent 列表均为账号维度数据，未登录不发请求（401 会被拦截器弹去登录页） */
+function loadUserData() {
+  if (!user.token) return
   void ai.loadConversations()
   void ai.loadStrategies()
   void ai.loadAgents()
+}
+
+onMounted(() => {
+  loadUserData()
   // 双向标的联动：从行情页进入 AI 页时，若 AI 页尚未选择标的则默认带出当前行情页标的
   if (!ai.selectedSymbol && market.current) {
     ai.selectSymbol(market.current)
   }
 })
+
+// G35：登录成功后刷新当前页用户态（弹窗登录不跳转，靠这里补数据）
+watch(
+  () => user.token,
+  (token) => {
+    if (token) loadUserData()
+    else ai.resetPanel()
+  }
+)
 
 // 离开 AI 页时中止流式连接，避免后台残留请求
 onUnmounted(() => {

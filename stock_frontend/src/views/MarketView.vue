@@ -10,6 +10,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchSymbols, fetchSyncStatus } from '@/api/market'
+import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
 import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
@@ -22,6 +23,7 @@ import SettingsPanel from '@/components/trading/SettingsPanel.vue'
 const router = useRouter()
 const market = useMarketStore()
 const ws = useWsStore()
+const authModal = useAuthModalStore()
 
 const indicesLoading = ref(false)
 const { start } = useSnapshotPolling(4000)
@@ -132,7 +134,8 @@ onUnmounted(() => {
   <div class="market">
     <div class="market-grid">
       <div class="grid-e">
-        <WatchlistPanel readonly @dblclick="goDetail" />
+        <!-- G35：未登录时面板内展示引导卡片，点击登录入口打开全局登录弹窗 -->
+        <WatchlistPanel readonly @dblclick="goDetail" @require-login="authModal.show('login')" />
       </div>
 
       <div class="grid-f">

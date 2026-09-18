@@ -2,34 +2,46 @@
 /**
  * G16：顶部导航栏通知铃铛（未读红点 + 计数）→ 通知列表下拉面板。
  * 仅新增本组件并挂入 AppBar 右侧区块，不改动 AppBar 现有布局结构。
+ * G35：面板开关由本地 ref 提到 notification store，供头像下拉菜单「通知中心」复用同一面板。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNotificationStore } from '@/stores/notification'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
 const store = useNotificationStore()
+const user = useUserStore()
 
-const open = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 
 onMounted(() => {
-  document.addEventListener('click', onDocClick)
-  store.refreshUnread().catch(() => {})
+  // 用 mousedown 而非 click：头像菜单「通知中心」在同一轮 click 里把面板置为打开，
+  // 若监听 click 会立刻把刚打开的面板判定为「点击外部」而关闭。
+  document.addEventListener('mousedown', onDocMouseDown)
+  // G35：未登录不发鉴权请求（401 会触发 refresh 失败分支把访客弹去登录页）
+  if (user.token) store.refreshUnread().catch(() => {})
 })
 onBeforeUnmount(() => {
-  document.removeEventListener('click', onDocClick)
+  document.removeEventListener('mousedown', onDocMouseDown)
 })
 
-function onDocClick(e: MouseEvent) {
-  if (open.value && rootRef.value && !rootRef.value.contains(e.target as Node)) {
-    open.value = false
+// G35：登录后补拉未读数（登出时由 App.vue 的 token watch 调 notification.clear）
+watch(
+  () => user.token,
+  (token) => {
+    if (token) store.refreshUnread().catch(() => {})
+  }
+)
+
+function onDocMouseDown(e: MouseEvent) {
+  if (store.panelOpen && rootRef.value && !rootRef.value.contains(e.target as Node)) {
+    store.closePanel()
   }
 }
 
 async function toggle() {
-  open.value = !open.value
-  if (open.value) await store.load()
+  await store.togglePanel()
 }
 
 const badgeText = computed(() => (store.unread > 99 ? '99+' : String(store.unread)))
@@ -54,8 +66,8 @@ async function onMarkAll() {
 }
 
 function onViewAll() {
-  open.value = false
-  router.push({ name: 'market' })
+  store.closePanel()
+  router.push({ name: 'market-home' })
 }
 
 /** 相对时间：1 分钟内「刚刚」，1 小时内「N 分钟前」，24 小时内「N 小时前」，否则本地日期 */
@@ -73,7 +85,8 @@ function timeText(iso: string): string {
 </script>
 
 <template>
-  <div class="bell" ref="rootRef">
+  <!-- G35：未登录不渲染铃铛（通知是账号维度数据，访客无可展示内容） -->
+  <div v-if="user.token" class="bell" ref="rootRef">
     <button class="icon-btn bell__btn" title="通知" @click.stop="toggle">
       <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
         <path d="M8 2a3.5 3.5 0 0 0-3.5 3.5v2.2L3.3 10h9.4l-1.2-2.3V5.5A3.5 3.5 0 0 0 8 2z" />
@@ -83,7 +96,7 @@ function timeText(iso: string): string {
     </button>
 
     <Teleport to="body">
-      <div v-if="open" class="notif-panel" @click.stop>
+      <div v-if="store.panelOpen" class="notif-panel" @click.stop>
         <div class="notif-panel__head">
           <span class="notif-panel__title">通知</span>
           <button v-if="store.unread > 0" class="notif-panel__action" @click="onMarkAll">全部已读</button>

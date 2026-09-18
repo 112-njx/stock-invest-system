@@ -15,6 +15,7 @@ import {
   fetchBacktestTask,
   type BacktestTrade,
 } from '@/api/ai'
+import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore, type Period } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
 import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
@@ -28,6 +29,7 @@ const router = useRouter()
 const route = useRoute()
 const market = useMarketStore()
 const ws = useWsStore()
+const authModal = useAuthModalStore()
 
 /** 回测显示跳转：带 strategy_id 时 D 区替换为策略指标面板（4.5） */
 const strategyId = computed(() => (route.query.strategy_id ? Number(route.query.strategy_id) : null))
@@ -89,7 +91,7 @@ const visibleMarkers = computed(() =>
 watch(strategyId, () => void loadBacktestMarkers())
 
 function goBack() {
-  router.push('/market')
+  router.push('/')
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -159,7 +161,7 @@ onBeforeUnmount(() => {
       <div class="col-right">
         <BasicInfoPanel />
         <StrategyMetricsPanel v-if="strategyId" :strategy-id="strategyId" />
-        <WatchlistPanel v-else />
+        <WatchlistPanel v-else @require-login="authModal.show('login')" />
       </div>
     </div>
   </div>

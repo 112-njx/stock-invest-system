@@ -9,6 +9,8 @@
 import { ref } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import { useAiStore } from '@/stores/ai'
+import { useAuthModalStore } from '@/stores/authModal'
+import { useUserStore } from '@/stores/user'
 import { deleteConversation } from '@/api/ai'
 import { useInfiniteList } from '@/composables/useInfiniteList'
 import MemoryFilesDialog from '@/components/ai/MemoryFilesDialog.vue'
@@ -21,6 +23,8 @@ type JTab = 'chat' | 'strategy'
 const ITEM_SIZE = 34
 
 const ai = useAiStore()
+const user = useUserStore()
+const authModal = useAuthModalStore()
 const tab = ref<JTab>('chat')
 
 const showMemory = ref(false)
@@ -55,11 +59,27 @@ function switchTab(newTab: JTab) {
 }
 
 function onNewOrBack() {
+  // G35：未登录不发鉴权请求（会话/记忆/Agent 均为账号维度数据），统一弹登录框
+  if (!user.token) {
+    authModal.show('login')
+    return
+  }
   if (tab.value === 'chat') {
     void ai.createConversation()
   } else {
     switchTab('chat')
   }
+}
+
+/** G35：记忆文件 / 我的 Agent / 运行记录入口（均需登录） */
+function openUserDialog(target: 'memory' | 'agents' | 'runs') {
+  if (!user.token) {
+    authModal.show('login')
+    return
+  }
+  if (target === 'memory') showMemory.value = true
+  else if (target === 'agents') showAgents.value = true
+  else showRuns.value = true
 }
 
 async function onDeleteConversation(id: number) {
@@ -111,7 +131,7 @@ function formatTime(iso?: string): string {
         <span>{{ tab === 'chat' ? '创建新会话' : '返回聊天' }}</span>
       </button>
 
-      <button class="j-menu__item" @click="showMemory = true">
+      <button class="j-menu__item" @click="openUserDialog('memory')">
         <!-- 记忆文件：空心轮廓云 -->
         <svg class="j-menu__icon" viewBox="0 0 88 72" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round">
           <path d="M16 42 A20 20 0 0 1 40 20 A24 24 0 0 1 70 40 L70 60 L12 60 Z" />
@@ -119,7 +139,7 @@ function formatTime(iso?: string): string {
         <span>记忆文件</span>
       </button>
 
-      <button class="j-menu__item" @click="showAgents = true">
+      <button class="j-menu__item" @click="openUserDialog('agents')">
         <!-- 我的 Agent：2x2 圆角方块网格 -->
         <svg class="j-menu__icon" viewBox="0 0 88 88" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round">
           <path d="M10 10 H34 V34 H10 Z M54 10 H78 V34 H54 Z M10 54 H34 V78 H10 Z M54 54 H78 V78 H54 Z" />
@@ -127,7 +147,7 @@ function formatTime(iso?: string): string {
         <span>我的 Agent</span>
       </button>
 
-      <button class="j-menu__item" @click="showRuns = true">
+      <button class="j-menu__item" @click="openUserDialog('runs')">
         <!-- 运行记录：双菱形叠加 -->
         <svg class="j-menu__icon" viewBox="0 0 88 88" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round">
           <path d="M44 8 L76 40 L44 72 L12 40 Z M44 32 L76 64 L44 88 L12 56 Z" />

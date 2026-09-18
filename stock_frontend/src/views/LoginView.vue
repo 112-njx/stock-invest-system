@@ -1,416 +1,147 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+/**
+ * G35 · 独立登录页（方案 B：`/login`，deep link 强制跳转用）。
+ *
+ * 视觉严格按规格书 `docs/Agent_v0.3/login_page_design_v0.3.md` 实现：
+ * - 左右 56/44 分栏 + 深色科技渐变背景（§1.1/§1.2）
+ * - 左上角**无 logo**（§2.1）
+ * - 左侧三卡片（page1/page2/page3）纵向排列，鼠标重心 3D 倾斜（§2.2/§2.4）
+ * - 右侧表单复用 AuthForm（含 QQ 邮箱按钮 §3.2、分隔线 §3.3、Tab §3.1）
+ * - <1024px 上下堆叠、纵向滚动（§4）
+ *
+ * 底部版权条由 App.vue 的 AppFooter 全局提供（G03），此处不重复渲染。
+ */
 import { useRoute, useRouter } from 'vue-router'
-import { restoreAccount } from '@/api/account'
-import BaseButton from '@/components/base/BaseButton.vue'
-import BaseInput from '@/components/base/BaseInput.vue'
-import { useUserStore } from '@/stores/user'
-import { toast } from '@/utils/toast'
+import AuthForm from '@/components/auth/AuthForm.vue'
+import LoginFeatureCard from '@/components/login/LoginFeatureCard.vue'
+import { loginCards } from '@/config/loginCards'
 
 const route = useRoute()
 const router = useRouter()
-const userStore = useUserStore()
 
-const tab = ref<'login' | 'register'>('login')
-const username = ref('')
-const password = ref('')
-const confirm = ref('')
-const nickname = ref('')
-const email = ref('')
-const agreed = ref(false) // G03：注册协议勾选（默认不勾选）
-const errors = ref<Record<string, string>>({})
-const loading = ref(false)
-
-function validate(): boolean {
-  const e: Record<string, string> = {}
-  const name = username.value.trim()
-  if (!name) e.username = '请输入用户名'
-  else if (name.length < 3 || name.length > 32) e.username = '用户名长度需在 3~32 之间'
-  if (!password.value) e.password = '请输入密码'
-  else if (password.value.length < 6) e.password = '密码至少 6 位'
-  if (tab.value === 'register') {
-    // G23/G33：邮箱必填且需格式合法
-    const mail = email.value.trim()
-    if (!mail) e.email = '请输入邮箱'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) e.email = '邮箱格式不正确'
-    if (!nickname.value.trim()) e.nickname = '请输入昵称'
-    if (password.value !== confirm.value) e.confirm = '两次密码不一致'
-    // G03：未勾选协议不能注册
-    if (!agreed.value) e.agreed = '请先阅读并同意用户协议、隐私政策与免责声明'
-  }
-  errors.value = e
-  return Object.keys(e).length === 0
-}
-
-function openLegal(name: 'terms' | 'privacy' | 'disclaimer') {
-  const url = router.resolve({ name }).href
-  window.open(url, '_blank')
-}
-
-async function submit() {
-  if (loading.value || !validate()) return
-  loading.value = true
-  try {
-    if (tab.value === 'login') {
-      await userStore.login(username.value.trim(), password.value)
-    } else {
-      // 注册成功即自动登录（后端注册签发 JWT，并发送验证邮件）
-      await userStore.register(
-        username.value.trim(),
-        password.value,
-        email.value.trim(),
-        nickname.value.trim(),
-      )
-    }
-    const redirect = (route.query.redirect as string) || '/market'
-    router.push(redirect)
-  } catch {
-    // 错误提示已由 axios 拦截器统一 toast，此处静默
-  } finally {
-    loading.value = false
-  }
-}
-
-function goForgot() {
-  router.push({ name: 'forgot-password' })
-}
-
-// ---- G18：账户恢复（注销后 30 天宽限期内可自助恢复）----
-const restoreOpen = ref(false)
-const restorePassword = ref('')
-const restoreError = ref('')
-const restoreLoading = ref(false)
-
-function openRestore() {
-  restoreOpen.value = true
-  restorePassword.value = ''
-  restoreError.value = ''
-}
-
-function closeRestore() {
-  if (restoreLoading.value) return
-  restoreOpen.value = false
-}
-
-async function submitRestore() {
-  const name = username.value.trim()
-  if (!name) {
-    restoreError.value = '请输入用户名'
-    return
-  }
-  if (!restorePassword.value) {
-    restoreError.value = '请输入密码'
-    return
-  }
-  restoreError.value = ''
-  restoreLoading.value = true
-  try {
-    const data = await restoreAccount(name, restorePassword.value)
-    userStore.token = data.token
-    await userStore.fetchMe().catch(() => {})
-    toast.success('账户已恢复')
-    restoreOpen.value = false
-    router.push((route.query.redirect as string) || '/market')
-  } catch {
-    // 错误提示由 axios 拦截器统一 toast
-  } finally {
-    restoreLoading.value = false
-  }
+/** 登录/注册成功：回到来源页（默认行情首页），独立页保留跳转语义 */
+function onSuccess() {
+  const redirect = (route.query.redirect as string) || '/'
+  router.push(redirect)
 }
 </script>
 
 <template>
   <div class="login-page">
-    <div class="login-card">
-      <div class="brand">
-        <div class="brand__logo">K</div>
-        <h1 class="brand__title">量化交易终端</h1>
-        <p class="brand__sub">行情 · 策略 · AI Agent</p>
-      </div>
-
-      <div class="tabs" role="tablist">
-        <button
-          :class="['tab', { active: tab === 'login' }]"
-          @click="tab = 'login'"
-        >
-          登录
-        </button>
-        <button
-          :class="['tab', { active: tab === 'register' }]"
-          @click="tab = 'register'"
-        >
-          注册
-        </button>
-      </div>
-
-      <form class="form" @submit.prevent="submit">
-        <BaseInput
-          v-model="username"
-          label="用户名"
-          placeholder="请输入用户名"
-          :error="errors.username"
-          autocomplete="username"
-        />
-        <BaseInput
-          v-model="password"
-          label="密码"
-          type="password"
-          placeholder="请输入密码"
-          :error="errors.password"
-          autocomplete="current-password"
-        />
-
-        <template v-if="tab === 'register'">
-          <BaseInput
-            v-model="confirm"
-            label="确认密码"
-            type="password"
-            placeholder="请再次输入密码"
-            :error="errors.confirm"
-            autocomplete="new-password"
-          />
-          <BaseInput
-            v-model="email"
-            label="邮箱"
-            placeholder="用于账号验证与密码找回"
-            :error="errors.email"
-            autocomplete="email"
-          />
-          <BaseInput
-            v-model="nickname"
-            label="昵称"
-            placeholder="请输入昵称（展示用）"
-            :error="errors.nickname"
-            autocomplete="nickname"
-            :maxlength="64"
-          />
-          <p class="form__hint">注册后将向该邮箱发送验证链接（10 分钟内有效）。</p>
-
-          <!-- G03：注册协议勾选（默认不勾选，未勾选不能提交） -->
-          <label class="agree">
-            <input v-model="agreed" type="checkbox" class="agree__box" />
-            <span class="agree__text">
-              我已阅读并同意
-              <button type="button" class="link" @click.prevent="openLegal('terms')">《用户协议》</button>
-              <button type="button" class="link" @click.prevent="openLegal('privacy')">《隐私政策》</button>
-              <button type="button" class="link" @click.prevent="openLegal('disclaimer')">《免责声明》</button>
-            </span>
-          </label>
-          <span v-if="errors.agreed" class="agree__error">{{ errors.agreed }}</span>
-        </template>
-
-        <!-- G33：忘记密码入口 / G18：账户恢复入口（仅登录态展示） -->
-        <div v-if="tab === 'login'" class="form__aux">
-          <button type="button" class="link" @click="goForgot">忘记密码？</button>
-          <span class="divider">·</span>
-          <button type="button" class="link" @click="openRestore">恢复账户</button>
+    <div class="login-split">
+      <!-- 左侧功能区（约 56%） -->
+      <section class="login-left">
+        <!-- 规格书 §2.1：不渲染任何品牌 logo；仅两行大标题 + 一行副标题 -->
+        <div class="left-head">
+          <h1 class="left-head__title">追踪收益，领取奖励，<br />切换策略</h1>
+          <p class="left-head__sub">行情、策略与 AI Agent，一个终端完成</p>
         </div>
 
-        <BaseButton type="submit" block size="lg" :loading="loading" class="submit">
-          {{ tab === 'login' ? '登 录' : '注册并登录' }}
-        </BaseButton>
-      </form>
+        <!-- 规格书 §2.2：三卡片纵向排列，内容可配置（见 src/config/loginCards.ts） -->
+        <div class="left-cards">
+          <LoginFeatureCard v-for="card in loginCards" :key="card.id" :card="card" />
+        </div>
+      </section>
+
+      <!-- 右侧表单区（约 44%） -->
+      <section class="login-right">
+        <div class="login-right__inner">
+          <AuthForm @success="onSuccess" />
+        </div>
+      </section>
     </div>
-
-    <!-- G18：账户恢复弹窗（注销后 30 天宽限期内） -->
-    <Teleport to="body">
-      <div v-if="restoreOpen" class="restore-mask" @click.self="closeRestore">
-        <div class="restore-dialog">
-          <h3 class="restore-dialog__title">恢复账户</h3>
-          <p class="restore-dialog__hint">
-            若您的账户在 30 天内被注销，可用原用户名与密码恢复。逾期数据已永久删除，无法恢复。
-          </p>
-          <BaseInput
-            v-model="username"
-            label="用户名"
-            placeholder="请输入原用户名"
-            autocomplete="username"
-          />
-          <BaseInput
-            v-model="restorePassword"
-            label="密码"
-            type="password"
-            placeholder="请输入原密码"
-            :error="restoreError"
-            autocomplete="current-password"
-          />
-          <div class="restore-dialog__actions">
-            <BaseButton type="button" variant="ghost" @click="closeRestore">取消</BaseButton>
-            <BaseButton type="button" :loading="restoreLoading" @click="submitRestore">确认恢复</BaseButton>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .login-page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  /* 规格书 §6：深色科技渐变背景 */
+  background: linear-gradient(135deg, #0b1020 0%, #101828 45%, #0d1b2e 100%);
+  /* 极淡光晕装饰（透明度 ≤0.06，不抢内容） */
+  background-image:
+    radial-gradient(60% 50% at 18% 12%, rgba(59, 130, 246, 0.06), transparent 70%),
+    radial-gradient(50% 45% at 85% 85%, rgba(34, 197, 94, 0.05), transparent 70%),
+    linear-gradient(135deg, #0b1020 0%, #101828 45%, #0d1b2e 100%);
+}
+.login-split {
+  display: flex;
   height: 100%;
-  background: var(--bg);
-}
-.login-card {
-  width: 380px;
-  padding: 36px 36px 32px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-}
-.brand {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 24px;
-}
-.brand__logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 22px;
-  font-weight: 700;
-}
-.brand__title {
-  font-size: 18px;
-  font-weight: 600;
-}
-.brand__sub {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  margin-bottom: 20px;
-  border-bottom: 1px solid var(--border);
-}
-.tab {
-  padding: 10px 0;
-  font-size: 14px;
-  color: var(--text-secondary);
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition:
-    color 0.15s,
-    border-color 0.15s;
-}
-.tab:hover {
-  color: var(--text);
-}
-.tab.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
-}
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.submit {
-  margin-top: 6px;
-}
-.form__hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-.form__aux {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  margin-top: -4px;
-}
-.divider {
-  font-size: 12px;
-  color: var(--text-muted);
+  min-height: 0;
 }
 
-/* G03：注册协议勾选 */
-.agree {
+/* ---- 左侧 56% ---- */
+.login-left {
+  flex: 0 0 56%;
+  min-width: 0;
   display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  cursor: pointer;
+  flex-direction: column;
+  padding: 48px 56px;
 }
-.agree__box {
+.left-head {
   flex: none;
-  margin-top: 2px;
-  width: 13px;
-  height: 13px;
-  accent-color: var(--accent);
-  cursor: pointer;
+  margin-bottom: 32px;
 }
-.agree__text {
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-secondary);
+.left-head__title {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #fff;
 }
-.agree__text .link {
-  font-size: 12px;
-  padding: 0;
-  vertical-align: baseline;
+.left-head__sub {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--text-muted);
 }
-.agree__error {
-  margin-top: -8px;
-  font-size: 11px;
-  color: var(--down, #ef4444);
-}
-.link {
-  font-size: 13px;
-  color: var(--accent);
-  cursor: pointer;
-}
-.link:hover {
-  text-decoration: underline;
+.left-cards {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-/* G18：账户恢复弹窗 */
-.restore-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
+/* ---- 右侧 44% ---- */
+.login-right {
+  flex: 0 0 44%;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
+  padding: 48px 56px;
 }
-.restore-dialog {
-  width: 360px;
-  max-width: calc(100vw - 32px);
-  padding: 22px 22px 18px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.login-right__inner {
+  width: 100%;
+  max-width: 380px;
 }
-.restore-dialog__title {
-  font-size: 15px;
-  font-weight: 600;
-}
-.restore-dialog__hint {
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-muted);
-}
-.restore-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 4px;
+
+/* ---- 规格书 §4：窄屏（<1024px）上下堆叠、纵向滚动 ---- */
+@media (max-width: 1023px) {
+  .login-page {
+    overflow-y: auto;
+  }
+  .login-split {
+    flex-direction: column;
+    height: auto;
+  }
+  .login-left,
+  .login-right {
+    flex: none;
+    padding: 32px 20px;
+  }
+  .login-left {
+    /* 堆叠时三卡片改横向排列，避免纵向占用过长 */
+    gap: 20px;
+  }
+  .left-cards {
+    flex: none;
+    flex-direction: row;
+    height: 180px;
+  }
+  .login-right__inner {
+    max-width: none;
+  }
 }
 </style>

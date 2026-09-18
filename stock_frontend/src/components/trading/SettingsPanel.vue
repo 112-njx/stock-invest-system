@@ -6,8 +6,8 @@
  * - 下方：开发者信息
  * 优化1：删除顶部 AppBar 的退出按钮和用户信息，统一收归 I 区用户 Cell 下拉菜单。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { createExport, deleteAccount, exportDownloadUrl, fetchExportStatus } from '@/api/account'
 import type { ExportTaskInfo } from '@/api/account'
 import { fetchApiKeyStatus, fetchTokenUsage, saveApiKey } from '@/api/account'
@@ -17,15 +17,18 @@ import { fetchAnnouncementHistory } from '@/api/notifications'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import type { Announcement } from '@/api/types'
+import { useAuthModalStore } from '@/stores/authModal'
 import { useNotificationStore } from '@/stores/notification'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
 import { toast } from '@/utils/toast'
 
+const route = useRoute()
 const router = useRouter()
 const theme = useThemeStore()
 const user = useUserStore()
 const notification = useNotificationStore()
+const authModal = useAuthModalStore()
 
 const menuOpen = ref(false)
 const cellRef = ref<HTMLElement | null>(null)
@@ -312,10 +315,27 @@ async function confirmDelete() {
   }
 }
 
+/** G35：从顶部头像菜单「个人设置 / 我的数据」跳转过来时，滚动到对应区块 */
+function scrollToHash(hash: string) {
+  const id = hash.replace(/^#/, '')
+  if (!id) return
+  const el = document.getElementById(id)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+watch(
+  () => route.hash,
+  (hash) => scrollToHash(hash)
+)
+
 onMounted(() => {
   if (!user.user && user.token) user.fetchMe().catch(() => {})
   document.addEventListener('click', onDocClick)
-  loadApiKeyState() // G14：加载 API Key 状态与累计 token 用量
+  // G14：加载 API Key 状态与累计 token 用量（G35：未登录不发鉴权请求，
+  // 否则 401 会触发 axios 拦截器的 refresh 失败分支，把免登录访客弹去登录页）
+  if (user.token) loadApiKeyState()
+  // 跨页跳转（如从 AI 页点「我的数据」）时组件刚挂载，等 DOM 就绪再滚动
+  nextTick(() => scrollToHash(route.hash))
 })
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocClick)
@@ -350,17 +370,20 @@ const menuStyle = computed(() => ({
 </script>
 
 <template>
-  <div class="settings-panel">
+  <div id="settings" class="settings-panel">
     <!-- 用户 Cell（优化1：移动端设置项 Cell 样式） -->
     <div class="user-cell" ref="cellRef">
-      <button class="user-cell__btn" @click="toggleMenu">
-        <span class="user-cell__avatar">{{ user.avatarText }}</span>
+      <!-- G35：未登录点击直接弹登录框；已登录才展开下拉菜单 -->
+      <button class="user-cell__btn" @click="user.token ? toggleMenu() : authModal.show('login')">
+        <span class="user-cell__avatar" :class="{ 'user-cell__avatar--guest': !user.token }">
+          {{ user.token ? user.avatarText : '👤' }}
+        </span>
         <div class="user-cell__meta">
           <div class="user-cell__name-row">
             <span class="user-cell__name">{{ user.displayName || '未登录' }}</span>
             <span class="user-cell__arrow">›</span>
           </div>
-          <span class="user-cell__sub">免费用户</span>
+          <span class="user-cell__sub">{{ user.token ? '免费用户' : '登录后同步您的数据' }}</span>
         </div>
       </button>
 
@@ -396,8 +419,8 @@ const menuStyle = computed(() => ({
       </button>
     </div>
 
-    <!-- G33：账号安全区块（改密 / 改邮箱），仅新增，不改上方结构 -->
-    <div class="settings-block settings-block--col">
+    <!-- G33：账号安全区块（改密 / 改邮箱），仅新增，不改上方结构；G35：未登录隐藏（接口需鉴权） -->
+    <div v-if="user.token" class="settings-block settings-block--col">
       <span class="settings-block__label">账号安全</span>
       <div class="security-rows">
         <button class="security-row" @click="openSecurity('password')">
@@ -420,8 +443,8 @@ const menuStyle = computed(() => ({
       </span>
     </div>
 
-    <!-- G17：数据与隐私（导出我的数据） -->
-    <div class="settings-block settings-block--col">
+    <!-- G17：数据与隐私（导出我的数据）；G35：未登录隐藏 -->
+    <div v-if="user.token" id="settings-data" class="settings-block settings-block--col">
       <span class="settings-block__label">数据与隐私</span>
       <div class="security-rows">
         <button class="security-row" :disabled="exportLoading" @click="onExport">
@@ -445,8 +468,8 @@ const menuStyle = computed(() => ({
       <span v-else class="security-note">导出包含账号、关注、策略、回测、会话与记忆等全部数据，24 小时内有效。</span>
     </div>
 
-    <!-- G14：AI 模型设置（自填 API Key + 累计 token 用量），仅新增区块，不改上方结构 -->
-    <div class="settings-block settings-block--col">
+    <!-- G14：AI 模型设置（自填 API Key + 累计 token 用量），仅新增区块，不改上方结构；G35：未登录隐藏 -->
+    <div v-if="user.token" class="settings-block settings-block--col">
       <span class="settings-block__label">AI 模型设置</span>
       <div class="security-rows">
         <button v-if="!apiKeyEditing" class="security-row" @click="startEditApiKey">
@@ -486,8 +509,8 @@ const menuStyle = computed(() => ({
       <span class="security-note">用量按模型返回的 usage 估算，仅供成本自估，非精确计费。</span>
     </div>
 
-    <!-- G18：危险区（删除账户） -->
-    <div class="settings-block settings-block--col danger-block">
+    <!-- G18：危险区（删除账户）；G35：未登录隐藏 -->
+    <div v-if="user.token" class="settings-block settings-block--col danger-block">
       <span class="settings-block__label danger-block__label">危险操作</span>
       <button class="danger-btn" @click="openDanger">删除账户</button>
       <span class="security-note">注销后 30 天内可恢复，逾期将永久删除全部数据。</span>
@@ -709,6 +732,12 @@ const menuStyle = computed(() => ({
 }
 .user-cell__btn:hover {
   background: var(--bg-hover);
+}
+/* G35：未登录头像（灰底人形图标） */
+.user-cell__avatar--guest {
+  background: var(--bg-active);
+  color: var(--text-muted);
+  font-size: 18px;
 }
 .user-cell__avatar {
   display: inline-flex;

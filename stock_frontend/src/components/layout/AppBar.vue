@@ -2,8 +2,11 @@
 /**
  * 顶部导航栏：品牌 + 路由 + 主题切换。
  * 优化1：删除顶部用户头像/用户名和退出按钮，统一收归行情页 I 区用户 Cell 下拉菜单。
+ * G35：头像区回归顶部（方案 B）——未登录显示「登录」入口，已登录显示头像 + 下拉菜单；
+ * 与 G16 铃铛并存，I 区用户 Cell 保留。
  */
 import NotificationBell from '@/components/layout/NotificationBell.vue'
+import UserMenu from '@/components/layout/UserMenu.vue'
 import { useThemeStore } from '@/stores/theme'
 
 const theme = useThemeStore()
@@ -17,13 +20,15 @@ const theme = useThemeStore()
     </div>
 
     <nav class="appbar__nav">
-      <RouterLink to="/market" class="appbar__link">行情</RouterLink>
+      <RouterLink to="/" class="appbar__link">行情</RouterLink>
       <RouterLink to="/ai" class="appbar__link">AI 策略</RouterLink>
     </nav>
 
     <div class="appbar__right">
       <!-- G16：通知铃铛（仅新增此区块，不改现有布局结构） -->
       <NotificationBell />
+      <!-- G35：头像区（未登录=登录入口；已登录=下拉菜单） -->
+      <UserMenu />
       <button
         class="icon-btn"
         :title="theme.mode === 'dark' ? '切换到明亮模式' : '切换到暗黑模式'"
