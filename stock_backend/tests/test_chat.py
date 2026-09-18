@@ -223,7 +223,8 @@ def test_stream_chat_success_saves_messages_and_run(client: TestClient):
         assert fake.breaker.open is False
 
         # 会话中应存在 user + assistant 两条消息，且 assistant 绑定标的
-        msgs = client.get(f"/api/v1/conversations/{conv['id']}/messages", headers=_auth(token)).json()["data"]
+        # G09：消息改游标信封
+        msgs = client.get(f"/api/v1/conversations/{conv['id']}/messages", headers=_auth(token)).json()["data"]["items"]
         roles = [m["role"] for m in msgs]
         assert roles == ["user", "assistant"]
         assert msgs[-1]["symbol_id"] == sid
@@ -603,7 +604,7 @@ def test_stream_chat_strategy_branch_saves_and_emits_ready(client: TestClient, m
         assert sr[0]["auto_backtest"] is True
         assert events[-1]["type"] == "done"
         # 策略已保存，可立即用于回测（id 有效）
-        rows = client.get("/api/v1/strategies", headers=_auth(token)).json()["data"]
+        rows = client.get("/api/v1/strategies", headers=_auth(token)).json()["data"]["items"]  # G09：分页信封
         assert any(s["id"] == sr[0]["strategy_id"] and s["title"] == "双均线策略" for s in rows)
     finally:
         _cleanup_users(uname)
@@ -659,7 +660,7 @@ def test_stream_chat_generates_title_on_first_message(client: TestClient, monkey
         assert title_evs[0]["title"] == "贵州茅台分析"
         assert events[-1]["type"] == "title"  # title 在 done 之后
         # DB 标题已更新
-        convs = client.get("/api/v1/conversations", headers=_auth(token)).json()["data"]
+        convs = client.get("/api/v1/conversations", headers=_auth(token)).json()["data"]["items"]  # G09：分页信封
         assert any(c["title"] == "贵州茅台分析" for c in convs)
     finally:
         _cleanup_users(uname)

@@ -726,20 +726,22 @@ curl -X POST "http://127.0.0.1:8000/api/v1/conversations" -H "Authorization: Bea
 - **接口名称**：会话列表
 - **请求 Method**：GET
 - **请求 Path**：/api/v1/conversations
-- **接口作用**：当前用户会话列表（按更新时间倒序）。
-- **请求 Body**：无（Header：Authorization: Bearer <token>）
+- **接口作用**：当前用户会话列表（按更新时间倒序，分页）。
+- **请求 Body**：无（Query：page?=1、size?=20（最大 100）；Header：Authorization: Bearer <token>）
 
 **请求示例（curl）**
 
 ```bash
-curl "http://127.0.0.1:8000/api/v1/conversations" -H "Authorization: Bearer eyJhbGciOi..."
+curl "http://127.0.0.1:8000/api/v1/conversations?page=1&size=20" -H "Authorization: Bearer eyJhbGciOi..."
 ```
 
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":[{"id":1,"title":"新会话","created_at":"...","updated_at":"..."}]}
+{"code":0,"msg":"ok","data":{"items":[{"id":1,"title":"新会话","created_at":"...","updated_at":"..."}],"total":1,"page":1,"size":20,"total_pages":1}}
 ```
+
+> P1-6a（G09）：列表端点统一分页信封 `{items,total,page,size,total_pages}`；`total_pages` 为空列表时为 0。
 
 ## 3. 重命名会话
 
@@ -806,19 +808,27 @@ curl -X POST "http://127.0.0.1:8000/api/v1/conversations/1/messages" -H "Authori
 - **接口名称**：拉取消息
 - **请求 Method**：GET
 - **请求 Path**：/api/v1/conversations/{conversation_id}/messages
-- **接口作用**：按会话拉取消息（时间升序），前端渲染历史对话。
-- **请求 Body**：无（Path：conversation_id；Header：Authorization: Bearer <token>）
+- **接口作用**：按会话拉取消息（**游标分页**，items 时间升序），前端渲染历史对话。
+- **请求 Body**：无（Query：limit?=50（最大 200）、before?=message_id 游标；Path：conversation_id；Header：Authorization: Bearer <token>）
+
+**分页语义（P1-6a / G09）**
+
+- 不传 `before`：返回该会话**最新** `limit` 条（前端默认加载 50 条）。
+- 传 `before`：以该 message_id 为游标，返回**更早**的一页（滚动到顶部加载更早记录）。
+- `has_more`：是否还有更早的消息；`next_cursor`：本页最旧一条的 id（下一页的 `before`），无更早消息时为 `null`。
+- 游标 message_id 不属于该会话或不存在 → `400 / 40005`。
 
 **请求示例（curl）**
 
 ```bash
-curl "http://127.0.0.1:8000/api/v1/conversations/1/messages" -H "Authorization: Bearer eyJhbGciOi..."
+curl "http://127.0.0.1:8000/api/v1/conversations/1/messages?limit=50" -H "Authorization: Bearer eyJhbGciOi..."
+curl "http://127.0.0.1:8000/api/v1/conversations/1/messages?limit=50&before=100" -H "Authorization: Bearer eyJhbGciOi..."
 ```
 
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":[{"id":1,"conversation_id":1,"role":"user","symbol_id":125,"content":"分析贵州茅台","tokens":null,"created_at":"..."}]}
+{"code":0,"msg":"ok","data":{"items":[{"id":1,"conversation_id":1,"role":"user","symbol_id":125,"content":"分析贵州茅台","tokens":null,"created_at":"..."}],"has_more":true,"next_cursor":1}}
 ```
 
 # AI 聊天 API（Chat）
@@ -922,19 +932,19 @@ curl -X POST "http://127.0.0.1:8000/api/v1/strategies/generate" -H "Authorizatio
 - **接口名称**：策略列表
 - **请求 Method**：GET
 - **请求 Path**：/api/v1/strategies
-- **接口作用**：当前用户交易策略列表（按创建倒序），M 区策略栏数据源。
-- **请求 Body**：无（Header：Authorization: Bearer <token>）
+- **接口作用**：当前用户交易策略列表（按创建倒序，分页），M 区策略栏数据源。
+- **请求 Body**：无（Query：page?=1、size?=20（最大 100）；Header：Authorization: Bearer <token>）
 
 **请求示例（curl）**
 
 ```bash
-curl "http://127.0.0.1:8000/api/v1/strategies" -H "Authorization: Bearer eyJhbGciOi..."
+curl "http://127.0.0.1:8000/api/v1/strategies?page=1&size=20" -H "Authorization: Bearer eyJhbGciOi..."
 ```
 
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":[{"id":1,"title":"双均线","description":"...","code":"...","params":{...},"status":"active","created_at":"...","updated_at":"..."}]}
+{"code":0,"msg":"ok","data":{"items":[{"id":1,"title":"双均线","description":"...","code":"...","params":{...},"status":"active","created_at":"...","updated_at":"..."}],"total":1,"page":1,"size":20,"total_pages":1}}
 ```
 
 ## 3. 保存策略
@@ -1086,19 +1096,19 @@ curl -X POST "http://127.0.0.1:8000/api/v1/agents" -H "Authorization: Bearer eyJ
 - **接口名称**：Agent 列表
 - **请求 Method**：GET
 - **请求 Path**：/api/v1/agents
-- **接口作用**：当前用户定制 Agent 列表。
-- **请求 Body**：无（Header：Authorization: Bearer <token>）
+- **接口作用**：当前用户定制 Agent 列表（分页）。
+- **请求 Body**：无（Query：page?=1、size?=20（最大 100）；Header：Authorization: Bearer <token>）
 
 **请求示例（curl）**
 
 ```bash
-curl "http://127.0.0.1:8000/api/v1/agents" -H "Authorization: Bearer eyJhbGciOi..."
+curl "http://127.0.0.1:8000/api/v1/agents?page=1&size=20" -H "Authorization: Bearer eyJhbGciOi..."
 ```
 
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":[{"id":1,"name":"我的风控",...}]}
+{"code":0,"msg":"ok","data":{"items":[{"id":1,"name":"我的风控"}],"total":1,"page":1,"size":20,"total_pages":1}}
 ```
 
 ## 3. Agent 详情
@@ -1208,19 +1218,19 @@ curl "http://127.0.0.1:8000/api/v1/backtest/tasks/17" -H "Authorization: Bearer 
 - **接口名称**：回测任务列表
 - **请求 Method**：GET
 - **请求 Path**：/api/v1/backtest/tasks
-- **接口作用**：当前用户回测任务列表（可按 strategy_id 过滤，N 区历史任务）。
-- **请求 Body**：无（Query：strategy_id?；Header：Authorization: Bearer <token>）
+- **接口作用**：当前用户回测任务列表（可按 strategy_id 过滤，分页，N 区历史任务）。
+- **请求 Body**：无（Query：strategy_id?、page?=1、size?=20（最大 100）；Header：Authorization: Bearer <token>）
 
 **请求示例（curl）**
 
 ```bash
-curl "http://127.0.0.1:8000/api/v1/backtest/tasks?strategy_id=1" -H "Authorization: Bearer eyJhbGciOi..."
+curl "http://127.0.0.1:8000/api/v1/backtest/tasks?strategy_id=1&page=1&size=20" -H "Authorization: Bearer eyJhbGciOi..."
 ```
 
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":[{"id":17,"strategy_id":1,"symbol_id":125,"status":"success","progress":100},...]}
+{"code":0,"msg":"ok","data":{"items":[{"id":17,"strategy_id":1,"symbol_id":125,"status":"success","progress":100}],"total":1,"page":1,"size":20,"total_pages":1}}
 ```
 
 ## 4. 结果查询（按策略）
@@ -1324,7 +1334,7 @@ curl "http://127.0.0.1:8000/api/v1/backtest/results/5" -H "Authorization: Bearer
 - **请求 Method**：GET
 - **请求 Path**：/api/v1/agent/runs
 - **接口作用**：当前用户 Agent 运行记录列表（按时间倒序，支持按会话筛选 + 分页，前端 AgentRunsDialog 数据源）。
-- **请求 Body**：无（Query：conversation_id?、page?=1、size?=20；Header：Authorization: Bearer <token>）
+- **请求 Body**：无（Query：conversation_id?、page?=1、size?=20（最大 100）；Header：Authorization: Bearer <token>）
 
 **请求示例（curl）**
 
@@ -1335,8 +1345,10 @@ curl "http://127.0.0.1:8000/api/v1/agent/runs?conversation_id=2&page=1&size=20" 
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":{"items":[{"id":3,"agent_id":null,"conversation_id":2,"symbol_id":125,"run_type":"diagnostic","status":"success","input":"分析贵州茅台趋势","output":"结论：持有","final_decision":"结论：持有","total_duration":3500,"tokens":null,"error":null,"created_at":"...","updated_at":"..."}],"total":1,"page":1,"size":20}}
+{"code":0,"msg":"ok","data":{"items":[{"id":3,"agent_id":null,"conversation_id":2,"symbol_id":125,"run_type":"diagnostic","status":"success","input":"分析贵州茅台趋势","output":"结论：持有","final_decision":"结论：持有","total_duration":3500,"tokens":null,"error":null,"created_at":"...","updated_at":"..."}],"total":1,"page":1,"size":20,"total_pages":1}}
 ```
+
+> P1-6a（G09）：本端点原已分页，本轮补齐 `total_pages` 字段，与其余列表端点信封一致。
 
 ## 2. Agent 运行节点步骤
 

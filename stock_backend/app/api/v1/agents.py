@@ -7,6 +7,7 @@ from app.api.deps import get_current_user, get_db
 from app.core.response import ok
 from app.models.user import User
 from app.schemas.agent import AgentCreateIn, AgentOut, AgentUpdateIn
+from app.schemas.pagination import PageParams, page_envelope
 from app.services import agent_service
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
@@ -23,9 +24,14 @@ def create_agent(
 
 
 @router.get("")
-def list_agents(current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
-    rows = agent_service.list_agents(db, current.id)
-    return ok(data=[AgentOut.model_validate(a).model_dump(mode="json") for a in rows])
+def list_agents(
+    params: PageParams = Depends(),
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    rows, total = agent_service.list_agents(db, current.id, page=params.page, size=params.size)
+    items = [AgentOut.model_validate(a).model_dump(mode="json") for a in rows]
+    return ok(data=page_envelope(items, total, params.page, params.size))
 
 
 @router.get("/{agent_id}")

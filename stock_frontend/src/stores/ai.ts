@@ -41,6 +41,12 @@ export interface StreamChatPayload {
   run_type?: string
 }
 
+/* ---------- G09 分页常量 ---------- */
+/** 列表首屏拉取条数（后端单页上限 100）；超出部分由 G27 虚拟滚动按需续拉 */
+export const LIST_PAGE_SIZE = 100
+/** 消息默认加载条数（P1-6a：默认最新 50 条，滚动到顶部再往前取） */
+export const MESSAGE_PAGE_SIZE = 50
+
 /* ---------- 模块级非响应式流式控制 ---------- */
 /** 当前流 AbortController（切换会话/卸载时中止） */
 let streamAbort: AbortController | null = null
@@ -82,9 +88,17 @@ export const useAiStore = defineStore('ai', {
   state: () => ({
     /* ---------- 会话 ---------- */
     conversations: [] as Conversation[],
+    /** 会话总数（G09：后端 total，用于判断是否还有未加载的会话） */
+    conversationsTotal: 0,
     activeConversationId: null as number | null,
     /** 当前会话历史消息（不含流式增量） */
     messages: [] as ChatMessage[],
+    /** G09：当前会话是否还有更早的消息（游标分页 has_more） */
+    messagesHasMore: false,
+    /** G09：更早一页的游标（message_id），null 表示已到最早 */
+    messagesCursor: null as number | null,
+    /** G27：更早消息加载中（防重入） */
+    messagesLoadingOlder: false,
     /** 对话区模式：chat / strategy（点击策略切 N 区） */
     mode: 'chat' as AiPanelMode,
     /** 当前展示的策略（N 区） */
@@ -94,7 +108,9 @@ export const useAiStore = defineStore('ai', {
 
     /* ---------- 策略 / Agent ---------- */
     strategies: [] as Strategy[],
+    strategiesTotal: 0,
     agents: [] as AgentConfig[],
+    agentsTotal: 0,
 
     /* ---------- 输入区 ---------- */
     inputText: '',
@@ -156,7 +172,10 @@ export const useAiStore = defineStore('ai', {
   actions: {
     /* ---------- 会话 ---------- */
     async loadConversations() {
-      this.conversations = await fetchConversations()
+      // G09：首屏拉一页（后端上限 100）；total > items.length 时由 G27 虚拟滚动续拉
+      const page = await fetchConversations({ page: 1, size: LIST_PAGE_SIZE })
+      this.conversations = page.items
+      this.conversationsTotal = page.total
     },
     /** 清空流式瞬时态（错误/超时/降级/记忆提示/策略结果/时间线/token），避免上一会话残留 */
     resetTransientState() {
@@ -176,27 +195,40 @@ export const useAiStore = defineStore('ai', {
     async createConversation() {
       const conv = await apiCreateConversation()
       this.conversations.unshift(conv)
+      this.conversationsTotal += 1
       this.activeConversationId = conv.id
       this.messages = []
+      this.messagesHasMore = false
+      this.messagesCursor = null
       this.resetTransientState()
       return conv
     },
+    /** 打开会话：默认加载最新 MESSAGE_PAGE_SIZE 条（G09 游标分页） */
     async openConversation(id: number) {
       this.activeConversationId = id
-      this.messages = await fetchMessages(id)
+      const page = await fetchMessages(id, { limit: MESSAGE_PAGE_SIZE })
+      this.messages = page.items
+      this.messagesHasMore = page.has_more
+      this.messagesCursor = page.next_cursor
       this.resetTransientState()
     },
     removeConversation(id: number) {
+      const before = this.conversations.length
       this.conversations = this.conversations.filter((c) => c.id !== id)
+      this.conversationsTotal = Math.max(0, this.conversationsTotal - (before - this.conversations.length))
       if (this.activeConversationId === id) {
         this.activeConversationId = null
         this.messages = []
+        this.messagesHasMore = false
+        this.messagesCursor = null
       }
     },
 
     /* ---------- 策略 ---------- */
     async loadStrategies() {
-      this.strategies = await fetchStrategies()
+      const page = await fetchStrategies({ page: 1, size: LIST_PAGE_SIZE })
+      this.strategies = page.items
+      this.strategiesTotal = page.total
     },
     /** 打开策略 N 区（点击 M/J 策略行） */
     async openStrategy(id: number) {
@@ -232,6 +264,8 @@ export const useAiStore = defineStore('ai', {
       this.activeStrategy = null
       this.runDetail = null
       this.messages = []
+      this.messagesHasMore = false
+      this.messagesCursor = null
       this.activeConversationId = null
       this.streamingContent = ''
       this.streamingSteps = []
@@ -239,7 +273,9 @@ export const useAiStore = defineStore('ai', {
 
     /* ---------- Agent ---------- */
     async loadAgents() {
-      this.agents = await fetchAgents()
+      const page = await fetchAgents({ page: 1, size: LIST_PAGE_SIZE })
+      this.agents = page.items
+      this.agentsTotal = page.total
     },
 
     /* ---------- 输入区 ---------- */
@@ -589,7 +625,8 @@ export const useAiStore = defineStore('ai', {
     /** 拉取会话最后一条 assistant 消息（降级内容展示，避免与流式内容重复） */
     async _reloadLastAssistantMessage(convId: number) {
       try {
-        const msgs = await fetchMessages(convId)
+        const page = await fetchMessages(convId, { limit: MESSAGE_PAGE_SIZE })
+        const msgs = page.items
         const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant')
         if (lastAssistant) {
           const last = this.messages[this.messages.length - 1]
@@ -610,7 +647,10 @@ export const useAiStore = defineStore('ai', {
       if (convId) {
         this.activeConversationId = convId
         try {
-          this.messages = await fetchMessages(convId)
+          const page = await fetchMessages(convId, { limit: MESSAGE_PAGE_SIZE })
+          this.messages = page.items
+          this.messagesHasMore = page.has_more
+          this.messagesCursor = page.next_cursor
         } catch {
           /* 重载失败保留已有流式内容，正常收尾 */
         }

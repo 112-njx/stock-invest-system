@@ -10,6 +10,7 @@ from app.agent import strategy_gen
 from app.api.deps import get_current_user, get_db
 from app.core.response import ok
 from app.models.user import User
+from app.schemas.pagination import PageParams, page_envelope
 from app.schemas.strategy import (
     StrategyCreateIn,
     StrategyGenerateIn,
@@ -33,9 +34,14 @@ async def generate_strategy(
 
 # ---- 3.6 CRUD ----
 @router.get("")
-def list_strategies(current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
-    rows = strategy_service.list_strategies(db, current.id)
-    return ok(data=[StrategyOut.model_validate(s).model_dump(mode="json") for s in rows])
+def list_strategies(
+    params: PageParams = Depends(),
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    rows, total = strategy_service.list_strategies(db, current.id, page=params.page, size=params.size)
+    items = [StrategyOut.model_validate(s).model_dump(mode="json") for s in rows]
+    return ok(data=page_envelope(items, total, params.page, params.size))
 
 
 @router.post("")

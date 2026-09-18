@@ -15,8 +15,12 @@ def create_conversation(db: Session, user_id: int, title: str | None) -> Convers
     return conv
 
 
-def list_conversations(db: Session, user_id: int) -> list[Conversation]:
-    return conversation_repo.list_conversations(db, user_id)
+def list_conversations(db: Session, user_id: int, page: int = 1, size: int = 20) -> tuple[list[Conversation], int]:
+    """会话列表分页（P1-6a），返回 (rows, total)。"""
+    page = max(1, page)
+    size = max(1, min(size, 100))
+    rows = conversation_repo.list_conversations(db, user_id, offset=(page - 1) * size, limit=size)
+    return rows, conversation_repo.count_conversations(db, user_id)
 
 
 def _get_owned(db: Session, user_id: int, conv_id: int) -> Conversation:
@@ -61,6 +65,18 @@ def add_message(db: Session, user_id: int, conv_id: int, role: str, content: str
     return msg
 
 
-def list_messages(db: Session, user_id: int, conv_id: int) -> list[ChatMessage]:
+def list_messages(
+    db: Session, user_id: int, conv_id: int, limit: int = 50, before: int | None = None
+) -> tuple[list[ChatMessage], bool]:
+    """消息游标分页（P1-6a）：默认取最新 limit 条，`before` 为更早一页的游标消息 id。
+
+    返回 (升序 rows, has_more)。游标消息不属于该会话时抛 400（防跨会话越权探测）。
+    """
     _get_owned(db, user_id, conv_id)
-    return conversation_repo.list_messages(db, conv_id)
+    limit = max(1, min(limit, 200))
+    cursor = None
+    if before is not None:
+        cursor = conversation_repo.get_message(db, conv_id, before)
+        if cursor is None:
+            raise ApiError(status_code=400, code=40005, msg="消息游标无效")
+    return conversation_repo.list_messages_page(db, conv_id, limit=limit, before=cursor)

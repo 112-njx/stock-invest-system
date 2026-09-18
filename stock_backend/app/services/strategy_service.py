@@ -26,8 +26,12 @@ def create_strategy(db: Session, user_id: int, title: str, description: str | No
     return row
 
 
-def list_strategies(db: Session, user_id: int) -> list[TradingStrategy]:
-    return strategy_repo.list_strategies(db, user_id)
+def list_strategies(db: Session, user_id: int, page: int = 1, size: int = 20) -> tuple[list[TradingStrategy], int]:
+    """策略列表分页（P1-6a），返回 (rows, total)。"""
+    page = max(1, page)
+    size = max(1, min(size, 100))
+    rows = strategy_repo.list_strategies(db, user_id, offset=(page - 1) * size, limit=size)
+    return rows, strategy_repo.count_strategies(db, user_id)
 
 
 def _get_owned(db: Session, user_id: int, strategy_id: int) -> TradingStrategy:

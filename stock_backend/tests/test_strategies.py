@@ -206,8 +206,8 @@ def test_strategy_crud(client: TestClient):
         assert r.status_code == 200 and r.json()["code"] == 0
         sid = r.json()["data"]["id"]
 
-        # 列表
-        rows = client.get("/api/v1/strategies", headers=h).json()["data"]
+        # 列表（G09：分页信封）
+        rows = client.get("/api/v1/strategies", headers=h).json()["data"]["items"]
         assert any(s["id"] == sid for s in rows)
 
         # 详情

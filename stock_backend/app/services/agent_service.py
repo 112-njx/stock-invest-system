@@ -69,8 +69,12 @@ def create_agent(db: Session, user_id: int, payload) -> UserAgent:
     return row
 
 
-def list_agents(db: Session, user_id: int) -> list[UserAgent]:
-    return agent_repo.list_agents(db, user_id)
+def list_agents(db: Session, user_id: int, page: int = 1, size: int = 20) -> tuple[list[UserAgent], int]:
+    """定制 Agent 列表分页（P1-6a），返回 (rows, total)。"""
+    page = max(1, page)
+    size = max(1, min(size, 100))
+    rows = agent_repo.list_agents(db, user_id, offset=(page - 1) * size, limit=size)
+    return rows, agent_repo.count_agents(db, user_id)
 
 
 def _get_owned(db: Session, user_id: int, agent_id: int) -> UserAgent:

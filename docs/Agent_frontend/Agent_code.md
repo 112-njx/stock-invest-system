@@ -206,3 +206,7 @@ Agent的前端编码记录,你需要按照：
 ---
 编码时间：2026-09-18
 编码内容（描述）：V0.3 泳道C G14 前端——SettingsPanel.vue 新增「AI 模型设置」区块（**只加区块，未重构整页**；该页被泳道 A/B/C 汇聚，改动前已先读文件现状）：① 未配置时显示「填写我的 API Key」，已配置时显示「更换 API Key」+「清除 API Key」，点击展开输入框（password 型，autocomplete=off），本地先做 sk- 前缀校验再提交；② 展示当前 Key 掩码（服务端只回掩码，前端不持有明文）；③ 展示累计 token 用量（输入/输出/合计，千分位）并明确标注「按 usage 估算，仅供成本自估，非精确计费」。api/account.ts 增 fetchApiKeyStatus / saveApiKey / fetchTokenUsage 三个客户端函数与 ApiKeyStatus / TokenUsage 类型。沿用页面既有 security-row / security-note 样式，另加 .security-note--wrap 修饰类（原 security-note 为 nowrap+ellipsis，长文案会被截断）与 .apikey-edit 编辑区样式。验收：vue-tsc -b --noEmit 通过。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：V0.3 泳道G G09 前端——适配后端分页契约变更（与后端同一步，禁止只改一端）。api/ai.ts 新增 Page<T>（items/total/page/size/total_pages）与 MessagePage（items/has_more/next_cursor）两个信封类型；fetchConversations/fetchStrategies/fetchAgents 由裸数组改 Page<T> 并接受 {page,size}；fetchBacktestTasks 同样分页化（该函数当前无组件调用方）；fetchMessages 改 MessagePage，接受 {limit,before}；AgentRunPage 改为 Page<AgentRun> 的别名（既有 items/total 消费点无需改动，AgentRunsDialog.vue 因此零修改）。stores/ai.ts：新增 LIST_PAGE_SIZE=100 / MESSAGE_PAGE_SIZE=50 两个常量与 conversationsTotal/strategiesTotal/agentsTotal 三个 total 状态、messagesHasMore/messagesCursor/messagesLoadingOlder 三个游标状态；loadConversations/loadStrategies/loadAgents 改为取 page.items + 记录 total；openConversation 默认加载最新 50 条并记录游标；_reloadLastAssistantMessage 与 _reloadConversation（resync 路径）同步改取 .items 并刷新游标；resetPanel/createConversation/removeConversation 同步重置或维护游标与 total。**本步仅做契约适配，渲染层（虚拟滚动、滚动到顶加载更早）留待 G27**。验收：vue-tsc -b 通过。

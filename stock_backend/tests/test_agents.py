@@ -54,8 +54,8 @@ def test_agent_crud_and_preset(client: TestClient):
         assert "风控" in data["system_prompt"]
         assert data["llm_config"]["temperature"] == 0.2
 
-        # 列表
-        rows = client.get("/api/v1/agents", headers=h).json()["data"]
+        # 列表（G09：分页信封）
+        rows = client.get("/api/v1/agents", headers=h).json()["data"]["items"]
         assert any(a["id"] == aid for a in rows)
 
         # 详情

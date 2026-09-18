@@ -1,6 +1,10 @@
-"""会话与消息 API：创建/列表/重命名/删除会话、追加/拉取消息。"""
+"""会话与消息 API：创建/列表/重命名/删除会话、追加/拉取消息。
 
-from fastapi import APIRouter, Depends
+P1-6a（G09）：列表端点统一 `page/size` 分页信封；消息端点改**游标分页**
+（`limit`/`before`），避免长会话一次返回 MB 级响应体。
+"""
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -12,6 +16,13 @@ from app.schemas.conversation import (
     ConversationRenameIn,
     MessageCreateIn,
     MessageOut,
+)
+from app.schemas.pagination import (
+    DEFAULT_MESSAGE_LIMIT,
+    MAX_MESSAGE_LIMIT,
+    PageParams,
+    cursor_envelope,
+    page_envelope,
 )
 from app.services import conversation_service
 
@@ -29,9 +40,14 @@ def create_conversation(
 
 
 @router.get("")
-def list_conversations(current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
-    rows = conversation_service.list_conversations(db, current.id)
-    return ok(data=[ConversationOut.model_validate(c).model_dump(mode="json") for c in rows])
+def list_conversations(
+    params: PageParams = Depends(),
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    rows, total = conversation_service.list_conversations(db, current.id, page=params.page, size=params.size)
+    items = [ConversationOut.model_validate(c).model_dump(mode="json") for c in rows]
+    return ok(data=page_envelope(items, total, params.page, params.size))
 
 
 @router.patch("/{conversation_id}")
@@ -71,8 +87,15 @@ def add_message(
 @router.get("/{conversation_id}/messages")
 def list_messages(
     conversation_id: int,
+    limit: int = Query(DEFAULT_MESSAGE_LIMIT, ge=1, le=MAX_MESSAGE_LIMIT, description="本页条数，默认 50，最大 200"),
+    before: int | None = Query(None, ge=1, description="游标：上一页最旧一条的 message_id；不传取最新一页"),
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    rows = conversation_service.list_messages(db, current.id, conversation_id)
-    return ok(data=[MessageOut.model_validate(m).model_dump(mode="json") for m in rows])
+    rows, has_more = conversation_service.list_messages(
+        db, current.id, conversation_id, limit=limit, before=before
+    )
+    items = [MessageOut.model_validate(m).model_dump(mode="json") for m in rows]
+    # next_cursor = 本页最旧一条的 id（更早一页的游标）；无更早消息时为 null
+    next_cursor = rows[0].id if (has_more and rows) else None
+    return ok(data=cursor_envelope(items, has_more, next_cursor))

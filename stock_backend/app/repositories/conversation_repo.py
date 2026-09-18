@@ -3,7 +3,7 @@
 多租户隔离（借鉴 QuantDinger）：所有查询强制带 user_id 过滤，防止越权。
 """
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.strategy import ChatMessage, Conversation
@@ -17,12 +17,21 @@ def create_conversation(db: Session, user_id: int, title: str) -> Conversation:
     return conv
 
 
-def list_conversations(db: Session, user_id: int) -> list[Conversation]:
-    return list(
-        db.scalars(
-            select(Conversation).where(Conversation.user_id == user_id).order_by(Conversation.updated_at.desc())
-        )
-    )
+def list_conversations(
+    db: Session, user_id: int, offset: int | None = None, limit: int | None = None
+) -> list[Conversation]:
+    """会话列表（更新时间倒序）。offset/limit 为 None 时不限（供内部全量调用）。"""
+    stmt = select(Conversation).where(Conversation.user_id == user_id).order_by(Conversation.updated_at.desc())
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(db.scalars(stmt))
+
+
+def count_conversations(db: Session, user_id: int) -> int:
+    stmt = select(func.count()).select_from(Conversation).where(Conversation.user_id == user_id)
+    return int(db.scalar(stmt) or 0)
 
 
 def get_conversation(db: Session, user_id: int, conv_id: int) -> Conversation | None:
@@ -79,7 +88,11 @@ def add_message(
 
 
 def list_messages(db: Session, conversation_id: int) -> list[ChatMessage]:
-    """按会话拉取消息（时间升序，稳定顺序）。"""
+    """按会话拉取**全量**消息（时间升序，稳定顺序）。
+
+    注意：仅供内部链路使用（LLM 上下文组装、会话摘要）。对外端点走 `list_messages_page`，
+    避免长会话一次返回 MB 级响应体。
+    """
     return list(
         db.scalars(
             select(ChatMessage).where(ChatMessage.conversation_id == conversation_id).order_by(ChatMessage.created_at, ChatMessage.id)
@@ -87,9 +100,39 @@ def list_messages(db: Session, conversation_id: int) -> list[ChatMessage]:
     )
 
 
+def get_message(db: Session, conversation_id: int, message_id: int) -> ChatMessage | None:
+    """按 id 取会话内单条消息（游标分页定位用）。"""
+    return db.scalar(
+        select(ChatMessage).where(ChatMessage.id == message_id, ChatMessage.conversation_id == conversation_id)
+    )
+
+
+def list_messages_page(
+    db: Session, conversation_id: int, limit: int, before: ChatMessage | None = None
+) -> tuple[list[ChatMessage], bool]:
+    """消息游标分页（P1-6a）：取窗口内**最新** limit 条，返回 (升序 items, has_more)。
+
+    - `before` 为游标消息（更早的一页从这里往前取），None 表示取最新一页。
+    - 排序键为 (created_at, id)，游标过滤用双分支条件而非行值比较
+      （`(a,b) < (c,d)` 在 SQLite 测试库不被支持）。
+    """
+    stmt = select(ChatMessage).where(ChatMessage.conversation_id == conversation_id)
+    if before is not None:
+        stmt = stmt.where(
+            or_(
+                ChatMessage.created_at < before.created_at,
+                and_(ChatMessage.created_at == before.created_at, ChatMessage.id < before.id),
+            )
+        )
+    # 多取一条用于判断是否还有更早的消息
+    rows = list(db.scalars(stmt.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc()).limit(limit + 1)))
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    rows.reverse()  # 对外统一升序（与全量接口一致）
+    return rows, has_more
+
+
 def count_messages(db: Session, conversation_id: int) -> int:
     """会话消息条数（阶段八 8.1 摘要触发判定）。"""
-    from sqlalchemy import func
-
     stmt = select(func.count()).select_from(ChatMessage).where(ChatMessage.conversation_id == conversation_id)
     return int(db.scalar(stmt) or 0)

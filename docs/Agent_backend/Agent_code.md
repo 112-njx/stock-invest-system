@@ -456,3 +456,7 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-18
 编码内容（描述）：G14 简化版边界说明（按规划「服务端限流/额度分层不做」）。用户自填 key 仅改变「用谁的 key 计费」，**不改变服务端防护**：熔断器与令牌桶仍是进程级共享（with_api_key 显式复用同一 breaker/bucket 实例），避免每个用户各有一套状态导致熔断保护形同虚设。token 用量为**估算值**（优先取 DeepSeek usage 字段，缺失时字符启发式兜底），仅供用户自估成本，非精确计费——前端已明确标注。用户 key 只做形态校验（sk- 前缀），不做联网有效性验证：真实有效性由首次调用时的 401 分类为 LLMAuthError 并给出「API Key 无效」提示。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：V0.3 泳道G G09——列表分页 + 消息游标分页（P1-6a）。新增 app/schemas/pagination.py：PageParams（page≥1 / size 1~100，offset 属性）+ page_envelope（{items,total,page,size,total_pages}，空列表 total_pages=0）+ cursor_envelope（{items,has_more,next_cursor}）+ 消息 limit 常量（默认 50 / 上限 200）。5 个列表端点统一接入信封：GET /conversations、/strategies、/agents、/backtest/tasks（后四者原为裸数组），/agent/runs 原已分页、本轮补齐 total_pages。仓储层加 offset/limit 与 count 配套函数（list_* 的 offset/limit 默认 None 保持内部全量调用不变，如 backtest_service 取全部策略 id、chat_service 取全量消息组装 LLM 上下文）。消息端点改游标分页：不传 before 取最新 limit 条，传 before 取更早一页；排序键 (created_at,id)，游标过滤用「created_at < ? OR (created_at = ? AND id < ?)」双分支而非行值比较（SQLite 测试库不支持 `(a,b)<(c,d)`），多取一条判 has_more，返回前 reverse 保证对外升序（与旧全量接口一致，前端渲染顺序不变）。游标 message_id 不属于该会话或不存在 → 400/40005（防跨会话越权探测）。验收：新增 tests/test_pagination.py 11 项全绿；8 个既有测试文件的分页消费点同步改为 ["data"]["items"]；全库 528 passed。

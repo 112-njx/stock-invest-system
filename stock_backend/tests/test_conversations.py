@@ -69,8 +69,8 @@ def test_conversation_crud(client: TestClient):
         assert r.status_code == 200 and r.json()["code"] == 0
         conv_id = r.json()["data"]["id"]
 
-        # 列表
-        rows = client.get("/api/v1/conversations", headers=h).json()["data"]
+        # 列表（G09：分页信封）
+        rows = client.get("/api/v1/conversations", headers=h).json()["data"]["items"]
         assert any(c["id"] == conv_id for c in rows)
 
         # 重命名
@@ -80,7 +80,7 @@ def test_conversation_crud(client: TestClient):
         # 删除
         r = client.delete(f"/api/v1/conversations/{conv_id}", headers=h)
         assert r.json()["code"] == 0
-        rows = client.get("/api/v1/conversations", headers=h).json()["data"]
+        rows = client.get("/api/v1/conversations", headers=h).json()["data"]["items"]
         assert all(c["id"] != conv_id for c in rows)
     finally:
         _cleanup_users(uname)
@@ -110,7 +110,8 @@ def test_messages_order_and_symbol(client: TestClient):
         assert r2.json()["data"]["symbol_id"] == symbol_id
         assert r2.json()["data"]["tokens"] == 10
 
-        msgs = client.get(f"/api/v1/conversations/{conv_id}/messages", headers=h).json()["data"]
+        # G09：消息改游标信封，items 仍为时间升序
+        msgs = client.get(f"/api/v1/conversations/{conv_id}/messages", headers=h).json()["data"]["items"]
         assert [m["content"] for m in msgs] == ["第一条", "第二条"]  # 时间升序
         assert msgs[1]["symbol_id"] == symbol_id
 

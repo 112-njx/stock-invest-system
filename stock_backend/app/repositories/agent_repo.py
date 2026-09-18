@@ -5,7 +5,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.agent import AgentRun, AgentStep, MemoryChunk, UserAgent
@@ -39,8 +39,21 @@ def create_agent(
     return ag
 
 
-def list_agents(db: Session, user_id: int) -> list[UserAgent]:
-    return list(db.scalars(select(UserAgent).where(UserAgent.user_id == user_id).order_by(UserAgent.id.desc())))
+def list_agents(
+    db: Session, user_id: int, offset: int | None = None, limit: int | None = None
+) -> list[UserAgent]:
+    """定制 Agent 列表（id 倒序）。offset/limit 为 None 时不限。"""
+    stmt = select(UserAgent).where(UserAgent.user_id == user_id).order_by(UserAgent.id.desc())
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(db.scalars(stmt))
+
+
+def count_agents(db: Session, user_id: int) -> int:
+    stmt = select(func.count()).select_from(UserAgent).where(UserAgent.user_id == user_id)
+    return int(db.scalar(stmt) or 0)
 
 
 def get_agent(db: Session, user_id: int, agent_id: int) -> UserAgent | None:
@@ -117,8 +130,6 @@ def list_runs(
 
 
 def count_runs(db: Session, user_id: int, conversation_id: int | None = None) -> int:
-    from sqlalchemy import func
-
     stmt = select(func.count()).select_from(AgentRun).where(AgentRun.user_id == user_id)
     if conversation_id is not None:
         stmt = stmt.where(AgentRun.conversation_id == conversation_id)
@@ -252,8 +263,6 @@ def list_memory_chunks(
 
 
 def count_memory_chunks(db: Session, user_id: int, importance_min: int | None = None) -> int:
-    from sqlalchemy import func
-
     stmt = select(func.count()).select_from(MemoryChunk).where(MemoryChunk.user_id == user_id)
     if importance_min is not None:
         stmt = stmt.where(MemoryChunk.importance >= importance_min)

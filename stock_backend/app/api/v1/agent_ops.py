@@ -13,6 +13,7 @@ from app.api.deps import get_current_user, get_db
 from app.core.response import ok
 from app.models.user import User
 from app.schemas.agent import AgentRunOut, AgentStepOut, MemoryFileOut
+from app.schemas.pagination import MAX_PAGE_SIZE, page_envelope
 from app.services import agent_service
 
 router = APIRouter(prefix="/api/v1", tags=["agent-ops"])
@@ -22,19 +23,14 @@ router = APIRouter(prefix="/api/v1", tags=["agent-ops"])
 def list_agent_runs(
     conversation_id: int | None = Query(None, ge=1, description="按会话筛选"),
     page: int = Query(1, ge=1, description="页码"),
-    size: int = Query(20, ge=1, le=100, description="每页条数"),
+    size: int = Query(20, ge=1, le=MAX_PAGE_SIZE, description="每页条数，最大 100"),
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     rows, total = agent_service.list_runs(db, current.id, conversation_id=conversation_id, page=page, size=size)
-    return ok(
-        data={
-            "items": [AgentRunOut.model_validate(r).model_dump(mode="json") for r in rows],
-            "total": total,
-            "page": page,
-            "size": size,
-        }
-    )
+    items = [AgentRunOut.model_validate(r).model_dump(mode="json") for r in rows]
+    # P1-6a：补齐 total_pages，与其余列表端点信封一致
+    return ok(data=page_envelope(items, total, page, size))
 
 
 @router.get("/agent/runs/{run_id}")

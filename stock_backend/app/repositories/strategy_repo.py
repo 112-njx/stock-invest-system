@@ -1,6 +1,6 @@
 """交易策略读写（trading_strategies），按 user 隔离（借鉴 QuantDinger 多租户）。"""
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.strategy import StrategyTemplate, TradingStrategy
@@ -30,8 +30,21 @@ def create_strategy(
     return row
 
 
-def list_strategies(db: Session, user_id: int) -> list[TradingStrategy]:
-    return list(db.scalars(select(TradingStrategy).where(TradingStrategy.user_id == user_id).order_by(TradingStrategy.id.desc())))
+def list_strategies(
+    db: Session, user_id: int, offset: int | None = None, limit: int | None = None
+) -> list[TradingStrategy]:
+    """策略列表（id 倒序）。offset/limit 为 None 时不限（供内部全量调用）。"""
+    stmt = select(TradingStrategy).where(TradingStrategy.user_id == user_id).order_by(TradingStrategy.id.desc())
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(db.scalars(stmt))
+
+
+def count_strategies(db: Session, user_id: int) -> int:
+    stmt = select(func.count()).select_from(TradingStrategy).where(TradingStrategy.user_id == user_id)
+    return int(db.scalar(stmt) or 0)
 
 
 def get_strategy(db: Session, user_id: int, strategy_id: int) -> TradingStrategy | None:

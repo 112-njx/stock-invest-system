@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, defer
 
 from app.models.strategy import BacktestResult, BacktestTask
@@ -50,10 +50,42 @@ def update_task(db: Session, task_id: int, status: str | None = None, progress: 
     db.flush()
 
 
-def list_tasks_by_strategy(db: Session, strategy_id: int, limit: int = 20) -> list[BacktestTask]:
-    return list(
-        db.scalars(select(BacktestTask).where(BacktestTask.strategy_id == strategy_id).order_by(BacktestTask.id.desc()).limit(limit))
-    )
+def list_tasks_by_strategy(
+    db: Session, strategy_id: int, offset: int | None = None, limit: int | None = None
+) -> list[BacktestTask]:
+    """单策略的回测任务（id 倒序）。offset/limit 为 None 时不限。"""
+    stmt = select(BacktestTask).where(BacktestTask.strategy_id == strategy_id).order_by(BacktestTask.id.desc())
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(db.scalars(stmt))
+
+
+def count_tasks_by_strategy(db: Session, strategy_id: int) -> int:
+    stmt = select(func.count()).select_from(BacktestTask).where(BacktestTask.strategy_id == strategy_id)
+    return int(db.scalar(stmt) or 0)
+
+
+def list_tasks_by_strategies(
+    db: Session, strategy_ids: list[int], offset: int | None = None, limit: int | None = None
+) -> list[BacktestTask]:
+    """多策略（当前用户全部策略）的回测任务（id 倒序）。"""
+    if not strategy_ids:
+        return []
+    stmt = select(BacktestTask).where(BacktestTask.strategy_id.in_(strategy_ids)).order_by(BacktestTask.id.desc())
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(db.scalars(stmt))
+
+
+def count_tasks_by_strategies(db: Session, strategy_ids: list[int]) -> int:
+    if not strategy_ids:
+        return 0
+    stmt = select(func.count()).select_from(BacktestTask).where(BacktestTask.strategy_id.in_(strategy_ids))
+    return int(db.scalar(stmt) or 0)
 
 
 # ---- backtest_results ----

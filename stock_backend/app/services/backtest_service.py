@@ -7,7 +7,6 @@
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.backtest import metrics
@@ -192,18 +191,26 @@ def get_task(db: Session, user_id: int, task_id: int):
     return task
 
 
-def list_tasks(db: Session, user_id: int, strategy_id: int | None = None, limit: int = 20) -> list:
-    from app.models.strategy import BacktestTask
+def list_tasks(
+    db: Session, user_id: int, strategy_id: int | None = None, page: int = 1, size: int = 20
+) -> tuple[list, int]:
+    """回测任务列表分页（P1-6a），返回 (rows, total)。"""
+    page = max(1, page)
+    size = max(1, min(size, 100))
+    offset = (page - 1) * size
 
     if strategy_id is not None:
         if not _strategy_owned(db, user_id, strategy_id):
             raise ApiError(status_code=404, code=40420, msg="策略不存在")
-        return backtest_repo.list_tasks_by_strategy(db, strategy_id, limit=limit)
-    # 当前用户全部策略的任务（join strategies 按 user 过滤）
+        rows = backtest_repo.list_tasks_by_strategy(db, strategy_id, offset=offset, limit=size)
+        return rows, backtest_repo.count_tasks_by_strategy(db, strategy_id)
+
+    # 当前用户全部策略的任务（先按 user 取出策略 id，再按 strategy_id 过滤）
     ids = [s.id for s in strategy_repo.list_strategies(db, user_id)]
     if not ids:
-        return []
-    return list(db.scalars(select(BacktestTask).where(BacktestTask.strategy_id.in_(ids)).order_by(BacktestTask.id.desc()).limit(limit)))
+        return [], 0
+    rows = backtest_repo.list_tasks_by_strategies(db, ids, offset=offset, limit=size)
+    return rows, backtest_repo.count_tasks_by_strategies(db, ids)
 
 
 def list_results(db: Session, user_id: int, strategy_id: int) -> list:

@@ -212,6 +212,17 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
      - 迁移前须有 G05 的全量备份 + 恢复演练通过（本步已具备：`docs/ops/disaster_recovery.md` 第 3、4 节实测可执行）。
    - **需人工操作**：无。
 
+20. **【泳道 F · 全泳道通用】`git push` 走 SSH 被拒（publickey），需人工修复 SSH key 或改用 HTTPS remote**
+   - 现象：`git push origin main` 报 `git@ssh.github.com: Permission denied (publickey)`；`ssh -T git@github.com` 与 `ssh -i ~/.ssh/id_ed25519 -T git@github.com` 均同样被拒。
+   - 现状：`~/.ssh/config` 把 `github.com` 指向 `ssh.github.com:443`（穿透 443 的常规配置），本机存在 `id_ed25519`，但该公钥未被 GitHub 账号接受（未登记 / 账号变更 / 密钥已轮换）。
+   - **本轮绕过方式（未改任何配置）**：改用显式 HTTPS URL 推送，凭据由 Windows 凭据管理器（`credential.helper=manager`）提供，已验证可用：
+     `git push https://github.com/112-njx/stock-invest-system.git main`
+     未修改 `origin` remote、未改 `~/.ssh/*`——保持你的 SSH 配置原样。
+   - 需人工操作（二选一）：
+     ① **修 SSH**：把 `~/.ssh/id_ed25519.pub` 内容加到 GitHub → Settings → SSH and GPG keys（或生成新密钥并登记），之后 `git push origin main` 恢复正常；
+     ② **改走 HTTPS**：`git remote set-url origin https://github.com/112-njx/stock-invest-system.git`（凭据已在凭据管理器中，可直接用）。
+   - 影响：不修的话每次推送都需用上面的显式 HTTPS URL（各泳道 agent 已按此方式推送，main 未阻塞）。
+
 20. **【泳道 C · G15/G34】MEMORY_ENCRYPTION_KEY 未配置 —— 生产必须配置（开发环境已临时配置）**
    - 现状：G15（记忆文件加密）/ G34（memory_chunks.content 加密）均使用 AES-256-GCM，密钥从环境变量 `MEMORY_ENCRYPTION_KEY` 读取（32 字节随机，64 位 hex）。按约束 5「未配置前用环境变量占位，禁止硬编码密钥」，`config.py` 中该字段默认空串，**代码内无任何硬编码兜底**；未配置时加密写入直接抛 `EncryptionKeyMissing`（不会静默降级为明文）。
    - **已为本机开发环境生成随机密钥写入 `stock_backend/.env`**（该文件被 `.gitignore` 忽略，不入库）；`.env.example` 仅留空占位 + 生成命令注释。
@@ -224,3 +235,17 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 根因：G04 把 `pgvector` 加入 `pyproject.toml` / `requirements.lock` 后**未重建镜像**，容器内仍是旧依赖层。**与代码无关，宿主 venv 跑测试不受影响**（本泳道全部测试均在宿主 venv + 5433 容器库上执行并通过）。
    - 需人工操作：重建后端镜像后重启 —— `docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml build api worker beat && docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d`。重建后容器内 `python -c "import pgvector"` 应无报错。
    - 附：本次会话期间 dev 全栈曾被停止（容器 `Exited (0)`），已由本泳道用上述 compose 命令恢复 db + redis。
+
+22. **【泳道 G 复核发现 · 属泳道 F/G05】`test_backup.py` 恢复演练用例在活跃开发库上偶发失败（restored > source）**
+   - 现象：`tests/test_backup.py::test_restore_into_temp_db_is_complete_and_cleans_up` 断言 `result["ok"] is True` 失败，报 `consistent: false`，且**漂移的表每次不同**——全库跑时是 `users`（source 13 / restored 15），单跑该模块时是 `symbols`（source 7258 / restored 7259）。
+   - 根因：该用例校验口径为不变式 `restored <= source`（备份是 dump 那一刻的快照，源库是活的，写入只会让 source 变大）。**源库发生删除**时该不变式必然被打破：dump 之后若有人删行，source 会小于 restored。本仓库多泳道 agent 共用同一 dev 库（5433），其他泳道的测试清理（`_cleanup_users` / `_cleanup_symbol`）正好会删行。
+   - **归因证据（已排除 G09 引入）**：① `pytest tests/test_backup.py -q` **单独跑整模块即复现**，此时 `tests/test_pagination.py` 根本未参与；② 单独跑该用例（`::test_restore_into_temp_db_is_complete_and_cleans_up`）连跑 3 次全绿，证明是环境竞态而非确定性缺陷；③ 泳道 G/G09 的改动全部落在列表**读**路径，不具备删行能力；④ 排除 `test_pagination.py` 跑全库（517 passed）与含它跑全库（528 passed）均通过，同一份代码两次结果不同。
+   - 影响：仅测试稳定性，非功能回归（`verify_restore` 的其余四项不变式——归档可读、schema 表数一致、恢复库非空、无 pg_restore 错误——在失败样本中**全部为真**，备份链路本身健康）。生产每周演练若在业务低峰执行同样可能误报。
+   - 建议（属该用例 owner 泳道 F）：把 `consistent` 的判定从「restored <= source」放宽为「restored 与 source 的差在容差内」或「dump 后源库无删除」（例如比对前先取源库行数快照、或对该用例使用独立库/停写窗口）。**泳道 G 未改动他人测试文件**，仅记录。
+   - 需人工操作：无。
+
+23. **【泳道 G · G09】列表端点分页契约变更 —— 前端已同步适配，但列表首屏上限 100 条待 G27 补齐**
+   - 变更：`GET /conversations`、`/strategies`、`/agents`、`/backtest/tasks` 由**裸数组**改为分页信封 `{items,total,page,size,total_pages}`；`GET /conversations/{id}/messages` 由**全量数组**改为游标信封 `{items,has_more,next_cursor}`（默认最新 50 条）。
+   - 影响：任何**外部/第三方**调用方（非本仓库前端）若按裸数组解析，需同步改造。仓库内前端已在同一步适配（`src/api/ai.ts` + `src/stores/ai.ts`），未破坏既有页面。
+   - 待确认（G27 处理）：J 区会话列表、M 区策略/Agent 列表的首屏加载量由「全量」改为**一页 100 条**（后端单页上限）。当前无分页 UI，**拥有超过 100 条会话/策略的用户会看不到更早的记录**。G27 将引入 vue-virtual-scroller 虚拟滚动 + 按需续拉解决；若 G27 延后，需临时补「加载更多」入口。
+   - 需人工操作：无。

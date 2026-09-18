@@ -15,6 +15,7 @@ from app.schemas.backtest import (
     BacktestResultOut,
     BacktestTaskOut,
 )
+from app.schemas.pagination import PageParams, page_envelope
 from app.services import backtest_service
 
 router = APIRouter(prefix="/api/v1/backtest", tags=["backtest"])
@@ -42,11 +43,15 @@ def create_backtest(
 @router.get("/tasks")
 def list_tasks(
     strategy_id: int | None = None,
+    params: PageParams = Depends(),
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    rows = backtest_service.list_tasks(db, current.id, strategy_id)
-    return ok(data=[BacktestTaskOut.model_validate(t).model_dump(mode="json") for t in rows])
+    rows, total = backtest_service.list_tasks(
+        db, current.id, strategy_id, page=params.page, size=params.size
+    )
+    items = [BacktestTaskOut.model_validate(t).model_dump(mode="json") for t in rows]
+    return ok(data=page_envelope(items, total, params.page, params.size))
 
 
 @router.get("/tasks/{task_id}")

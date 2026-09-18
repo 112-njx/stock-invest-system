@@ -2,6 +2,25 @@ import { request } from './http'
 import { useUserStore } from '@/stores/user'
 import router from '@/router'
 
+/* ===================== 分页信封（G09 / P1-6a） ===================== */
+
+/** 列表端点统一分页信封（后端 app/schemas/pagination.py::page_envelope） */
+export interface Page<T> {
+  items: T[]
+  total: number
+  page: number
+  size: number
+  /** 总页数（空列表为 0） */
+  total_pages: number
+}
+
+/** 消息游标分页信封（items 按时间升序；next_cursor 为更早一页的游标，无更早消息时为 null） */
+export interface MessagePage {
+  items: ChatMessage[]
+  has_more: boolean
+  next_cursor: number | null
+}
+
 /* ===================== 会话 ===================== */
 
 export interface Conversation {
@@ -21,9 +40,9 @@ export interface ChatMessage {
   created_at: string
 }
 
-/** 会话列表（J 区聊天页数据源） */
-export function fetchConversations() {
-  return request<Conversation[]>({ url: '/conversations' })
+/** 会话列表（J 区聊天页数据源，分页） */
+export function fetchConversations(params: { page?: number; size?: number } = {}) {
+  return request<Page<Conversation>>({ url: '/conversations', params })
 }
 
 /** 创建会话 */
@@ -41,9 +60,12 @@ export function deleteConversation(conversationId: number) {
   return request<null>({ url: `/conversations/${conversationId}`, method: 'delete' })
 }
 
-/** 拉取会话消息（时间升序） */
-export function fetchMessages(conversationId: number) {
-  return request<ChatMessage[]>({ url: `/conversations/${conversationId}/messages` })
+/**
+ * 拉取会话消息（游标分页，items 时间升序）。
+ * 不传 `before` 取最新一页；传上一页返回的 `next_cursor` 可继续往前翻更早的消息。
+ */
+export function fetchMessages(conversationId: number, params: { limit?: number; before?: number } = {}) {
+  return request<MessagePage>({ url: `/conversations/${conversationId}/messages`, params })
 }
 
 /** 追加消息 */
@@ -273,9 +295,9 @@ export interface Strategy {
   updated_at?: string
 }
 
-/** 策略列表（M 区 / J 区策略页数据源） */
-export function fetchStrategies() {
-  return request<Strategy[]>({ url: '/strategies' })
+/** 策略列表（M 区 / J 区策略页数据源，分页） */
+export function fetchStrategies(params: { page?: number; size?: number } = {}) {
+  return request<Page<Strategy>>({ url: '/strategies', params })
 }
 
 /** 保存策略 */
@@ -358,9 +380,9 @@ export interface AgentConfig {
   updated_at?: string
 }
 
-/** 定制 Agent 列表 */
-export function fetchAgents() {
-  return request<AgentConfig[]>({ url: '/agents' })
+/** 定制 Agent 列表（分页） */
+export function fetchAgents(params: { page?: number; size?: number } = {}) {
+  return request<Page<AgentConfig>>({ url: '/agents', params })
 }
 
 /** 创建定制 Agent（可指定 template=technical|fundamental|risk_control 从预设创建） */
@@ -465,9 +487,15 @@ export function fetchBacktestTask(taskId: number) {
   return request<BacktestTask>({ url: `/backtest/tasks/${taskId}` })
 }
 
-/** 回测任务列表（可按 strategy_id 过滤） */
-export function fetchBacktestTasks(strategyId?: number) {
-  return request<BacktestTask[]>({ url: '/backtest/tasks', params: strategyId ? { strategy_id: strategyId } : undefined })
+/** 回测任务列表（可按 strategy_id 过滤，分页） */
+export function fetchBacktestTasks(
+  strategyId?: number,
+  params: { page?: number; size?: number } = {}
+) {
+  return request<Page<BacktestTask>>({
+    url: '/backtest/tasks',
+    params: strategyId ? { strategy_id: strategyId, ...params } : params,
+  })
 }
 
 /** 回测结果列表（按策略，N 区与全景 K 线策略指标数据源；不含 equity_curve/trades） */
@@ -545,13 +573,8 @@ export interface AgentRun {
   updated_at?: string
 }
 
-/** Agent 运行历史分页返回 */
-export interface AgentRunPage {
-  items: AgentRun[]
-  total: number
-  page: number
-  size: number
-}
+/** Agent 运行历史分页返回（G09 起 total_pages 由后端下发） */
+export type AgentRunPage = Page<AgentRun>
 
 /** Agent 运行历史列表（分页，可按会话筛选） */
 export function fetchAgentRuns(params: { conversation_id?: number; page?: number; size?: number } = {}) {

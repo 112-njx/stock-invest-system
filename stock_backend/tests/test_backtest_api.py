@@ -184,7 +184,8 @@ def test_backtest_task_list(client: TestClient, monkeypatch):
         token = _register(client, uname)
         sid = _create_strategy(client, token)
         client.post("/api/v1/backtest", json={"strategy_id": sid, "symbol": "600519"}, headers=_auth(token))
-        rows = client.get(f"/api/v1/backtest/tasks?strategy_id={sid}", headers=_auth(token)).json()["data"]
+        # G09：分页信封
+        rows = client.get(f"/api/v1/backtest/tasks?strategy_id={sid}", headers=_auth(token)).json()["data"]["items"]
         assert len(rows) >= 1
     finally:
         _cleanup_users(uname)
