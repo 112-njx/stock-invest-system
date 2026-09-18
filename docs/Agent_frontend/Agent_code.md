@@ -202,3 +202,7 @@ Agent的前端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：V0.3 泳道C G15 前端——① MemoryFilesDialog.vue 在 dialog__body 顶部加「数据存储说明」提示条（`.mem-notice` 样式）：说明记忆以 AES-256-GCM 加密存储于服务端、不写入浏览器本地、可随时查看删除。**仅新增提示元素与样式，未改动面板结构、列表渲染与交互逻辑**（该面板被多泳道汇聚，改动前已先读文件现状）。② PrivacyView.vue（泳道 B G03 法律页）文案对齐：原「本地优先原则…采用本地存储设计」已不准确（记忆现为服务端加密存储），改为「记忆加密存储」并新增「记忆访问审计」一条（说明读取/写入/删除均记日志、可在记忆文件面板查看）。改动为文案级、外科式，未动页面结构。验收：vue-tsc -b --noEmit 通过。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：V0.3 泳道C G14 前端——SettingsPanel.vue 新增「AI 模型设置」区块（**只加区块，未重构整页**；该页被泳道 A/B/C 汇聚，改动前已先读文件现状）：① 未配置时显示「填写我的 API Key」，已配置时显示「更换 API Key」+「清除 API Key」，点击展开输入框（password 型，autocomplete=off），本地先做 sk- 前缀校验再提交；② 展示当前 Key 掩码（服务端只回掩码，前端不持有明文）；③ 展示累计 token 用量（输入/输出/合计，千分位）并明确标注「按 usage 估算，仅供成本自估，非精确计费」。api/account.ts 增 fetchApiKeyStatus / saveApiKey / fetchTokenUsage 三个客户端函数与 ApiKeyStatus / TokenUsage 类型。沿用页面既有 security-row / security-note 样式，另加 .security-note--wrap 修饰类（原 security-note 为 nowrap+ellipsis，长文案会被截断）与 .apikey-edit 编辑区样式。验收：vue-tsc -b --noEmit 通过。

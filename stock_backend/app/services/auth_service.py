@@ -38,7 +38,7 @@ def _build_auth_result(
     return {
         "token": access_token,
         "refresh_token": refresh_token,
-        "user": UserOut.model_validate(user).model_dump(mode="json"),
+        "user": UserOut.from_user(user).model_dump(mode="json"),
     }
 
 

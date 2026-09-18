@@ -54,6 +54,28 @@ class UserOut(BaseModel):
     nickname: str | None = None
     avatar_url: str | None = None
     created_at: datetime
+    # G14（P0-2）：只暴露「是否已配置自填 Key」，**绝不下发 Key 本身**
+    has_api_key: bool = False
+    llm_tokens_prompt: int = 0
+    llm_tokens_completion: int = 0
+    llm_tokens_total: int = 0
+
+    @classmethod
+    def from_user(cls, user) -> "UserOut":
+        """由 User ORM 构造（含派生的 has_api_key / token 合计，避免下发密文）。"""
+        return cls(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            email_verified=bool(user.email_verified),
+            nickname=user.nickname,
+            avatar_url=user.avatar_url,
+            created_at=user.created_at,
+            has_api_key=bool(user.api_key_encrypted),
+            llm_tokens_prompt=int(user.llm_tokens_prompt or 0),
+            llm_tokens_completion=int(user.llm_tokens_completion or 0),
+            llm_tokens_total=int(user.llm_tokens_prompt or 0) + int(user.llm_tokens_completion or 0),
+        )
 
 
 class TokenOut(BaseModel):
@@ -65,6 +87,19 @@ class UserUpdateIn(BaseModel):
     nickname: SafeTextOptional = Field(None, max_length=64)
     # G30：头像地址仅允许 http/https/站内路径，拒绝 javascript:/data: 等可执行协议
     avatar_url: HttpUrlTextOptional = Field(None, max_length=255)
+
+
+class ApiKeyIn(BaseModel):
+    """G14：设置用户自填 DeepSeek API Key（写专用，响应不回显）。"""
+
+    api_key: str = Field(max_length=128, description="DeepSeek API Key（sk- 开头）；传空串表示清除")
+
+
+class ApiKeyOut(BaseModel):
+    """G14：API Key 配置状态（**只返回状态与掩码，绝不回显明文**）。"""
+
+    has_api_key: bool
+    masked: str | None = None  # 形如 sk-abcd****wxyz，仅用于让用户确认填了哪把 key
 
 
 # ---- 重点关注股票 ----

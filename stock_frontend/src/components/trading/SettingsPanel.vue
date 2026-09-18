@@ -10,6 +10,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { createExport, deleteAccount, exportDownloadUrl, fetchExportStatus } from '@/api/account'
 import type { ExportTaskInfo } from '@/api/account'
+import { fetchApiKeyStatus, fetchTokenUsage, saveApiKey } from '@/api/account'
+import type { ApiKeyStatus, TokenUsage } from '@/api/account'
 import { changeEmailApi, changePasswordApi } from '@/api/auth'
 import { fetchAnnouncementHistory } from '@/api/notifications'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -190,6 +192,83 @@ function exportSizeText(size: number | null): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
+// ---- G14：AI 模型设置（自填 API Key + 累计 token 用量）----
+const apiKeyInput = ref('')
+const apiKeyStatus = ref<ApiKeyStatus>({ has_api_key: false, masked: null })
+const apiKeyLoading = ref(false)
+const apiKeyEditing = ref(false)
+const tokenUsage = ref<TokenUsage>({ prompt: 0, completion: 0, total: 0 })
+
+async function loadApiKeyState() {
+  try {
+    apiKeyStatus.value = await fetchApiKeyStatus()
+  } catch {
+    /* 未登录或接口异常时保持默认空态，不打断设置页 */
+  }
+  try {
+    const me = await fetchTokenUsage()
+    tokenUsage.value = {
+      prompt: me.llm_tokens_prompt ?? 0,
+      completion: me.llm_tokens_completion ?? 0,
+      total: me.llm_tokens_total ?? 0,
+    }
+  } catch {
+    /* 同上 */
+  }
+}
+
+function startEditApiKey() {
+  apiKeyEditing.value = true
+  apiKeyInput.value = ''
+}
+
+function cancelEditApiKey() {
+  apiKeyEditing.value = false
+  apiKeyInput.value = ''
+}
+
+async function onSaveApiKey() {
+  const key = apiKeyInput.value.trim()
+  if (!key) {
+    toast.error('请输入 API Key')
+    return
+  }
+  if (!key.startsWith('sk-')) {
+    toast.error('API Key 格式不正确，应以 sk- 开头')
+    return
+  }
+  apiKeyLoading.value = true
+  try {
+    apiKeyStatus.value = await saveApiKey(key)
+    toast.success('已保存，后续 AI 调用将优先使用你的 Key')
+    apiKeyEditing.value = false
+    apiKeyInput.value = ''
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    apiKeyLoading.value = false
+  }
+}
+
+async function onClearApiKey() {
+  apiKeyLoading.value = true
+  try {
+    apiKeyStatus.value = await saveApiKey('')
+    toast.success('已清除，将使用服务端默认 Key')
+    apiKeyEditing.value = false
+    apiKeyInput.value = ''
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : '清除失败')
+  } finally {
+    apiKeyLoading.value = false
+  }
+}
+
+/** 累计 token 展示（千分位；估算值，非精确计费） */
+function tokenText(n: number): string {
+  return n.toLocaleString('zh-CN')
+}
+
 // ---- G03：关于本产品（产品定位声明）----
 const aboutOpen = ref(false)
 
@@ -236,6 +315,7 @@ async function confirmDelete() {
 onMounted(() => {
   if (!user.user && user.token) user.fetchMe().catch(() => {})
   document.addEventListener('click', onDocClick)
+  loadApiKeyState() // G14：加载 API Key 状态与累计 token 用量
 })
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocClick)
@@ -363,6 +443,47 @@ const menuStyle = computed(() => ({
         导出进度：{{ exportTask.status === 'failed' ? '失败' : exportTask.progress + '%' }}
       </span>
       <span v-else class="security-note">导出包含账号、关注、策略、回测、会话与记忆等全部数据，24 小时内有效。</span>
+    </div>
+
+    <!-- G14：AI 模型设置（自填 API Key + 累计 token 用量），仅新增区块，不改上方结构 -->
+    <div class="settings-block settings-block--col">
+      <span class="settings-block__label">AI 模型设置</span>
+      <div class="security-rows">
+        <button v-if="!apiKeyEditing" class="security-row" @click="startEditApiKey">
+          <span class="security-row__text">
+            {{ apiKeyStatus.has_api_key ? '更换 API Key' : '填写我的 API Key' }}
+          </span>
+          <span class="security-row__arrow">›</span>
+        </button>
+        <button v-if="apiKeyStatus.has_api_key && !apiKeyEditing" class="security-row" :disabled="apiKeyLoading" @click="onClearApiKey">
+          <span class="security-row__text">清除 API Key</span>
+          <span class="security-row__arrow">›</span>
+        </button>
+      </div>
+
+      <div v-if="apiKeyEditing" class="apikey-edit">
+        <BaseInput
+          v-model="apiKeyInput"
+          type="password"
+          placeholder="sk-xxxxxxxx（DeepSeek API Key）"
+          autocomplete="off"
+        />
+        <div class="apikey-edit__actions">
+          <BaseButton :loading="apiKeyLoading" @click="onSaveApiKey">保存</BaseButton>
+          <BaseButton variant="ghost" :disabled="apiKeyLoading" @click="cancelEditApiKey">取消</BaseButton>
+        </div>
+      </div>
+
+      <span class="security-note">
+        <template v-if="apiKeyStatus.has_api_key">
+          当前：{{ apiKeyStatus.masked }}（密文存储，AI 调用优先使用你的 Key）
+        </template>
+        <template v-else>未填写时使用服务端默认 Key。Key 以 AES-256-GCM 密文存储，不回显明文。</template>
+      </span>
+      <span class="security-note">
+        累计 token 用量（估算）：{{ tokenText(tokenUsage.total) }}（输入 {{ tokenText(tokenUsage.prompt) }} / 输出 {{ tokenText(tokenUsage.completion) }}）
+      </span>
+      <span class="security-note">用量按模型返回的 usage 估算，仅供成本自估，非精确计费。</span>
     </div>
 
     <!-- G18：危险区（删除账户） -->
@@ -761,6 +882,22 @@ const menuStyle = computed(() => ({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* G14：较长的说明文案需换行，避免被 ellipsis 截断 */
+.security-note--wrap {
+  white-space: normal;
+  line-height: 1.6;
+}
+/* G14：API Key 编辑区 */
+.apikey-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px;
+}
+.apikey-edit__actions {
+  display: flex;
+  gap: 8px;
 }
 
 /* G33：改密/改邮箱弹窗 */

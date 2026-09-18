@@ -16,6 +16,10 @@ class LLMResult:
     text: str
     model: str
     tokens: int = 0  # 总 token（prompt+completion），不可得时估算
+    # G14：分项 token（按 DeepSeek usage 字段；不可得时为 0，由服务层估算补齐）
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    usage_estimated: bool = False  # True = 非上游 usage，而是本地估算
 
 
 class BaseLLMProvider(ABC):

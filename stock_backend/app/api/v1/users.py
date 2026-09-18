@@ -12,9 +12,10 @@ from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.core.response import ok
 from app.models.user import User
-from app.repositories import export_repo
-from app.schemas.user import ChangeEmailIn, ChangePasswordIn, UserOut, UserUpdateIn
+from app.repositories import export_repo, user_repo
+from app.schemas.user import ApiKeyIn, ApiKeyOut, ChangeEmailIn, ChangePasswordIn, UserOut, UserUpdateIn
 from app.services import export_token, user_service
+from app.services.llm.user_key import ApiKeyFormatError, validate_api_key
 
 _settings = get_settings()
 
@@ -23,7 +24,7 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 @router.get("/me")
 def get_me(current: User = Depends(get_current_user)) -> dict:
-    return ok(data=UserOut.model_validate(current).model_dump(mode="json"))
+    return ok(data=UserOut.from_user(current).model_dump(mode="json"))
 
 
 @router.put("/me")
@@ -33,7 +34,42 @@ def update_me(
     db: Session = Depends(get_db),
 ) -> dict:
     user = user_service.update_profile(db, current, nickname=payload.nickname, avatar_url=payload.avatar_url)
-    return ok(data=UserOut.model_validate(user).model_dump(mode="json"))
+    return ok(data=UserOut.from_user(user).model_dump(mode="json"))
+
+
+@router.get("/me/api-key")
+def get_api_key_status(current: User = Depends(get_current_user)) -> dict:
+    """G14：查询自填 API Key 配置状态（只回掩码，不回明文）。"""
+    key = current.api_key_encrypted
+    masked = f"{key[:7]}****{key[-4:]}" if key and len(key) > 12 else ("已配置" if key else None)
+    return ok(data=ApiKeyOut(has_api_key=bool(key), masked=masked).model_dump(mode="json"))
+
+
+@router.put("/me/api-key")
+def set_api_key(
+    payload: ApiKeyIn,
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """G14：设置/清除自填 API Key（加密存储）。
+
+    传空串清除（回退服务端默认 key）；非空时做 sk- 前缀 + 形态校验。
+    """
+    raw = (payload.api_key or "").strip()
+    if not raw:
+        user_repo.set_api_key(db, current, None)
+        db.commit()
+        return ok(data=ApiKeyOut(has_api_key=False).model_dump(mode="json"), msg="已清除，将使用服务端默认 Key")
+
+    try:
+        key = validate_api_key(raw)
+    except ApiKeyFormatError as e:
+        raise ApiError(status_code=400, code=40030, msg=str(e)) from e
+
+    user_repo.set_api_key(db, current, key)
+    db.commit()
+    masked = f"{key[:7]}****{key[-4:]}"
+    return ok(data=ApiKeyOut(has_api_key=True, masked=masked).model_dump(mode="json"), msg="已保存")
 
 
 @router.put("/me/password")

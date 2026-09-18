@@ -44,3 +44,36 @@ export function restoreAccount(username: string, password: string) {
 export function exportDownloadUrl(downloadUrl: string): string {
   return downloadUrl
 }
+
+/* ---------------- G14：用户自填 API Key + token 用量 ---------------- */
+
+/** API Key 配置状态（服务端只回掩码，不回明文） */
+export interface ApiKeyStatus {
+  has_api_key: boolean
+  masked: string | null
+}
+
+/** G14：查询自填 API Key 状态 */
+export function fetchApiKeyStatus() {
+  return request<ApiKeyStatus>({ url: '/users/me/api-key', method: 'get' })
+}
+
+/** G14：设置/清除自填 API Key（传空串表示清除，回退服务端默认 Key） */
+export function saveApiKey(apiKey: string) {
+  return request<ApiKeyStatus>({ url: '/users/me/api-key', method: 'put', data: { api_key: apiKey } })
+}
+
+/** G14：累计 token 用量（估算值，非精确计费） */
+export interface TokenUsage {
+  prompt: number
+  completion: number
+  total: number
+}
+
+/** G14：读取当前用户累计 token 用量（数据源为 /users/me） */
+export function fetchTokenUsage() {
+  return request<{ llm_tokens_prompt: number; llm_tokens_completion: number; llm_tokens_total: number }>({
+    url: '/users/me',
+    method: 'get',
+  })
+}

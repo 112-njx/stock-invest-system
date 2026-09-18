@@ -31,6 +31,7 @@ from app.models.agent import UserAgent
 from app.repositories import agent_repo, conversation_repo
 from app.services import conversation_service, indicator_service, market_service, strategy_service
 from app.services.llm import LLMError, LLMService, get_llm_service
+from app.services.llm.user_key import build_llm_service_for_user
 from app.services.llm.llm_service import classify_llm_error
 from app.utils.db import SessionLocal
 
@@ -488,10 +489,15 @@ async def stream_chat(
     llm_svc: LLMService | None = None,
     model: Any | None = None,
 ) -> AsyncIterator[dict]:
-    """流式对话主流程（yield SSE 事件）。llm_svc/model 供测试注入。"""
-    llm_svc = llm_svc or get_llm_service()
+    """流式对话主流程（yield SSE 事件）。llm_svc/model 供测试注入。
+
+    G14：未显式注入 llm_svc 时，按当前用户装配 —— 用户自填 API Key 优先、服务端 key 兜底，
+    并挂上 token 用量累加回调。
+    """
     db: Session = SessionLocal()
     try:
+        # 传 base=get_llm_service() 以保留测试对 cs.get_llm_service 的注入缝隙
+        llm_svc = llm_svc or build_llm_service_for_user(db, user_id, base=get_llm_service())
         # ---- 会话与用户消息 ----
         conv = None
         if conversation_id is not None:

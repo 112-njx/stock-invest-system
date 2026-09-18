@@ -134,3 +134,26 @@ def delete_support_resistance(db: Session, user_id: int, sr_id: int) -> bool:
     db.delete(row)
     db.flush()
     return True
+
+
+# ---- G14（P0-2）：用户自填 API Key + token 用量累计 ----
+def set_api_key(db: Session, user: User, api_key: str | None) -> User:
+    """写入/清除用户自填 API Key（ORM 层 EncryptedText 自动加密；None = 清除）。"""
+    user.api_key_encrypted = api_key
+    db.flush()
+    return user
+
+
+def add_llm_tokens(db: Session, user_id: int, prompt_tokens: int, completion_tokens: int) -> None:
+    """累计 token 用量（原子自增，避免并发读改写丢失计数）。"""
+    from sqlalchemy import update
+
+    db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(
+            llm_tokens_prompt=User.llm_tokens_prompt + max(0, int(prompt_tokens)),
+            llm_tokens_completion=User.llm_tokens_completion + max(0, int(completion_tokens)),
+        )
+    )
+    db.flush()

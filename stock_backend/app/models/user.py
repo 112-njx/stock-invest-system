@@ -7,6 +7,7 @@ from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+from .types import EncryptedText
 
 
 class User(Base):
@@ -23,6 +24,10 @@ class User(Base):
     # G18：账户软删除（P1-5b 删除权）——软删后 30 天宽限期内可恢复，到期由 beat 硬删级联
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # G14（P0-2）：用户自填 DeepSeek API Key（AES-256-GCM 密文，禁止明文落库）+ 累计 token 用量
+    api_key_encrypted: Mapped[str | None] = mapped_column(EncryptedText)
+    llm_tokens_prompt: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    llm_tokens_completion: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default="now()")
 

@@ -449,7 +449,51 @@ curl -X PUT "http://127.0.0.1:8000/api/v1/users/me/email" -H "Authorization: Bea
 
 （密码错误返回 `40003`；新邮箱与当前相同返回 `40005`；新邮箱已被他人注册返回 `40002`）
 
-## 5. 创建数据导出任务（G17）
+## 5. 查询自填 API Key 状态（G14）
+
+- **接口名称**：查询自填 API Key 状态
+- **请求 Method**：GET
+- **请求 Path**：/api/v1/users/me/api-key
+- **接口作用**：返回当前用户是否已配置自填 DeepSeek API Key，以及掩码形式（如 `sk-abcd****wxyz`）。**服务端只回掩码，任何响应都不回显明文**。个人设置页「AI 模型设置」数据源。
+- **请求 Body**：无（Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/users/me/api-key" -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"ok","data":{"has_api_key":true,"masked":"sk-abcd****wxyz"}}
+```
+
+## 6. 设置 / 清除自填 API Key（G14）
+
+- **接口名称**：设置自填 API Key
+- **请求 Method**：PUT
+- **请求 Path**：/api/v1/users/me/api-key
+- **接口作用**：保存用户自填的 DeepSeek API Key（AES-256-GCM 密文存储）。保存后 AI 调用**优先使用用户 Key**；传空串表示清除，回退服务端默认 Key。格式要求 `sk-` 前缀 + 32 位以上字符。
+- **请求 Body**：有（Body-JSON：api_key；Header：Authorization: Bearer <token>）
+
+**请求示例（curl）**
+
+```bash
+curl -X PUT "http://127.0.0.1:8000/api/v1/users/me/api-key" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"api_key":"sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}'
+```
+
+**成功返回示例**
+
+```json
+{"code":0,"msg":"已保存","data":{"has_api_key":true,"masked":"sk-xxxx****xxxx"}}
+```
+
+（格式不合法返回 `40030`；清除时 `api_key` 传空串，返回 `has_api_key=false`）
+
+> 累计 token 用量（估算值，非精确计费）随 `GET /api/v1/users/me` 返回：`llm_tokens_prompt` / `llm_tokens_completion` / `llm_tokens_total`。
+
+## 7. 创建数据导出任务（G17）
 
 - **接口名称**：创建数据导出任务
 - **请求 Method**：POST
@@ -469,7 +513,7 @@ curl -X POST "http://127.0.0.1:8000/api/v1/users/me/export" -H "Authorization: B
 {"code":0,"msg":"导出任务已提交","data":{"task_id":1,"status":"pending","progress":0,"file_size":null,"error":null,"created_at":"2026-09-17T08:00:00Z","finished_at":null,"expires_at":"2026-09-18T08:00:00Z","download_url":null}}
 ```
 
-## 6. 查询导出任务状态（G17）
+## 8. 查询导出任务状态（G17）
 
 - **接口名称**：导出任务状态
 - **请求 Method**：GET
@@ -491,7 +535,7 @@ curl "http://127.0.0.1:8000/api/v1/users/me/export/1" -H "Authorization: Bearer 
 
 （任务不存在/越权查询他人任务返回 404/40420）
 
-## 7. 下载导出文件（G17）
+## 9. 下载导出文件（G17）
 
 - **接口名称**：下载导出 ZIP
 - **请求 Method**：GET

@@ -448,3 +448,11 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：G15 需要人类配置项——MEMORY_ENCRYPTION_KEY 未配置。按约束 5「未配置前用环境变量占位，禁止硬编码密钥」实现：config 中该字段默认空串，代码路径无任何硬编码兜底，未配置时加密写入直接抛 EncryptionKeyMissing。已为本机开发环境生成 32 字节随机密钥写入 stock_backend/.env（该文件被 .gitignore，不入库），并在 .env.example 留空占位 + 生成命令注释。**生产部署必须自行生成并注入该密钥**，否则记忆写入与 content 落库会失败（详见 project_constraints_v0.3.md）。另：测试侧在 tests/conftest.py 用 secrets.token_hex(32) 注入一次性随机密钥，使测试自包含、不依赖本机 .env。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：V0.3 泳道C G14——用户自填 API Key + token 用量（P0-2 简化版）。Alembic 0018 给 users 加 api_key_encrypted（Text，复用 G34 的 EncryptedText TypeDecorator 密文落库）/ llm_tokens_prompt / llm_tokens_completion。新增 services/llm/user_key.py：validate_api_key（sk- 前缀 + 32 位以上形态校验）、get_user_api_key（ORM 自动解密）、record_usage（原子自增累计）、build_llm_service_for_user（用户 key 优先 + 用量回调，回调走独立 SessionLocal 避免与请求事务耦合）。LLMService 增 api_key / usage_sink / with_api_key（派生实例**共享**进程级熔断器与限流桶）；DeepSeekProvider 支持 api_key 覆盖并开 stream_usage=True，流式也能取到 usage；上游无 usage 时用 token_budget.estimate_tokens 本地估算并标记 estimated。端点：GET/PUT /api/v1/users/me/api-key（**只回掩码不回明文**，传空串清除）；UserOut 增 has_api_key 与三项 token 字段（改 from_user 构造，避免下发密文）。chat_service.stream_chat 装配用户级 LLMService。前端 SettingsPanel 增「AI 模型设置」区块（Key 输入/更换/清除 + 累计 token 展示）。验收：test_user_api_key.py 19 项全绿，全库 528 passed，vue-tsc 通过。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：G14 简化版边界说明（按规划「服务端限流/额度分层不做」）。用户自填 key 仅改变「用谁的 key 计费」，**不改变服务端防护**：熔断器与令牌桶仍是进程级共享（with_api_key 显式复用同一 breaker/bucket 实例），避免每个用户各有一套状态导致熔断保护形同虚设。token 用量为**估算值**（优先取 DeepSeek usage 字段，缺失时字符启发式兜底），仅供用户自估成本，非精确计费——前端已明确标注。用户 key 只做形态校验（sk- 前缀），不做联网有效性验证：真实有效性由首次调用时的 401 分类为 LLMAuthError 并给出「API Key 无效」提示。
