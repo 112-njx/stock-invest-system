@@ -1213,9 +1213,19 @@ curl -X POST "http://127.0.0.1:8000/api/v1/backtest" -H "Authorization: Bearer e
 
 策略代码在**独立子进程**内执行，父进程（Celery worker）只做调度与 DB 写入：
 
-- 死循环 → 父进程在 `BACKTEST_TIME_BUDGET + BACKTEST_SUBPROCESS_GRACE`（默认 30+15s）后强制终止子进程，**worker 与其他任务不受影响**；
-- POSIX（生产容器）额外施加 `RLIMIT_CPU` / `RLIMIT_AS` 硬上限（超限 → 任务失败，错误信息含原因）；
-- Windows 本地开发无 `resource` 模块，**CPU/内存硬上限不生效**，死循环防护仍由 terminate 提供。
+| 约束 | Linux（生产容器） | Windows（本地开发） |
+|---|---|---|
+| 死循环（墙钟） | 父进程 `terminate`，上限 `BACKTEST_TIME_BUDGET + BACKTEST_SUBPROCESS_GRACE`（默认 30+15s） | 同左 |
+| 内存 | `RLIMIT_AS`（内核）+ **父进程 RSS 看门狗** | **父进程 RSS 看门狗** |
+| CPU | `RLIMIT_CPU`（内核） | 无（仅墙钟封顶） |
+
+- 内存看门狗**跨平台**（零依赖读子进程 RSS：Windows Win32 API / Linux `/proc`），
+  采样周期 0.05s，预算语义为「**策略自身额外增长**」—— 基线 RSS 由子进程在 ready 消息中自报，
+  解释器与依赖 import 的开销不计入预算。
+- 实测（Windows，失控策略）：无预算时 6s 内无上限增长（峰值 3.7 GB）；开启 512MB 预算后
+  **约 1s 内拦下**，峰值受「预算 + 单次最大分配 + 采样滞后」约束。
+- 超限失败信息含实测超出量，任务标记 `failed` 且**不重试**（重试只会再死一次）。
+- 执行信息随结果回报 `_subprocess.peak_rss_bytes`（内存峰值），供 G25 回测监控使用。
 
 ## 2. 任务状态轮询
 

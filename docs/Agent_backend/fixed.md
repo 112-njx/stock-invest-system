@@ -359,3 +359,9 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 需要我手动配置（如果有的话）：无。**经验**：容器是 Python 3.12、本地是 3.14，凡「类体内自引用注解」或「`X | None` 且 X 为函数」的写法，本地不报错但容器必炸——新增此类注解时一律加 `from __future__ import annotations`。
 
 ---
+
+时间：2026-09-18
+修复bug内容（描述）：Windows 上策略内存限制完全失效（G08 收尾加固）。现象：G08 首版用 `resource.setrlimit` 实现 CPU/内存上限，但 `resource` 是 Unix-only —— Windows **没有该模块**，`BACKTEST_MEMORY_LIMIT_MB` 在本地开发机被**完全忽略**。实测数据（Windows 本机）：配置 64MB 预算，有界策略吃到 1.2GB 未被拦；无界策略 6 秒吃掉 **3.7GB**（约 600 MB/s），按默认墙钟 45s 外推可达 ~25GB，足以拖垮整机（被杀的可能包括 worker/IDE/浏览器），而 Linux 上子进程会自己吃 MemoryError 安静退出。**更隐蔽的后果是 dev/prod 行为分叉**：本地"跑得好好的"策略到生产会被 RLIMIT_AS 判失败，开发者拿不到一致的失败反馈。修复：新增**跨平台、零依赖**的父进程侧 RSS 看门狗 `child_rss_bytes()`（Windows 走 `OpenProcess`+`GetProcessMemoryInfo`，Linux 读 `/proc/<pid>/statm`），父进程每 0.05s 采样子进程 RSS，超过预算即 terminate，复用既有收敛逻辑。两处细节：① 预算语义定为「策略自身额外增长」，**基线 RSS 由子进程在 ready 消息中自报**（早期用父进程侧"运行期最小 RSS"启发式会把 import 开销算进预算、误伤正常策略）；② 采样间隔从 0.2s 收紧到 0.05s —— 0.2s × 600MB/s 意味着单次超调可达数百 MB（实测 128MB 预算冲到 848MB，收紧后 232MB）。POSIX 上 `RLIMIT_AS` 作为内核级第二道保留（RSS 是真实占用，比虚拟地址空间更贴近实情，两者互补）。实测效果（Windows）：512MB 预算约 1s 内拦下；32MB 预算 0.5s 拦下（超调 +34MB）。回归测试：`test_memory_watchdog_terminates_hog_on_all_platforms`（两平台都必须快速拦下，Windows 必须命中看门狗分支）、`test_memory_budget_excludes_interpreter_overhead`（正常策略不被误杀）、`test_child_rss_bytes_reads_real_usage`。另新增 `_subprocess.peak_rss_bytes`（内存峰值）供 G25 回测监控使用。
+需要我手动配置（如果有的话）：无。
+
+---

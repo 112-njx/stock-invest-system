@@ -481,3 +481,12 @@ Agent的后端编码记录,你需要按照：
 编码内容（描述）：G08 跨泳道改动披露。① `tests/test_backtest_api.py`（泳道 D）改 1 行：Celery mock 由 `delay=lambda task_id: None` 改为 `delay=lambda task_id, quota_token=None: None` —— 本步给 `run_backtest_task` 加了第二个参数，不改 mock 会让该测试静默走"入队失败"分支（不再覆盖真实入队路径）。② `app/services/llm/llm_service.py`（泳道 C）加 1 行 `from __future__ import annotations`，修复上述容器导入崩溃。③ `app/agent/strategy_gen.py`（泳道 B/E 的 AI 链路）改 2 行提示词，修正 `+=` 的错误描述。均已在提交信息与 project_constraints 中如实披露，未回退任何他人改动。另：`backtest_service.py` 只改执行层调用点（`BacktestEngine.run` → `run_isolated`）与入队/配额，**未动撮合、配对、metrics、序列化逻辑**（泳道 D G20/G32 的产出），符合跨泳道边界约定。
 
 ---
+---
+编码时间：2026-09-18
+编码内容（描述）：G08 收尾加固——Windows 内存限制失效修复（跨平台 RSS 看门狗）。首版用 `resource.setrlimit` 实现 CPU/内存上限，但 `resource` 是 Unix-only，Windows 上 `BACKTEST_MEMORY_LIMIT_MB` **被完全忽略**。实测（Windows 本机）：64MB 预算下有界策略吃到 1.2GB 未被拦；无界策略 **6 秒吃掉 3.7GB**（约 600MB/s），按默认墙钟 45s 外推可达 ~25GB，足以拖垮整机。修复：新增**零依赖**的父进程侧 `child_rss_bytes()`（Windows `OpenProcess`+`GetProcessMemoryInfo`，Linux `/proc/<pid>/statm`），父进程每 0.05s 采样 RSS，超预算即 terminate。两处关键细节：① 预算语义 =「策略自身额外增长」，**基线 RSS 由子进程 ready 消息自报**（早期用父进程侧"运行期最小 RSS"启发式会把 import 开销算进预算、误伤正常策略）；② 采样间隔 0.2s→0.05s（0.2s×600MB/s 单次超调可达数百 MB：实测 128MB 预算冲到 848MB，收紧后 232MB）。POSIX 保留 `RLIMIT_AS` 作内核级第二道。实测效果：512MB 预算约 1s 拦下、32MB 预算 0.5s 拦下（超调 +34MB）。另新增 `_subprocess.peak_rss_bytes`（内存峰值）——**G25 回测监控的内存峰值数据源已就绪**。验收：test_backtest_isolation.py 40 项（Windows 38 passed/2 skipped，Linux 容器 39 passed/1 skipped），全库 566 passed/2 skipped，ruff 全绿。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：G08 加固的测试经验（供后续参考）。① **跨平台断言要断言"行为"而非"机制"**：内存失控在两平台由不同机制拦截（Windows 看门狗 / POSIX RLIMIT_AS），但都必须**快速拦下且父进程存活**——用例断言 `BacktestError` + `elapsed < 30`，再按平台追加机制断言（Windows 必须命中 `内存增长超过上限` 分支）。② **spawn 要求 `__main__` 可导入且有 `if __name__ == "__main__"` 守卫**：临时验证脚本用 `python - <<EOF`（stdin）或漏写守卫都会报 `OSError: Invalid argument: '<stdin>'` / 递归重跑——本步踩了两次，写探针请落成真实文件并加守卫。③ 引擎既有行为记录：`BacktestContext.__init__` 用 `params or {}`，**空 dict 会被替换成新对象**，故策略对 `context.params` 的写入在 params 为空时不回传（与本步无关，测试断言时需注意）。
+
+---

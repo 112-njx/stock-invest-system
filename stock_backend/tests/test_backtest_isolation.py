@@ -12,6 +12,7 @@
    经子进程跑真实回测并落库。
 """
 
+import os
 import time
 import types
 import uuid
@@ -19,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.backtest.engine import BacktestConfig, BacktestError
-from app.backtest.runner import StrategyResourceError, limits_effective, run_isolated
+from app.backtest.runner import StrategyResourceError, child_rss_bytes, limits_effective, run_isolated
 from app.backtest.sandbox import SandboxError, compile_strategy
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
@@ -262,8 +263,8 @@ def test_cpu_limit_enforced_on_posix():
 
 
 @pytest.mark.skipif(not limits_effective(), reason="Windows 无 resource 模块，rlimit 不生效（已文档化）")
-def test_memory_limit_enforced_on_posix():
-    """POSIX：内存增长上限生效，疯狂分配的策略抛 MemoryError 而非拖垮 worker。"""
+def test_rlimit_as_enforced_on_posix():
+    """POSIX：内核级 RLIMIT_AS 生效，疯狂分配的策略抛 MemoryError 而非拖垮 worker。"""
     code = "def on_bar(bar, context):\n    a = []\n    while True:\n        a.append([0] * 20000000)\n"
 
     with pytest.raises(BacktestError):
@@ -272,9 +273,76 @@ def test_memory_limit_enforced_on_posix():
         )
 
 
-@pytest.mark.skipif(limits_effective(), reason="POSIX 上 rlimit 生效，本用例验证的是 Windows 的降级行为")
-def test_windows_reports_limits_not_enforced():
-    """Windows：明确回报 rlimit 未生效，而不是假装已保护（死循环仍由 terminate 兜底）。"""
+def test_child_rss_bytes_reads_real_usage():
+    """零依赖读 RSS 在两平台都可用（Windows Win32 API / Linux /proc），且异常输入不抛错。"""
+    rss = child_rss_bytes(os.getpid())
+
+    assert rss > 5 * 1024 * 1024, f"解释器自身 RSS 不应小于 5MB，实际 {rss}"
+    assert rss < 16 * 1024 * 1024 * 1024, f"RSS 明显解析错位：{rss}"
+    assert child_rss_bytes(999_999_999) == -1, "不存在的 pid 应返回 -1 而不是抛错"
+
+
+def test_memory_watchdog_terminates_hog_on_all_platforms():
+    """跨平台内存看门狗：内存失控策略在**两个平台**都被快速拦下。
+
+    回归背景：Windows 无 `resource` 模块，早期实现下 `memory_bytes` 被**完全忽略** ——
+    实测失控策略约 600 MB/s 无上限增长（6 秒吃掉 3.7 GB），按默认墙钟 45s 外推可达 ~25 GB。
+    Windows 上由父进程侧 RSS 看门狗拦截，POSIX 上 RLIMIT_AS 或看门狗先触发，两者都必须
+    **远早于墙钟上限**结束，否则本用例会跑到 60s+ 而失败。
+    """
+    code = "def on_bar(bar, context):\n    a = []\n    while True:\n        a.append([0] * 20000000)\n"
+    started = time.monotonic()
+
+    with pytest.raises(BacktestError) as exc:  # StrategyResourceError 也是 BacktestError 子类
+        run_isolated(
+            code, {}, _bars(5), BacktestConfig(time_budget=60), grace=60, memory_bytes=32 * 1024 * 1024
+        )
+
+    elapsed = time.monotonic() - started
+    assert elapsed < 30, f"内存失控必须被快速拦下，实际耗时 {elapsed:.1f}s（墙钟上限是 120s）"
+    if os.name == "nt":
+        # Windows 只能靠看门狗（无 resource 模块），必须命中内存分支而非超时分支
+        assert isinstance(exc.value, StrategyResourceError), f"应由看门狗拦下，实际 {type(exc.value).__name__}"
+        assert "内存增长超过上限" in str(exc.value)
+
+
+def test_memory_budget_excludes_interpreter_overhead():
+    """预算语义是"策略自身额外增长"：解释器/依赖 import 的开销不计入，正常策略不被误杀。
+
+    子进程在 ready 消息里**自报**基线 RSS；若改用父进程侧"运行期最小 RSS"启发式，
+    import 阶段的开销会被算进策略预算（默认 512MB 会被吃掉一截），造成误杀。
+    """
+    code = (
+        "def on_bar(bar, context):\n"
+        "    chunks = []\n"
+        "    for _ in range(3):\n"
+        "        chunks.append([0] * 3000000)\n"  # 3 × 约 24MB ≈ 72MB
+        "    context.params['n'] = len(chunks)\n"
+    )
+
+    # params 传非空：BacktestContext.__init__ 用 `params or {}`，空 dict 会被替换成新对象，
+    # 策略对 context.params 的写入便不回传（引擎既有行为，与本步无关）
+    out = run_isolated(
+        code, {"marker": 1}, _bars(5), BacktestConfig(time_budget=30), grace=5, memory_bytes=256 * 1024 * 1024
+    )
+
+    assert out["bars_used"] == 5, "策略应正常跑完，未被内存看门狗误杀"
+    assert out["params"]["n"] == 3, "策略自身只用了约 72MB，不应被 256MB 预算误杀"
+    assert out["_subprocess"]["peak_rss_bytes"] > 0
+
+
+def test_peak_rss_reported_for_monitoring():
+    """执行信息回报内存峰值（G25 回测监控的内存峰值数据源）。"""
+    out = run_isolated(_SMA_STRATEGY, {}, _bars(50), BacktestConfig(time_budget=20), grace=5, memory_bytes=512 * 1024 * 1024)
+
+    peak = out["_subprocess"]["peak_rss_bytes"]
+    assert peak is not None and peak > 0
+    assert peak < 512 * 1024 * 1024, "正常策略不应逼近内存上限"
+
+
+@pytest.mark.skipif(limits_effective(), reason="POSIX 上 rlimit 生效，本用例验证的是 Windows 的 rlimit 降级行为")
+def test_windows_reports_rlimit_not_enforced():
+    """Windows：如实回报 **rlimit** 未生效（内存另由跨平台看门狗覆盖，见上一个用例）。"""
     out = run_isolated(_SMA_STRATEGY, {}, _bars(10), BacktestConfig(time_budget=10), grace=5)
 
     assert out["_subprocess"]["limits"] == {"enforced": False, "reason": "resource module unavailable (Windows)"}

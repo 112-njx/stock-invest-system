@@ -20,8 +20,8 @@
 项目          Linux（生产容器）             Windows（本地开发）
 ============  =============================  ==========================
 启动方式      ``forkserver``                 ``spawn``（无 ``resource`` 模块）
-CPU 上限      ``RLIMIT_CPU`` 生效           ❌ 不生效
-内存上限      ``RLIMIT_AS`` 生效            ❌ 不生效
+CPU 上限      ``RLIMIT_CPU``（内核）         ❌ 无（仅墙钟 terminate 封顶）
+内存上限      ``RLIMIT_AS`` + 看门狗         ✅ 看门狗（父进程侧）
 死循环防护    ✅ 父进程 terminate            ✅ 父进程 terminate
 ============  =============================  ==========================
 
@@ -30,6 +30,15 @@ CPU 上限      ``RLIMIT_CPU`` 生效           ❌ 不生效
 forkserver）。forkserver 从一个干净的单线程服务进程 fork，代价是 bars 需 pickle
 （8k 根约 30ms，相对回测耗时可忽略）。确需 fork 的性能可用
 ``BACKTEST_SUBPROCESS_START_METHOD=fork`` 显式开启（自担死锁风险）。
+
+内存约束为什么必须有跨平台的看门狗
+----------------------------------
+Windows 没有 ``resource`` 模块，早期实现下 ``BACKTEST_MEMORY_LIMIT_MB`` 在 Windows **完全被忽略**：
+实测失控策略约 600 MB/s 无上限增长（6 秒吃掉 3.7 GB），按默认墙钟 45s 外推可达 ~25 GB，
+足以拖垮整机；而 Linux 上子进程会自己吃 MemoryError 安静退出 —— 两端行为分叉，
+开发者在本地拿不到与生产一致的失败反馈（典型 "works on my machine" 陷阱）。
+故父进程侧增加 ``child_rss_bytes()`` 看门狗（零依赖：Windows 走 Win32 API，Linux 读 /proc），
+**两端都有内存上限**；POSIX 上 ``RLIMIT_AS`` 作为内核级第二道保留。
 
 即：**死循环防护两端都有**（靠 terminate），只有 CPU/内存**硬上限**是 POSIX 专属。
 测试按平台分别断言，不含糊。
@@ -61,8 +70,11 @@ logger = logging.getLogger(__name__)
 
 # 子进程收到结果后，父进程等待其自行退出的时间；超时再 terminate
 _GRACEFUL_EXIT_SECONDS = 5.0
-# 父进程轮询管道/子进程状态的间隔
-_POLL_INTERVAL = 0.2
+# 父进程轮询管道/子进程状态的间隔，同时决定内存看门狗的采样周期。
+# 取 0.05s 而非 0.2s：失控策略实测约 600 MB/s，0.2s 采样意味着单次超调可达数百 MB
+# （实测 128MB 预算冲到 ~848MB）；0.05s 把超调压到约「一次分配 + 30MB」。
+# 代价仅是每秒 20 次轻量系统调用，相对回测耗时（秒级）可忽略。
+_POLL_INTERVAL = 0.05
 
 _SIGXCPU = getattr(signal, "SIGXCPU", None)  # Windows 无此信号
 _SIGKILL = getattr(signal, "SIGKILL", None)
@@ -87,6 +99,72 @@ def _current_vsz_bytes() -> int:
         return pages * os.sysconf("SC_PAGE_SIZE")
     except (OSError, ValueError, IndexError, AttributeError):
         return 0
+
+
+# --------------------------------------------------------------------------- #
+# 内存看门狗：父进程侧读取子进程 RSS（跨平台、零依赖）
+# --------------------------------------------------------------------------- #
+_win_api: tuple | None = None
+
+
+def _win_rss_bytes(pid: int) -> int:
+    """Windows：OpenProcess + GetProcessMemoryInfo 读工作集（无 pywin32 依赖，懒加载）。"""
+    global _win_api
+    if _win_api is None:
+        import ctypes
+        import ctypes.wintypes as wt
+
+        class _ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wt.DWORD),
+                ("PageFaultCount", wt.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        _win_api = (
+            ctypes,
+            _ProcessMemoryCounters,
+            ctypes.WinDLL("kernel32", use_last_error=True),
+            ctypes.WinDLL("psapi", use_last_error=True),
+        )
+    ctypes_mod, counters_cls, k32, psapi = _win_api
+    handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return -1
+    try:
+        counters = counters_cls()
+        counters.cb = ctypes_mod.sizeof(counters)
+        if not psapi.GetProcessMemoryInfo(handle, ctypes_mod.byref(counters), counters.cb):
+            return -1
+        return int(counters.WorkingSetSize)
+    finally:
+        k32.CloseHandle(handle)
+
+
+def child_rss_bytes(pid: int) -> int:
+    """读取任意进程的常驻内存（RSS）。**零依赖**：Windows 走 Win32 API，Linux 读 ``/proc``。
+
+    这是 Windows 上**唯一**可用的内存约束手段（该平台没有 ``resource`` 模块），
+    POSIX 上作为 ``RLIMIT_AS`` 之外的第二道 —— RSS 是真实占用，比"虚拟地址空间"更贴近实情
+    （glibc arena / Python 内存池会让 VSZ 虚高，单靠 RLIMIT_AS 可能误杀）。
+
+    读不到（进程已退出 / 权限不足）返回 ``-1``，调用方应跳过本次采样而非中断执行。
+    """
+    if os.name == "nt":
+        return _win_rss_bytes(pid)
+    try:
+        with open(f"/proc/{pid}/statm") as fh:
+            rss_pages = int(fh.read().split()[1])
+        return rss_pages * os.sysconf("SC_PAGE_SIZE")
+    except (OSError, ValueError, IndexError, AttributeError):
+        return -1
 
 
 def _apply_limits(cpu_seconds: int, memory_bytes: int) -> dict:
@@ -131,6 +209,14 @@ def _child_main(conn, payload: dict) -> None:
             conn.send({"type": "progress", "pct": pct})
         except (BrokenPipeError, OSError, ValueError):
             pass  # 父进程已放弃（超时），进度丢掉即可
+
+    # 上报"策略开始执行前的基线 RSS"：父进程的内存看门狗以此为基准，
+    # 使**解释器与依赖 import 的开销不计入策略预算**（否则会误伤正常策略）。
+    # 由子进程自报而非父进程猜（父进程只能靠"运行期最小 RSS"启发式，会少算一截预算）。
+    try:
+        conn.send({"type": "ready", "baseline_rss_bytes": child_rss_bytes(os.getpid())})
+    except Exception:  # noqa: BLE001
+        pass
 
     try:
         config = BacktestConfig(**payload["config"])
@@ -216,6 +302,9 @@ def run_isolated(
     墙钟上限 = ``config.time_budget + grace``，应显著小于 Celery 软超时，
     以保证是**策略失败**而不是 **worker 被杀**。
 
+    ``memory_bytes`` 为**跨平台**内存上限（父进程看门狗，0=不限）：
+    POSIX 上另有 ``RLIMIT_AS`` 作内核级第二道；Windows 上这是唯一的内存约束手段。
+
     失败语义：策略自身异常 → ``BacktestError``；超时/资源超限 → ``StrategyResourceError``。
     两者都不可重试。
     """
@@ -247,8 +336,22 @@ def run_isolated(
 
     message: dict | None = None
     timed_out = False
+    memory_exceeded = 0
+    rss_baseline: int | None = None
+    peak_rss = 0
     try:
         while True:
+            # 内存看门狗（跨平台，先于管道轮询以便尽早发现失控）：
+            # 预算语义 =「策略自身额外增长」，基线由子进程 ready 消息自报（import 开销不计入）。
+            if memory_bytes > 0:
+                rss = child_rss_bytes(proc.pid)
+                if rss > 0:
+                    peak_rss = max(peak_rss, rss)
+                    if rss_baseline is None:
+                        rss_baseline = rss  # ready 到达前的兜底基准，ready 会覆盖它
+                    elif rss - rss_baseline > memory_bytes:
+                        memory_exceeded = rss - rss_baseline
+                        break
             if recv_conn.poll(_POLL_INTERVAL):
                 try:
                     msg = recv_conn.recv()
@@ -257,6 +360,11 @@ def run_isolated(
                 if msg.get("type") == "progress":
                     if on_progress is not None:
                         on_progress(int(msg.get("pct", 0)))
+                    continue
+                if msg.get("type") == "ready":
+                    baseline = int(msg.get("baseline_rss_bytes") or 0)
+                    if baseline > 0:
+                        rss_baseline = baseline  # 以子进程自报值为准
                     continue
                 message = msg
                 break
@@ -268,22 +376,28 @@ def run_isolated(
                 timed_out = True
                 break
     finally:
-        exitcode = _shutdown(proc, immediate=timed_out)
+        exitcode = _shutdown(proc, immediate=timed_out or bool(memory_exceeded))
         recv_conn.close()
 
     elapsed = round(time.monotonic() - started, 2)
+    subprocess_meta = {
+        "pid": proc.pid,
+        "exitcode": exitcode,
+        "elapsed_s": elapsed,
+        "peak_rss_bytes": peak_rss or None,  # G25 回测监控的内存峰值数据源
+    }
     if message is not None and message.get("type") == "done":
         result = message["result"]
-        result["_subprocess"] = {
-            "pid": proc.pid,
-            "exitcode": exitcode,
-            "elapsed_s": elapsed,
-            "limits": message.get("limits"),
-        }
+        result["_subprocess"] = {**subprocess_meta, "limits": message.get("limits")}
         return result
     if message is not None and message.get("type") == "error":
         # 策略自身错误（含 MemoryError）→ BacktestError，与进程内执行行为一致
         raise BacktestError(f"策略执行失败: {message.get('error')}")
+    if memory_exceeded:
+        raise StrategyResourceError(
+            f"策略内存增长超过上限 {memory_bytes / 1024 / 1024:.0f} MB"
+            f"（实测 +{memory_exceeded / 1024 / 1024:.0f} MB），子进程已被终止"
+        )
     if timed_out:
         raise StrategyResourceError(
             f"策略执行超过墙钟上限 {config.time_budget + grace:.0f}s，子进程已被强制终止（疑似死循环）"
