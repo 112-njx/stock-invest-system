@@ -45,6 +45,8 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
 
 同一泳道内**必须按序列顺序开发**（后一步依赖前一步产出）；不同泳道之间只有"前置编号"约束，可并行。
 
+> **泳道 F 范围变更（2026-09-17，已确认）**：**G24（P1-3 数据库时区统一）经决策跳过、不实施**，泳道 F 主序列实际为 `G05 →（结束）`；穿插步骤 `G08 → G25` 与 `G10 / G11 / G12` 照常执行。决策依据、已知代价与重做要点见第八节第 19 条。
+
 ## 四、前端文件冲突协调（4.5，防串改）
 
 多个前端步骤写入同一文件簇，**必须单 owner 串行集成**，否则 merge 冲突：
@@ -186,11 +188,29 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 需人工操作：无（本地开箱可用）；若容器名不同，在 `.env` 设 `BACKUP_PG_CONTAINER=<实际名>`。
    - 附：**pg_dump 客户端主版本必须 ≥ 服务端主版本**（本项目服务端 PG16）；若镜像构建时 PGDG 源不可达会自动回退发行版 client-15，此时备份任务会在 `check_client_version()` 明确失败并提示，不会产出坏备份。
 
-18. **【泳道 F · G05】发现现存 bug：行情新鲜度指标一直采集失败（留待 G24 修复）**
+18. **【泳道 F · G05】行情新鲜度指标一直采集失败 —— 已修复（2026-09-18，G24 跳过后的兜底修复）**
    - 现象：`/metrics` 抓取时日志报 `market freshness collect failed: can't subtract offset-naive and offset-aware datetimes`，`market_data_freshness_seconds` 指标**从未真正上报**，`MarketDataStale` 告警规则因此永不触发（监控盲区）。
    - 根因：`app/core/metrics_ext.py::_refresh_market_freshness` 用 `datetime.now(UTC) - row`，而 `snapshot_realtime.updated_at` 是 naive（`timestamp without time zone`），aware 减 naive 抛 TypeError。属 P1-3（G24 时区统一）的典型症状，非 G05 引入。
-   - 需人工操作：无。已记录，G24 完成 timestamptz 迁移后该指标自动恢复（迁移后 ORM 返回 aware datetime）；G24 需补回归断言。
+   - **危险点（比报错更严重）**：异常被 `except` 吞掉只记 warning，Gauge 又保留初始值 **0.0** —— 指标对外显示"0 秒前"（最新），实际采集从未成功；前端"数据新鲜度"与 Grafana 面板同时被误导，且告警永不触发。
+   - **修复**（G24 决策跳过后按用户指示做最小修复，不碰表结构/迁移）：① 用 `app/utils/market_cache.py::as_utc()` 先把 DB naive 时间戳按 UTC 补时区再相减（`data_age_seconds` 早已如此，全仓已确认仅此一处裸相减）；② 采集异常时置 `NaN`（Prometheus 的"未知"）而非保留旧值，使失败可辨别。
+   - **实测**：修复前恒为 `0.0`；修复后 `1862853s`（≈21.6 天，即 dev 库快照的真实数据龄）。回归测试 `tests/test_metrics_ext.py` 新增 2 项，4/4 全绿。详见 `docs/Agent_backend/fixed.md`（2026-09-18 条）。
+   - 需人工操作：无。
+   - 附：第 19 条列出的另外两项代价（非 UTC+8 部署的静默错误、新代码仍需 `as_utc()` 归一）**不受本修复影响，仍然存在**。
 
+19. **【泳道 F · G24 决策】P1-3 数据库时区统一（naive → timestamptz）经确认不做 —— 本轮跳过**
+   - **决策**（2026-09-17，用户确认）：产品暂不解决数据库时区统一问题，**G24 整体跳过**——迁移脚本、`as_utc()` 清理、连接时区 UTC、抽样验证与回滚四簇均不实施。
+   - **现状保持**：K线 `ts` / 快照 `updated_at` 等仍为 `timestamp without time zone`（naive），代码层继续用 `as_utc()` 归一规避；`sync_tasks` / `backtest_tasks` / `agent_runs` / `agent_steps` / `memory_chunks` 等表时间列不变。G05（备份）已落地，但其"迁移前全量备份"的角色在本轮不再被使用。
+   - **已知代价（需知晓，非阻塞）**：
+     ① **行情新鲜度指标失效**——`metrics_ext._refresh_market_freshness` 用 `datetime.now(UTC) - snapshot_realtime.updated_at`（aware 减 naive）抛 TypeError，`market_data_freshness_seconds` 从未真正上报，`MarketDataStale` 告警规则**永不触发**（监控盲区）。详见第 18 条。
+     ② 开发环境全东八区（Asia/Shanghai），症状不明显；**若未来部署到非 UTC+8 时区，或改动容器/DB 的 timezone 设置**，Reference_guide P1-3 列出的静默数据错误会重新出现：缓存失效时间错误、WS 增量推送丢数据/重复、`data_age_seconds` 计算错误、回测区间偏移（均不报错但结果错）。
+     ③ 第三方或后续开发者若按"DB 里是 timestamptz"的常规假设写新代码（如直接做 aware/naive 运算、或依赖 ORM 返回 aware datetime），会踩到同类 TypeError——**新代码处理这些时间列时仍需 `as_utc()` 归一**。
+   - **触发重做的条件（建议）**：① 部署到非 UTC+8 时区；② 需要修复第 18 条的监控盲区；③ 实际出现上述静默数据错误。
+   - **重做要点（供后续 agent，避免重复调研）**：
+     - 迁移编号须用 **0016**——规划文档写的 `0005_timezone_fix.py` 已被 `0005_memory_importance` 占用，当前 alembic head 为 **0015**（泳道 B 的 export_tasks）。
+     - 存量转换 `USING column AT TIME ZONE 'UTC'` 前**必须先抽样验证存量确为 UTC**（本机开发库未做该验证，是重做时的第一个卡点）。
+     - K 线为**分区表**：父表 `kline_15m` / `kline_1d` / `kline_1w` / `kline_1mon`，实测 public schema 共 372 张表（规划文档"约 680 子表"为旧数），需 DO 块循环 ALTER 各子分区。
+     - 迁移前须有 G05 的全量备份 + 恢复演练通过（本步已具备：`docs/ops/disaster_recovery.md` 第 3、4 节实测可执行）。
+   - **需人工操作**：无。
 
 20. **【泳道 C · G15/G34】MEMORY_ENCRYPTION_KEY 未配置 —— 生产必须配置（开发环境已临时配置）**
    - 现状：G15（记忆文件加密）/ G34（memory_chunks.content 加密）均使用 AES-256-GCM，密钥从环境变量 `MEMORY_ENCRYPTION_KEY` 读取（32 字节随机，64 位 hex）。按约束 5「未配置前用环境变量占位，禁止硬编码密钥」，`config.py` 中该字段默认空串，**代码内无任何硬编码兜底**；未配置时加密写入直接抛 `EncryptionKeyMissing`（不会静默降级为明文）。

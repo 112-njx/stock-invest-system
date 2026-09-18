@@ -41,3 +41,33 @@ groups:
         annotations:
           summary: "LLM 调用失败率过高"
           description: "10 分钟内 LLM 失败率 {{ $value | humanizePercentage }}，检查 DeepSeek Key / 熔断状态。"
+
+      # ---- G05（P1-1）备份与灾难恢复 ----
+      - alert: BackupStale
+        # -1 表示从未成功备份；26h（BACKUP_MAX_AGE_HOURS）覆盖每日 02:00 一次 + 抖动余量
+        expr: backup_last_success_age_seconds < 0 or backup_last_success_age_seconds > 93600
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "备份缺失或过期"
+          description: "最近一次成功备份距今 {{ $value | humanizeDuration }}（-1 为从未成功）。检查 worker 的 backup 队列与 task_logs 中 backup 记录。"
+
+      - alert: BackupDiskSpaceLow
+        expr: backup_disk_free_ratio >= 0 and backup_disk_free_ratio < 0.15
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "备份盘剩余空间不足"
+          description: "备份目录所在文件系统剩余 {{ $value | humanizePercentage }}，低于 15% 阈值，备份可能写坏。清理过期备份或扩容。"
+
+      - alert: WalArchiveStalled
+        # -1 为未配置/不可读（本地开发常见），只在确实读到归档目录且长期无新文件时告警
+        expr: backup_wal_archive_files == 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "WAL 归档目录为空"
+          description: "归档目录持续 1 小时无 WAL 文件，PITR 不可用。检查 db 容器 archive_mode/archive_command 与 pg_stat_archiver.failed_count。"

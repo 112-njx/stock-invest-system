@@ -335,3 +335,9 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 时间：2026-09-17
 修复bug内容（描述）：记忆加密的两处设计坑。① 若按「在各读写点手工加解密」实现 G34，则记忆管理 API、数据导出（G17 export_service）、重嵌入脚本、后台清理任务四条出口都要各自记得解密，漏一处就会把密文返回给用户——故改用 SQLAlchemy TypeDecorator（EncryptedText），在 ORM 边界统一加解密，所有读取方零改动。② 密文直接以 bytes 写 Text 列在 psycopg2 下不可行，改为 base64 文本落库，列类型仍为 Text 故无需 Alembic 迁移；兼容判断用「base64 解码成功且带 ENC1 魔数」双重条件，避免存量明文被误判。另修一处自查发现的问题：crypto.py 初版未绑定模块级 settings（项目其它模块惯例为 settings = get_settings()），导致测试 monkeypatch 失败，已补齐。
 需要我手动配置（如果有的话）：MEMORY_ENCRYPTION_KEY（生产必须，见 project_constraints_v0.3.md 第 1 条）。
+
+时间：2026-09-18
+修复bug内容（描述）：行情新鲜度指标长期静默失效（监控盲区）。现象：/metrics 抓取时日志报 `market freshness collect failed: can't subtract offset-naive and offset-aware datetimes`，`market_data_freshness_seconds` 从未真正上报。根因：core/metrics_ext.py::_refresh_market_freshness 直接做 `datetime.now(UTC) - row`，而 `snapshot_realtime.updated_at` 是 naive（timestamp without time zone），aware 减 naive 抛 TypeError。**比报错更危险的是失败方式**：异常被 except 吞掉只记 warning，Gauge 又保留初始值 0.0 —— 指标对外显示"0 秒前"（最新），实际采集从未成功，导致 `MarketDataStale`（>300s 持续 10m）告警**永不触发**，前端"数据新鲜度"与 Grafana 面板同时被误导。修复两点：① 用 app/utils/market_cache.py 的 as_utc() 先把 DB naive 时间戳按 UTC 补时区再相减（data_age_seconds 早已如此，唯此处遗漏，全仓已确认仅此一处裸相减）；② 采集异常时置 NaN（Prometheus 的"未知"）而非保留旧值，使失败可辨别。属 G24（P1-3 时区统一）跳过后的兜底修复，不涉及表结构与迁移。实测：修复前指标恒为 0.0，修复后为 1862853s（≈21.6 天，即 dev 库快照的真实数据龄）。回归测试：tests/test_metrics_ext.py 新增 2 项（as_utc 归一使 aware/naive 相减可得约 3 小时龄；/metrics 实测值为非 NaN 的真实数），4/4 全绿。
+需要我手动配置（如果有的话）：无。
+
+---

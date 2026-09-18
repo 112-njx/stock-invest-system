@@ -147,6 +147,27 @@ class Settings(BaseSettings):
     BACKTEST_SOFT_TIME_LIMIT: int = 120  # Celery 任务软超时（秒）
     BACKTEST_HARD_TIME_LIMIT: int = 180  # Celery 任务硬超时（秒，触发后 worker 被终止重启）
 
+    # ---- 备份与灾难恢复（G05 · P1-1）----
+    # 备份根目录：容器内挂独立卷 /backup，本地默认 data/backups。
+    # 生产建议挂宿主机独立磁盘（与数据盘分离，避免同盘故障同时丢数据+备份）。
+    BACKUP_DIR: str = str(_BASE_DIR / "data" / "backups")
+    BACKUP_ENABLED: bool = True  # 备份任务总开关（本地不需要时置 false，beat 仍注册但任务直接返回）
+    BACKUP_PG_RETAIN_DAYS: int = 30  # 逻辑全量备份（pg_dump）保留天数
+    BACKUP_BASE_RETAIN_DAYS: int = 14  # 物理基础备份（pg_basebackup）保留天数：每周一次 → 留 2 代
+    BACKUP_WAL_RETAIN_DAYS: int = 7  # WAL 归档保留天数（=PITR 可回溯窗口，与基础备份配合）
+    BACKUP_FILES_RETAIN_DAYS: int = 7  # 文件镜像（记忆/导出）保留天数
+    BACKUP_OFFSITE_RETAIN_DAYS: int = 90  # 异地保留天数（由对象存储生命周期策略执行，本地仅记录）
+    BACKUP_PG_DUMP_MODE: str = "auto"  # pg_dump 取用方式：auto（先本地后 docker）/ local / docker
+    BACKUP_PG_DUMP_BIN: str = "pg_dump"  # local 模式下的 pg_dump 可执行文件（可写绝对路径）
+    BACKUP_PG_CONTAINER: str = "stock-invest-dev-db-1"  # docker 模式借用的 PG 容器名（宿主开发环境无 PG 客户端）
+    BACKUP_DISK_MIN_FREE_PCT: float = 15.0  # 备份盘剩余空间告警阈值（百分比）
+    BACKUP_MAX_AGE_HOURS: int = 26  # 最近一次成功备份超过该时长视为过期（监控告警用）
+    BACKUP_VERIFY_DB: str = "stock_invest_verify"  # 恢复演练临时库名（验证后即删）
+    PG_ARCHIVE_DIR: str = ""  # WAL 归档目录（与 db 容器 archive_command 一致，供归档状态检查；空=不检查）
+    RCLONE_BIN: str = "rclone"  # rclone 可执行文件
+    RCLONE_REMOTE: str = ""  # 对象存储远端，如 oss:stock-invest-backup；空=模拟模式（不真同步，仅记清单）
+    RCLONE_CONFIG: str = ""  # rclone 配置文件路径；空则用 RCLONE_CONFIG_* / AWS_* 环境变量凭据
+
     # ---- 时区 ----
     TIMEZONE: str = "Asia/Shanghai"  # 展示用；DB 内一律存 UTC
 

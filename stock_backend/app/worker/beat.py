@@ -41,6 +41,10 @@ def build_beat_schedule() -> dict:
             "task": "app.worker.tasks.backup_tasks.backup_daily",
             "schedule": crontab(hour=2, minute=0),  # 每日 02:00 全量备份（pg_dump -Fc + 文件镜像 + 保留期清理）
         },
+        "backup-base-weekly": {
+            "task": "app.worker.tasks.backup_tasks.backup_base_weekly",
+            "schedule": crontab(day_of_week=0, hour=2, minute=45),  # 每周日 02:45 物理基础备份（PITR 基线）
+        },
         "backup-offsite-daily": {
             "task": "app.worker.tasks.backup_tasks.offsite_sync_daily",
             "schedule": crontab(hour=2, minute=30),  # 每日 02:30 异地同步（rclone → 对象存储）

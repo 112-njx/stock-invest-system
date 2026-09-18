@@ -27,27 +27,57 @@ x-backend-env: &backend_env
   CELERY_BROKER_URL: redis://redis:6379/1
   CELERY_RESULT_BACKEND: redis://redis:6379/2
   MEMORY_DIR: /app/data/memory
-  CHROMA_DIR: /app/data/chroma
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
   DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8081,http://127.0.0.1:5173,http://127.0.0.1:8081}
   COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  # G05（P1-1）备份：产物落 /app/data/backups（backenddata/宿主 stock_backend/data 卷内，
+  # 与后端同卷便于 /metrics 读 status.json）。生产建议改为独立磁盘并同步挂载该路径。
+  BACKUP_DIR: ${BACKUP_DIR:-/app/data/backups}
+  PG_ARCHIVE_DIR: /wal-archive  # 与 db 的 archive_command 目录一致（只读挂载，供归档状态监控）
+  RCLONE_REMOTE: ${RCLONE_REMOTE:-}  # 对象存储远端；为空=模拟模式（不真同步）
 
 services:
+  wal-init:
+    # G05：WAL 归档卷由 Docker 以 root 创建，postgres(uid 999) 写不进去 → archive_command 会持续失败。
+    # 用一次性 sidecar 先把目录属主改成 postgres，db 再启动。
+    image: busybox:1.36
+    command: ["sh", "-c", "mkdir -p /wal-archive && chown -R 999:999 /wal-archive"]
+    volumes:
+      - pgwal:/wal-archive
+    restart: "no"
+    networks: [backend]
+
   db:
     # G04（P1-12a）：使用内置 pgvector 扩展的镜像（替代 postgres:16-alpine）
     image: pgvector/pgvector:pg16
+    # G05（P1-1）：开启 WAL 归档以支持 PITR。archive_timeout=300 保证低写入库也有稳定的
+    # 恢复点粒度（否则要等 WAL 段写满 16MB 才切换，PITR 可回溯窗口可能长达数小时）。
+    command:
+      - postgres
+      - -c
+      - archive_mode=on
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_timeout=300
+      - -c
+      - archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
       POSTGRES_DB: stock_invest
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - pgwal:/wal-archive
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d stock_invest"]
       interval: 10s
       timeout: 5s
       retries: 5
+    depends_on:
+      wal-init:
+        condition: service_completed_successfully
     # G04：默认映射到宿主 5433，供本地 pytest / DBeaver 直连（本机原生 5432 无 pgvector 扩展）。
     # 若本机 5433 被占用，用 DEV_DB_PORT 覆盖，如 DEV_DB_PORT=127.0.0.1:5434。
     ports:
@@ -57,7 +87,9 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    # G05（P1-1）：AOF（每秒 fsync）+ RDB 快照（60s 内 1000 次写）双持久化。
+    # 注意 --save 会整体替换默认的 3 个快照点，只保留这一个（按 P1-1 规格）。
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "60", "1000"]
     volumes:
       - redisdata:/data
     healthcheck:
@@ -83,6 +115,8 @@ services:
     volumes:
       # 热挂载后端源码（数据/memory 等随宿主 stock_backend/data 落盘，与本地开发一致）
       - ../stock_backend:/app
+      # G05：只读挂载 WAL 归档卷，/metrics 可读归档文件数
+      - pgwal:/wal-archive:ro
     ports:
       - "${DEV_API_PORT:-127.0.0.1:8000}:8000"
     depends_on: [db, redis]
@@ -100,10 +134,12 @@ services:
     build:
       context: ..
       dockerfile: stock_backend/Dockerfile
-    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest,sync,ai", "--pool=solo", "--concurrency=1", "-n", "worker@%h"]
+    # G05：新增 backup 队列（备份任务独立队列；--pool=solo 下仍串行，扩实例时可按队列隔离）
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest,sync,ai,backup", "--pool=solo", "--concurrency=1", "-n", "worker@%h"]
     environment: *backend_env
     volumes:
       - ../stock_backend:/app
+      - pgwal:/wal-archive:ro  # G05：备份任务检查 WAL 归档状态
     depends_on: [db, redis]
     healthcheck: { disable: true }
     restart: unless-stopped
@@ -144,6 +180,7 @@ services:
 volumes:
   pgdata:
   redisdata:
+  pgwal:  # G05：WAL 归档卷（db 写入 /wal-archive，api/worker 只读挂载做归档状态监控）
 
 networks:
   backend:

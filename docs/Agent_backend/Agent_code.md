@@ -398,6 +398,21 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：G18 规划差异记录——P1-5「硬删除：级联删除…user_usage」中提到的 user_usage 表在本项目中不存在（全库 models 无该表，DB 中亦无）。实际需级联的用户关联表为 11 张：user_watchlist/support_resistance/trading_strategies/conversations/user_agents/agent_runs/memory_chunks/user_memory_files/user_sessions/notifications/export_tasks（均已核实为 ON DELETE CASCADE）；chat_messages/backtest_tasks/backtest_results/agent_steps 经中间表（conversations/trading_strategies/agent_runs）级联。无需额外建表。
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道F G05——备份 + 灾难恢复（P1-1）。新增 services/backup_service.py（pg_dump -Fc 全量、pg_basebackup 物理基线、归档可读性校验、保留期清理、文件镜像、rclone 异地、恢复到临时库验证、WAL 归档状态、磁盘用量、status.json 与清单，含 CLI 入口）；scripts/backup_pg.sh 与 scripts/verify_backup.sh（薄封装，供人工/cron 独立执行）；worker/tasks/backup_tasks.py 四个任务 + beat 注册（02:00 全量 / 周日 02:45 物理基线 / 02:30 异地 / 周日 03:30 恢复演练）+ 新增 backup 独立队列（两个 compose 的 worker -Q 同步加 backup）；config 新增 BACKUP_* 与 RCLONE_* 共 15 项（全有默认值，向后兼容）；Dockerfile 装 postgresql-client-16（PGDG，带回退）+ rsync + rclone；两个 compose 开 PG archive_mode/wal_level/archive_timeout=300 + pgwal 归档卷（配 wal-init 一次性 sidecar 改属主，否则 postgres(999) 写不进 root 属主的卷）+ Redis AOF(everysec)+RDB(60 1000)；metrics_ext 增 4 个备份 Gauge；alerts.yml 增 BackupStale/BackupDiskSpaceLow/WalArchiveStalled；新增 docs/ops/disaster_recovery.md。验收：test_backup.py 33 项全绿，全库 485 passed。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G05 规划缺口修正——补物理基础备份。Reference_guide P1-1 只写「pg_dump 每日全量 + WAL 归档 → 支持 PITR」，但 pg_dump 是逻辑备份，只能恢复到备份那一刻，无法与 WAL 归档组合做时间点恢复；PITR 必须基于物理基础备份（pg_basebackup）+ 其后的连续 WAL。若照原方案实现，disaster_recovery.md 的 PITR 步骤将不可执行。故新增 run_base_backup()：pg_basebackup -Ft -z -X stream -c fast，产物 pg/base/base_YYYYMMDD/{base.tar.gz,pg_wal.tar.gz}，保留 14 天（2 代）。用 -X stream 而非 -X fetch：fetch 在备份窗口内未发生 WAL 段切换时不产出 pg_wal.tar.gz，基线无法可靠用于 PITR（实测踩到）。docker 模式下先落盘容器 /tmp 再 docker cp 取回（-D - 流式到 stdout 时 tar 有两个成员，无法直接解压）。实测：全量 1.8MB/0.56s、基线 7.3MB/1.68s、逻辑恢复演练 6.19s 三表行数全等、PITR 恢复出 users=13/symbols=7258/kline_1d=18593 且 pg_is_in_recovery()=f。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G05 跨泳道协调——Chroma 备份跳过（泳道 C 的 G31 已完成）。G05 规格要求「data/chroma/ 在 P1-12 完成前一并备份，如泳道 C 已下线 Chroma 则跳过并注明」。编码期间泳道 C 落地 G31（store.py 注明 Chroma 依赖 / CHROMA_DIR / MEMORY_DUAL_WRITE 均已下线，PG 为向量唯一真源），并同步移除了本步 config 里的 BACKUP_CHROMA 与 backup_service.file_sources() 的 chroma 分支。本步按规格跳过 Chroma 文件备份并注明：文件镜像只含 memory/exports，向量随 pg_dump 统一备份。已清理本步早先手工跑出的 data/backups/files/*/chroma/ 残留；磁盘上遗留的 data/chroma/ 目录属泳道 C 的清理范围，本步未动。
+
+---
+编码时间：2026-09-17
+编码内容（描述）：G05 关键坑与待确认项。① pg_dump 客户端主版本必须 ≥ 服务端主版本，否则 pg_dump 直接拒绝执行——本项目服务端 PG16，Debian bookworm 自带 client-15 不可用，Dockerfile 改从 PGDG 装 postgresql-client-16（apt 失败自动回退发行版包并打印提示）；check_client_version() 每次备份前校验，版本不匹配明确失败而非产出坏备份。② 本机（Windows 开发机）无任何 PG 客户端（pg_dump/psql 均不在 PATH，C:\Program Files\PostgreSQL 不存在），故 BACKUP_PG_DUMP_MODE 默认 auto：先探测本地，找不到退回 docker exec -i <容器> pg_dump，本地实测走 docker 模式跑通全部备份与恢复。③ 备份任务由 Celery 直接调用 backup_service，不转发 shell——worker 需在 Windows 宿主与 Linux 容器都可跑，依赖 bash 会引入平台差异；.sh 脚本保留给人工/cron/容器内独立调用，两者共用同一实现。④ 待确认：生产 BACKUP_DIR 应指向独立磁盘（默认落 backenddata 卷内，与数据同盘）；RCLONE_REMOTE 与对象存储凭据未提供，异地备份处模拟模式。⑤ 另发现现存 bug 一处（留待 G24）：metrics_ext._refresh_market_freshness 报 can't subtract offset-naive and offset-aware datetimes，即 K 线/快照 naive 时间与 datetime.now(UTC) 相减失败，行情新鲜度指标实际一直采集失败——正是 P1-3 要修的 naive/aware 混用。
 
 ---
 编码时间：2026-09-17
@@ -418,6 +433,9 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-17
 编码内容（描述）：G31 双写灰度可开关（验收项）。store.py 增 MEMORY_DUAL_WRITE 开关：开启时 PG 写入镜像到 Chroma（惰性导入，失败只告警不影响主链路），关闭时 Chroma 零写入。新增 tests/test_memory_dual_write.py 2 项验证「关→无写入 / 开→add·update·delete·clear 全镜像」，实测通过。因迁移与验证在同一会话内完成，开关与遗留路径一并按计划下线，测试证据记入本文件。
+---
+编码时间：2026-09-17
+编码内容（描述）：V0.3 泳道F G24（P1-3 数据库时区统一）——经确认**跳过不实施**，本步未写任何代码。决策：产品暂不解决 naive → timestamptz 问题，四簇（迁移脚本 / as_utc() 清理 / 连接时区 UTC / 抽样验证与回滚）均不做。现状保持：K线 ts、快照 updated_at 等仍为 timestamp without time zone，代码层继续用 as_utc() 归一规避。已知代价三项：① 行情新鲜度指标失效（metrics_ext._refresh_market_freshness 用 aware 减 naive 抛 TypeError，market_data_freshness_seconds 从未上报，MarketDataStale 告警永不触发，属监控盲区）；② 非 UTC+8 时区部署时 P1-3 的静默数据错误会重现（缓存失效/WS 增量推送/data_age_seconds/回测区间）；③ 新代码处理这些时间列仍需 as_utc() 归一。触发重做条件与重做要点（迁移编号须用 0016 而非规划文档的 0005、存量 UTC 抽样验证、kline_* 四个分区父表 DO 块循环、迁移前须有 G05 备份）已完整记入 project_constraints_v0.3.md 第八节第 19 条，泳道表处亦加了范围变更注记。G05 的备份能力保留（后续步骤与运维仍用），只是本轮不再作为时区迁移的前置被消费。需人工操作：无。
 
 ---
 编码时间：2026-09-17
