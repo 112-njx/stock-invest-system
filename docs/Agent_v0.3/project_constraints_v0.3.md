@@ -258,3 +258,14 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
      ① 把本机公钥加入 GitHub 账号：复制 `~/.ssh/id_ed25519.pub` 内容 → GitHub Settings → SSH and GPG keys → New SSH key；完成后 `ssh -T git@github.com` 应返回 `Hi <user>!`，再 `git push origin main`。
      ② 或改用 HTTPS + PAT：`git remote set-url origin https://github.com/112-njx/stock-invest-system.git`，推送时用 Personal Access Token 作为密码（token 勿写进仓库或 compose）。
    - 备注：代码本身已全部**本地提交完成**（每个细分阶段一个 commit），仅缺推送这一步，不影响本地开发与测试。
+
+24. **【泳道 G · G27】新增前端依赖 vue-virtual-scroller，部署前需重新 npm install**
+   - 现状：`stock_frontend/package.json` 新增 `vue-virtual-scroller@^3.0.5`（peer `vue ^3.3.0`，与本项目 Vue 3.5 兼容），`package-lock.json` 已同步；`src/main.ts` 引入其 CSS。
+   - 需人工操作：**已存在的开发/部署环境需重新 `npm install`（或 `npm ci`）**，否则前端构建会因找不到模块失败。Docker 前端镜像若使用 `npm ci`，重建镜像即可自动带上。
+   - 附：新增 `npm run verify:pagination` 验证脚本（esbuild + jsdom，25 项断言），与既有 `verify:xss` 并列，建议纳入 CI。
+
+25. **【泳道 G · G27】Agent 运行记录弹窗由「上一页/下一页」分页器改为连续滚动（UX 变更，需确认）**
+   - 现状：`AgentRunsDialog.vue`（M 区「运行记录」）原为每页 20 条的上一页/下一页分页器；G27 按要求改为 RecycleScroller 虚拟滚动 + 滚动到末尾自动续拉，**分页器已移除**，顶部保留「已加载 X / 共 Y 条」提示以免用户失去位置感。
+   - 影响：交互方式变化（不能再按页跳转，只能连续滚动）。数据契约未变（仍走 `GET /agent/runs` 的 page/size）。
+   - 需人工确认：是否接受该 UX 变更；若希望保留分页器，需回退为「分页器 + 虚拟滚动」并存（虚拟滚动收益在每页 20 条时很小，属冗余）。
+   - 附：**虚拟滚动的 DOM 布局行为未做自动化验证** —— jsdom 不做布局计算（`clientHeight` 恒为 0），RecycleScroller 在无布局环境下无法真实渲染。已验证部分：typecheck / eslint / vite build 全绿 + `verify:pagination` 25 项断言覆盖游标累积·去重·终止条件·切换会话丢弃·埋点阈值。**待人工浏览器确认**：① J 区会话/策略列表滚动流畅、行不错位（`.j-item` 固定 34px 与 `ITEM_SIZE` 必须一致）；② Agent 运行记录滚动到底部自动续拉；③ 对话区滚动到顶部加载更早消息且视野不被顶走。

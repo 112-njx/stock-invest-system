@@ -90,6 +90,8 @@ export const useAiStore = defineStore('ai', {
     conversations: [] as Conversation[],
     /** 会话总数（G09：后端 total，用于判断是否还有未加载的会话） */
     conversationsTotal: 0,
+    /** G27：会话列表已加载到第几页（续拉游标；不按 length 推算，避免去重后原地打转） */
+    conversationsPage: 1,
     activeConversationId: null as number | null,
     /** 当前会话历史消息（不含流式增量） */
     messages: [] as ChatMessage[],
@@ -109,6 +111,8 @@ export const useAiStore = defineStore('ai', {
     /* ---------- 策略 / Agent ---------- */
     strategies: [] as Strategy[],
     strategiesTotal: 0,
+    /** G27：策略列表续拉页码 */
+    strategiesPage: 1,
     agents: [] as AgentConfig[],
     agentsTotal: 0,
 
@@ -176,6 +180,19 @@ export const useAiStore = defineStore('ai', {
       const page = await fetchConversations({ page: 1, size: LIST_PAGE_SIZE })
       this.conversations = page.items
       this.conversationsTotal = page.total
+      this.conversationsPage = 1
+    },
+    /** G27：虚拟列表滚动到末尾时续拉下一页会话，返回新增条数（0 = 没有更多） */
+    async loadMoreConversations(): Promise<number> {
+      if (this.conversations.length >= this.conversationsTotal) return 0
+      const page = this.conversationsPage + 1
+      const res = await fetchConversations({ page, size: LIST_PAGE_SIZE })
+      this.conversationsPage = page
+      const seen = new Set(this.conversations.map((c) => c.id))
+      const fresh = res.items.filter((c) => !seen.has(c.id))
+      this.conversations = [...this.conversations, ...fresh]
+      this.conversationsTotal = res.total
+      return fresh.length
     },
     /** 清空流式瞬时态（错误/超时/降级/记忆提示/策略结果/时间线/token），避免上一会话残留 */
     resetTransientState() {
@@ -212,6 +229,29 @@ export const useAiStore = defineStore('ai', {
       this.messagesCursor = page.next_cursor
       this.resetTransientState()
     },
+    /**
+     * G27：加载更早的消息（对话区滚动到顶部时触发），复用 G09 的 before 游标。
+     * 返回新增条数（0 = 没有更多 / 加载中 / 会话已切换）。
+     * 加载期间用户切换会话则丢弃结果，避免把 A 会话的旧消息插进 B 会话。
+     */
+    async loadOlderMessages(): Promise<number> {
+      const convId = this.activeConversationId
+      const cursor = this.messagesCursor
+      if (!convId || !cursor || !this.messagesHasMore || this.messagesLoadingOlder) return 0
+      this.messagesLoadingOlder = true
+      try {
+        const page = await fetchMessages(convId, { limit: MESSAGE_PAGE_SIZE, before: cursor })
+        if (this.activeConversationId !== convId) return 0
+        this.messages = [...page.items, ...this.messages]
+        this.messagesHasMore = page.has_more
+        this.messagesCursor = page.next_cursor
+        return page.items.length
+      } catch {
+        return 0
+      } finally {
+        this.messagesLoadingOlder = false
+      }
+    },
     removeConversation(id: number) {
       const before = this.conversations.length
       this.conversations = this.conversations.filter((c) => c.id !== id)
@@ -229,6 +269,19 @@ export const useAiStore = defineStore('ai', {
       const page = await fetchStrategies({ page: 1, size: LIST_PAGE_SIZE })
       this.strategies = page.items
       this.strategiesTotal = page.total
+      this.strategiesPage = 1
+    },
+    /** G27：虚拟列表滚动到末尾时续拉下一页策略，返回新增条数 */
+    async loadMoreStrategies(): Promise<number> {
+      if (this.strategies.length >= this.strategiesTotal) return 0
+      const page = this.strategiesPage + 1
+      const res = await fetchStrategies({ page, size: LIST_PAGE_SIZE })
+      this.strategiesPage = page
+      const seen = new Set(this.strategies.map((s) => s.id))
+      const fresh = res.items.filter((s) => !seen.has(s.id))
+      this.strategies = [...this.strategies, ...fresh]
+      this.strategiesTotal = res.total
+      return fresh.length
     },
     /** 打开策略 N 区（点击 M/J 策略行） */
     async openStrategy(id: number) {

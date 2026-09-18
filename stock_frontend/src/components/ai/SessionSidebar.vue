@@ -4,16 +4,21 @@
  * - 顶部「聊天/策略」切换标识（带原生 SVG 图标，居中对齐）
  * - 垂直菜单（4 项，左对齐，图标+文字）：创建新会话/返回聊天、记忆文件、我的 Agent、运行记录
  * - 分隔符 + 分区标题：聊天模式「当前聊天记录」、策略模式「交易策略与记忆」
- * - 列表区：聊天会话 / 交易策略
+ * - 列表区：聊天会话 / 交易策略（G27：RecycleScroller 虚拟滚动 + 滚动到末尾续拉）
  */
 import { ref } from 'vue'
+import { RecycleScroller } from 'vue-virtual-scroller'
 import { useAiStore } from '@/stores/ai'
 import { deleteConversation } from '@/api/ai'
+import { useInfiniteList } from '@/composables/useInfiniteList'
 import MemoryFilesDialog from '@/components/ai/MemoryFilesDialog.vue'
 import AgentManageDialog from '@/components/ai/AgentManageDialog.vue'
 import AgentRunsDialog from '@/components/ai/AgentRunsDialog.vue'
 
 type JTab = 'chat' | 'strategy'
+
+/** 列表项固定高度（与 .j-item 的 height 保持一致，虚拟滚动按此定位） */
+const ITEM_SIZE = 34
 
 const ai = useAiStore()
 const tab = ref<JTab>('chat')
@@ -21,6 +26,26 @@ const tab = ref<JTab>('chat')
 const showMemory = ref(false)
 const showAgents = ref(false)
 const showRuns = ref(false)
+
+// G27：虚拟滚动续拉 + 渲染耗时埋点（会话/策略各一份）
+const {
+  loadingMore: convLoadingMore,
+  onUpdate: onConvUpdate,
+} = useInfiniteList({
+  count: () => ai.conversations.length,
+  hasMore: () => ai.conversations.length < ai.conversationsTotal,
+  loadMore: () => ai.loadMoreConversations(),
+  name: 'conversation_list',
+})
+const {
+  loadingMore: strategyLoadingMore,
+  onUpdate: onStrategyUpdate,
+} = useInfiniteList({
+  count: () => ai.strategies.length,
+  hasMore: () => ai.strategies.length < ai.strategiesTotal,
+  loadMore: () => ai.loadMoreStrategies(),
+  name: 'strategy_list',
+})
 
 /** 切换聊天/策略 tab：右侧重置为默认页面（K+L区），不保持原来的聊天/策略内容 */
 function switchTab(newTab: JTab) {
@@ -119,38 +144,66 @@ function formatTime(iso?: string): string {
       {{ tab === 'chat' ? '当前聊天记录' : '交易策略与记忆' }}
     </div>
 
-    <!-- 列表区 -->
+    <!-- 列表区（G27：虚拟滚动，滚动到末尾自动续拉） -->
     <div class="j-list">
       <!-- 聊天页：历史会话 -->
-      <template v-if="tab === 'chat'">
-        <div
-          v-for="c in ai.conversations"
-          :key="c.id"
-          class="j-item"
-          :class="{ active: c.id === ai.activeConversationId }"
-          @click="ai.openConversation(c.id)"
-        >
-          <span class="j-item__title">{{ c.title }}</span>
-          <span class="j-item__time">{{ formatTime(c.updated_at) }}</span>
-          <button class="j-item__del" title="删除会话" @click.stop="onDeleteConversation(c.id)">×</button>
-        </div>
-        <div v-if="!ai.conversations.length" class="j-empty">暂无会话，点击上方新建</div>
-      </template>
+      <RecycleScroller
+        v-if="tab === 'chat'"
+        class="j-scroller"
+        :items="ai.conversations"
+        :item-size="ITEM_SIZE"
+        key-field="id"
+        :buffer="240"
+        @update="onConvUpdate"
+      >
+        <template #default="{ item }">
+          <div
+            class="j-item"
+            :class="{ active: item.id === ai.activeConversationId }"
+            @click="ai.openConversation(item.id)"
+          >
+            <span class="j-item__title">{{ item.title }}</span>
+            <span class="j-item__time">{{ formatTime(item.updated_at) }}</span>
+            <button class="j-item__del" title="删除会话" @click.stop="onDeleteConversation(item.id)">
+              ×
+            </button>
+          </div>
+        </template>
+        <template #empty>
+          <div class="j-empty">暂无会话，点击上方新建</div>
+        </template>
+        <template #after>
+          <div v-if="convLoadingMore" class="j-more">加载中…</div>
+        </template>
+      </RecycleScroller>
 
       <!-- 策略页：交易策略列表 -->
-      <template v-else>
-        <div
-          v-for="s in ai.strategies"
-          :key="s.id"
-          class="j-item"
-          :class="{ active: ai.mode === 'strategy' && ai.activeStrategy?.id === s.id }"
-          @click="ai.openStrategy(s.id)"
-        >
-          <span class="j-item__title">{{ s.title }}</span>
-          <span class="j-item__time">{{ formatTime(s.updated_at || s.created_at) }}</span>
-        </div>
-        <div v-if="!ai.strategies.length" class="j-empty">暂无策略，可在「创建交易策略」后保存</div>
-      </template>
+      <RecycleScroller
+        v-else
+        class="j-scroller"
+        :items="ai.strategies"
+        :item-size="ITEM_SIZE"
+        key-field="id"
+        :buffer="240"
+        @update="onStrategyUpdate"
+      >
+        <template #default="{ item }">
+          <div
+            class="j-item"
+            :class="{ active: ai.mode === 'strategy' && ai.activeStrategy?.id === item.id }"
+            @click="ai.openStrategy(item.id)"
+          >
+            <span class="j-item__title">{{ item.title }}</span>
+            <span class="j-item__time">{{ formatTime(item.updated_at || item.created_at) }}</span>
+          </div>
+        </template>
+        <template #empty>
+          <div class="j-empty">暂无策略，可在「创建交易策略」后保存</div>
+        </template>
+        <template #after>
+          <div v-if="strategyLoadingMore" class="j-more">加载中…</div>
+        </template>
+      </RecycleScroller>
     </div>
 
     <!-- 对话框（原 MStrategyPanel 功能） -->
@@ -251,18 +304,22 @@ function formatTime(iso?: string): string {
   letter-spacing: 0.5px;
 }
 
-/* 列表区 */
+/* 列表区：G27 起滚动由 RecycleScroller 接管（自身即滚动容器） */
 .j-list {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
   padding: 0 6px 8px;
+}
+.j-scroller {
+  height: 100%;
 }
 .j-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  /* 固定高度：虚拟滚动按 ITEM_SIZE 定位，两者必须一致，否则行错位 */
+  height: 34px;
+  padding: 0 10px;
   border-radius: 6px;
   font-size: 13px;
   cursor: pointer;
@@ -309,6 +366,12 @@ function formatTime(iso?: string): string {
   padding: 24px 12px;
   text-align: center;
   font-size: 12px;
+  color: var(--text-muted);
+}
+.j-more {
+  padding: 6px 12px;
+  text-align: center;
+  font-size: 11px;
   color: var(--text-muted);
 }
 </style>

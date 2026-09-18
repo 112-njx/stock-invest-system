@@ -49,6 +49,22 @@ export function trackTiming(name: string, durationMs: number, meta?: Record<stri
   track('performance', name, { duration_ms: Math.round(durationMs), ...meta })
 }
 
+/** G27：列表渲染耗时告警阈值（ms），超过即 console.warn + 上报 */
+export const SLOW_RENDER_MS = 500
+
+/**
+ * 列表渲染耗时埋点（G27 / P1-6b）：测量列表数据变化到 DOM 更新完成的耗时。
+ * 超过 `SLOW_RENDER_MS` 时 `console.warn` 告警，并沿既有 monitor 通道上报
+ * （localStorage 队列 → POST /monitor/events；后端未实现时静默降级，见文件头说明）。
+ */
+export function trackRender(name: string, durationMs: number, meta?: Record<string, unknown>) {
+  const ms = Math.round(durationMs)
+  trackTiming(`render:${name}`, ms, meta)
+  if (ms > SLOW_RENDER_MS) {
+    console.warn(`[render] ${name} 渲染耗时 ${ms}ms，超过 ${SLOW_RENDER_MS}ms 阈值`, meta ?? '')
+  }
+}
+
 /** 行为埋点（如发送消息、保存策略等） */
 export function trackAction(name: string, meta?: Record<string, unknown>) {
   track('action', name, meta)

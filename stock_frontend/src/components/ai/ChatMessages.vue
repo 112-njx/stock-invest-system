@@ -4,12 +4,14 @@
  * - 历史消息（ai.messages）+ 流式增量（打字机效果，markdown 渲染）
  * - 深度模式：回复下方「查看分析过程」折叠面板（4.8.3）
  * - 创建交易策略模式：输出结束下方「保存交易策略 / 回测显示」（4.5）
+ * - G27（P1-6b）：默认只加载最新 50 条，滚动到顶部时按游标增量加载更早消息并锚定滚动位置
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAiStore } from '@/stores/ai'
 import { updateStrategy } from '@/api/ai'
 import { renderMarkdown } from '@/utils/markdown'
+import { trackRender } from '@/utils/monitor'
 import { toast } from '@/utils/toast'
 import MessageBubble from '@/components/ai/MessageBubble.vue'
 import AgentStepsPanel from '@/components/ai/AgentStepsPanel.vue'
@@ -44,13 +46,40 @@ function errorNotice(ev: { code?: string; message?: string }) {
   }
 }
 
-watch(
-  () => [ai.messages.length, ai.streamingContent, ai.streamingSteps.length] as const,
-  async () => {
-    await nextTick()
-    if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight
-  }
-)
+/** 滚动到底部 */
+async function scrollToBottom() {
+  await nextTick()
+  if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight
+}
+
+// 末条消息变化 = 追加了新消息 / 切换了会话 → 滚到底部。
+// 注意：不能用 messages.length——prepend 更早消息也会改变长度，会把用户拽回底部。
+watch(() => ai.messages[ai.messages.length - 1]?.id, scrollToBottom)
+// 流式增量 → 跟随到底部
+watch(() => [ai.streamingContent, ai.streamingSteps.length] as const, scrollToBottom)
+
+// G27：消息列表渲染耗时埋点（>500ms 告警）
+watch(() => ai.messages.length, async (n) => {
+  const t0 = performance.now()
+  await nextTick()
+  trackRender('chat_messages', performance.now() - t0, { count: n })
+})
+
+/**
+ * G27：滚动到顶部附近时加载更早的消息（复用 G09 的 before 游标）。
+ * 加载后按「新增高度差」补偿 scrollTop，保持用户当前视野不被顶走。
+ */
+async function onScroll() {
+  const el = scrollEl.value
+  if (!el || el.scrollTop > 48) return
+  if (!ai.messagesHasMore || ai.messagesLoadingOlder) return
+  const prevHeight = el.scrollHeight
+  const prevTop = el.scrollTop
+  const added = await ai.loadOlderMessages()
+  if (!added) return
+  await nextTick()
+  el.scrollTop = el.scrollHeight - prevHeight + prevTop
+}
 
 /** 保存策略（7.3）：策略已由后端生成校验并落库（draft），此处确认保存为 active */
 async function onSaveStrategy() {
@@ -88,10 +117,16 @@ function num(v?: number | null): string {
 </script>
 
 <template>
-  <div ref="scrollEl" class="chat-messages">
+  <div ref="scrollEl" class="chat-messages" @scroll.passive="onScroll">
     <div v-if="!ai.messages.length && !ai.streaming" class="chat-messages__empty">
       <p>开始和你的交易 Agent 对话</p>
       <p class="chat-messages__hint">可点击上方功能卡片快速填充问题</p>
+    </div>
+
+    <!-- G27：更早消息加载状态（滚动到顶部触发） -->
+    <div v-if="ai.messagesLoadingOlder" class="chat-messages__older">加载更早的消息…</div>
+    <div v-else-if="ai.messagesHasMore" class="chat-messages__older chat-messages__older--hint">
+      向上滚动加载更早的消息
     </div>
 
     <MessageBubble v-for="m in ai.messages" :key="m.id" :message="m" />
@@ -220,6 +255,16 @@ function num(v?: number | null): string {
 }
 .chat-messages__hint {
   font-size: 12px;
+}
+/* G27：更早消息加载状态 */
+.chat-messages__older {
+  padding: 6px 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.chat-messages__older--hint {
+  opacity: 0.7;
 }
 .chat-msg {
   display: flex;
