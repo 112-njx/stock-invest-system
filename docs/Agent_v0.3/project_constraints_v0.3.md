@@ -313,3 +313,14 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 影响面：**仅本地开发机**，且危害有限 —— CPU 失控只占单核、且被墙钟硬封顶 45s（对比内存失控曾达 ~600MB/s 无上限，故内存优先补齐）。生产容器（Linux）`RLIMIT_CPU` 正常生效。
    - 残余风险：**dev/prod 行为仍有一处分叉** —— 一个 CPU 耗时超过 45s 的策略在本地表现为"墙钟超时"，在生产会先撞 `RLIMIT_CPU`；两者的失败语义一致（都判失败、都不可重试），仅错误原因文案不同，故影响很小。
    - 需人工操作：无。若确需在 Windows 也精确限制 CPU，可选方案是 Windows Job Object（需 `pywin32` 或一段 ctypes），评估后认为**收益不抵成本**（仅开发机、且已有墙钟兜底），未实施。
+
+26. **【泳道 F · G11】Redis Sentinel 自动故障转移「未经验证」—— 上线前必须按真实拓扑实测**
+   - 现状：应用侧 Sentinel 支持已实现并验证（主节点发现 + 经其读写，真实容器端到端通过），但「一主两从**自动故障转移**」在本地最小化拓扑下**未能跑通**：1 sentinel + 1 master + 2 replica，down-after-milliseconds 设为 3000，kill 掉主节点后 Sentinel **未把主标记为 s_down**（sentinel master 查询的 flags 仍为 master），35s 内未发生提升，客户端连接旧主超时。
+   - 已排除：Sentinel 能看到 2 个 replica（num-slaves=2）、resolve-hostnames 已开启、replica 侧 master_link_status 正确转为 down。
+   - 根因：**未定位**（本轮未继续深挖，超出合理成本，且见下方判断）。
+   - 判断依据：单 Sentinel 本身是**单点**，其切换行为不代表生产拓扑（quorum/多数派语义不同）—— 在本机强行调通并宣称"故障转移可用"反而会给出**错误信心**，故未这么做。
+   - 需人工操作（上线前必做，清单见 docs/ops/read_write_splitting.md 第 2.3 节）：
+     ① 按手册搭 **≥3 个 Sentinel** 的真实拓扑；
+     ② kill 主节点后，sentinel get-master-addr-by-name 应返回新节点，应用**不重启**直接读写应成功；
+     ③ 把切换耗时与结论回填手册。
+   - 关联：**PG 读写分离已验证通过**（未配从库即降级为单实例），可独立上线；本项仅影响 Redis 高可用的故障转移能力，不影响主从切换以外的功能。

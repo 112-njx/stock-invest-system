@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user_optional, get_db
+from app.api.deps import get_current_user_optional, get_read_db
 from app.core.exceptions import ApiError
 from app.core.response import ok
 from app.models.user import User
@@ -22,7 +22,7 @@ def list_symbols(
     type_: str | None = Query(None, alias="type", description="stock/etf/index"),
     search: str | None = Query(None, description="代码/名称模糊过滤"),
     is_fixed: int | None = Query(None, description="1=仅固定指数（G/H 区）"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_db),
 ) -> dict:
     symbols = market_service.list_symbols(
         db, type_=type_, search=search, fixed_only=bool(is_fixed) if is_fixed is not None else None
@@ -35,7 +35,7 @@ def search_symbols(
     q: str = Query(..., min_length=1, max_length=64, description="6位代码或名称"),
     type: str | None = Query(None, description="stock/etf/index 过滤"),
     limit: int = Query(10, ge=1, le=50),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_db),
 ) -> dict:
     symbols = market_service.search_symbols(db, q, type_=type, limit=limit)
     return ok(data=[SymbolSearchOut(**s).model_dump(mode="json") for s in symbols])
@@ -49,7 +49,7 @@ def get_kline(
     end: datetime | None = Query(None, description="结束时间（UTC）"),
     limit: int = Query(1000, ge=1, le=5000),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_db),
 ) -> dict:
     try:
         bars = market_service.get_kline(db, symbol, period, start, end, limit=limit, offset=offset)
@@ -62,7 +62,7 @@ def get_kline(
 @router.get("/snapshot")
 def get_snapshot(
     symbols: str = Query(..., description="逗号分隔的 symbol_id 列表"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_db),
     current: User | None = Depends(get_current_user_optional),
 ) -> dict:
     try:
@@ -86,7 +86,7 @@ def get_snapshot(
 @router.get("/sync-status")
 def get_sync_status(
     scope: str = Query("fixed_indices", description="fixed_indices/catalog/watchlist 同步范围"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_db),
 ) -> dict:
     """同步状态查询（V0.2 1.1）：前端行情页轮询固定指数预同步进度（X/49）。"""
     row = ops_repo.get_latest_sync_status(db, scope)

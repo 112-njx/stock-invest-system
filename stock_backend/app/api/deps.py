@@ -19,15 +19,31 @@ from app.core.exceptions import ApiError
 from app.core.security import decode_access_token_full, is_access_token_blacklisted
 from app.models.user import User
 from app.repositories import user_repo
-from app.utils.db import SessionLocal
+from app.utils.db import ReadSessionLocal, SessionLocal
 from app.utils.redis_client import get_redis_client
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_db() -> Generator[Session, None, None]:
-    """FastAPI 依赖：请求级数据库会话，请求结束自动关闭。"""
+    """FastAPI 依赖：请求级数据库会话（**主库**），请求结束自动关闭。
+
+    用户数据（关注/策略/会话/记忆）读写一律走这里 —— 读己之写不能有复制延迟。
+    """
     db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def get_read_db() -> Generator[Session, None, None]:
+    """FastAPI 依赖：**只读从库**会话（G11 · P1-2b），请求结束自动关闭。
+
+    仅用于纯行情读端点（K线/快照/指标/目录搜索）：高频、可容忍秒级复制延迟、不参与事务写。
+    `DATABASE_READ_URL` 未配置时它绑定主库引擎，行为与 `get_db` 完全一致（本地降级）。
+    """
+    db = ReadSessionLocal()
     try:
         yield db
     finally:

@@ -28,6 +28,19 @@ class Settings(BaseSettings):
     DB_POOL_TIMEOUT: int = 30
     DB_POOL_RECYCLE: int = 3600  # 秒
 
+    # ---- 读写分离（G11 · P1-2b）----
+    # 只读从库 DSN；**为空即降级**：read_engine 复用主库引擎，行为与未做读写分离一致。
+    # 路由约定见 app/utils/db.py：行情/K线/快照/指标走读库，用户数据一律走主库。
+    DATABASE_READ_URL: str = ""
+
+    # ---- Redis 高可用（G11 · P1-2b）----
+    # Sentinel 地址（逗号分隔 host:port）；为空即降级为直连 REDIS_URL（本地单实例）。
+    REDIS_SENTINEL_HOSTS: str = ""
+    REDIS_SENTINEL_MASTER: str = "mymaster"  # Sentinel 监控的主节点名
+    REDIS_SENTINEL_PASSWORD: str = ""  # Sentinel 自身密码（非 Redis 数据节点密码）
+    REDIS_SENTINEL_SOCKET_TIMEOUT: float = 1.0  # 主节点发现/故障转移探测超时（秒）
+    REDIS_SENTINEL_ENABLED: bool = False  # 显式开关：置 true 但未配 HOSTS 时启动即告警
+
     # ---- Redis（缓存 + Celery 队列）----
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
     SNAPSHOT_CACHE_TTL: int = 300  # 实时快照缓存秒数（V0.2 从 5s 延长至 300s，交易时段由 realtime_poll 覆盖刷新）
