@@ -62,6 +62,27 @@ groups:
           summary: "备份盘剩余空间不足"
           description: "备份目录所在文件系统剩余 {{ $value | humanizePercentage }}，低于 15% 阈值，备份可能写坏。清理过期备份或扩容。"
 
+      # ---- G25（P1-4b）回测监控与异常策略 ----
+      - alert: BacktestFailureRateHigh
+        expr: |
+          sum(rate(backtest_failures_total[10m]))
+            / clamp_min(sum(rate(backtest_runs_total[10m])), 0.1) > 0.3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "回测失败率过高"
+          description: "10 分钟内回测失败率 {{ $value | humanizePercentage }}，按 reason 维度排查（timeout/memory/cpu/runtime/no_data）。"
+
+      - alert: BacktestAbnormalStrategy
+        expr: increase(backtest_abnormal_strategy_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "出现异常策略（连续失败/超时/内存超限）"
+          description: "近 1 小时有 {{ $value }} 个策略连续失败达阈值（reason={{ $labels.reason }}），检查策略代码与资源预算。"
+
       - alert: WalArchiveStalled
         # -1 为未配置/不可读（本地开发常见），只在确实读到归档目录且长期无新文件时告警
         expr: backup_wal_archive_files == 0

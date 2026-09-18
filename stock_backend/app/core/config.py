@@ -161,7 +161,9 @@ class Settings(BaseSettings):
     BACKTEST_MEMORY_LIMIT_MB: int = 512  # 子进程内存**增长**上限（MB，POSIX）：限额 = 基线 VSZ + 本值
     BACKTEST_MAX_CONCURRENT_PER_USER: int = 3  # 同一用户同时运行的回测数上限，超出返回 429
     BACKTEST_QUEUE_BUSY_THRESHOLD: int = 20  # 回测队列积压超过该值即拒绝新任务（返回"队列繁忙"）
+    BACKTEST_QUEUE_WAIT_PER_TASK_SECONDS: int = 30  # 队列繁忙时单任务平均耗时估算（秒），用于"预计等待 X 分钟"
     BACKTEST_QUOTA_STALE_SECONDS: int = 300  # 并发配额残留自愈阈值（秒）：worker 崩溃后超此值的槽位自动回收
+    BACKTEST_ABNORMAL_FAIL_STREAK: int = 3  # G25：同一策略连续失败达该次数判为「异常策略」并计数告警
 
     # ---- 备份与灾难恢复（G05 · P1-1）----
     # 备份根目录：容器内挂独立卷 /backup，本地默认 data/backups。

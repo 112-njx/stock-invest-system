@@ -1200,7 +1200,11 @@ curl -X POST "http://127.0.0.1:8000/api/v1/backtest" -H "Authorization: Bearer e
 | code | 触发条件 | msg 示例 | 前端建议 |
 |---|---|---|---|
 | `42901` | 同一用户同时运行的回测数达 `BACKTEST_MAX_CONCURRENT_PER_USER`（默认 3） | `同时运行的回测已达上限（3/3），请等待当前回测完成` | 提示等待，可轮询进行中任务 |
-| `42902` | 回测队列积压 ≥ `BACKTEST_QUEUE_BUSY_THRESHOLD`（默认 20） | `回测队列繁忙（积压 25 个），请稍后重试` | 显示"回测队列繁忙"提示（G25 前端） |
+| `42902` | 回测队列积压 ≥ `BACKTEST_QUEUE_BUSY_THRESHOLD`（默认 20） | `当前回测队列繁忙（积压 25 个，预计等待约 13 分钟），请稍后重试` | 常驻提示（G25 前端已实现） |
+| `40031` | **G25：策略三级校验未通过**（语法 / 接口 / 沙箱 dry-run） | `策略校验未通过：第 3 行：语法错误: ...` | 直接展示 msg，可定位到行 |
+
+> `42902` 的**预计等待分钟数由后端估算**（`积压数 × BACKTEST_QUEUE_WAIT_PER_TASK_SECONDS`，默认 30s，
+> 对应当前 `--pool=solo --concurrency=1` 的串行 worker）；前端不做业务计算，只展示。
 
 ```json
 {"code":42901,"msg":"同时运行的回测已达上限（3/3），请等待当前回测完成","data":null}
@@ -1226,6 +1230,27 @@ curl -X POST "http://127.0.0.1:8000/api/v1/backtest" -H "Authorization: Bearer e
   **约 1s 内拦下**，峰值受「预算 + 单次最大分配 + 采样滞后」约束。
 - 超限失败信息含实测超出量，任务标记 `failed` 且**不重试**（重试只会再死一次）。
 - 执行信息随结果回报 `_subprocess.peak_rss_bytes`（内存峰值），供 G25 回测监控使用。
+
+**G25 提交前三级校验（P1-4b）**
+
+`POST /api/v1/backtest` 在创建任务前**强制**跑三级校验（语法 → 接口 → 沙箱 dry-run），
+不通过返回 400/40031 且**不创建任务行、不占用并发配额**：
+
+- 第三级 dry-run 在**独立子进程**内用 1 根模拟 K 线跑真实引擎，限制 **CPU 1s / 内存 64MB**；
+- 结果按**代码哈希**缓存 1h（代码一改哈希即变），避免同一策略反复起子进程；
+- 校验器**自身**故障（子进程起不来等）时**放行**并告警 —— 校验器坏了不该挡住用户提交，
+  运行时隔离（G08）仍是兜底。
+
+**G25 回测监控指标**（`/metrics`）
+
+| 指标 | 含义 |
+|---|---|
+| `backtest_duration_seconds{period}` | 执行耗时分布 |
+| `backtest_peak_memory_bytes` | 子进程内存峰值分布 |
+| `backtest_failures_total{reason}` | 失败原因统计（timeout/memory/cpu/sandbox/no_data/runtime/other） |
+| `backtest_abnormal_strategy_total{reason}` | 异常策略计数（同一策略连续失败 ≥ `BACKTEST_ABNORMAL_FAIL_STREAK`，成功即清零） |
+
+告警规则：`BacktestFailureRateHigh`（10 分钟失败率 > 30%）、`BacktestAbnormalStrategy`（近 1 小时出现异常策略）。
 
 ## 2. 任务状态轮询
 

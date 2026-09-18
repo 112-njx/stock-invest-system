@@ -9,6 +9,7 @@ import {
   fetchStrategy,
   resumeChat,
   streamChat,
+  backtestBusyNotice,
   createBacktest,
   fetchAgentRunDetail,
   fetchBacktestResults,
@@ -621,7 +622,9 @@ export const useAiStore = defineStore('ai', {
         }
       } catch (e) {
         this.autoBacktestStatus = 'failed'
-        this.autoBacktestError = (e as Error).message || '回测失败'
+        // G25：队列繁忙/并发超限用后端文案（含积压数与预计等待分钟）；axios 的 message
+        // 只有 "Request failed with status code 429"，对用户没有信息量
+        this.autoBacktestError = backtestBusyNotice(e) ?? ((e as Error).message || '回测失败')
       }
     },
 

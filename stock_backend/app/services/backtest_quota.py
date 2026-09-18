@@ -19,6 +19,7 @@
 """
 
 import logging
+import math
 import time
 
 from app.core.config import get_settings
@@ -101,3 +102,20 @@ def is_queue_busy(queue: str = BACKTEST_QUEUE) -> bool:
     if depth < 0:
         return False
     return depth >= _settings.BACKTEST_QUEUE_BUSY_THRESHOLD
+
+
+def estimate_wait_minutes(depth: int | None = None) -> int:
+    """队列繁忙时的预计等待分钟数（G25 前端提示用）。
+
+    估算口径：worker 当前为 ``--pool=solo --concurrency=1``（一次一个任务），
+    故等待 ≈ 积压数 × 单任务平均耗时（``BACKTEST_QUEUE_WAIT_PER_TASK_SECONDS``，默认 30s
+    = ``BACKTEST_TIME_BUDGET``）。**这是估算而非承诺**，前端文案用「约」表述。
+
+    放在后端而非前端计算：项目硬约束「前端不得计算业务指标」，且并发度/预算都是后端配置，
+    前端无从得知。
+    """
+    if depth is None:
+        depth = queue_depth()
+    if depth is None or depth <= 0:
+        return 0
+    return max(1, math.ceil(depth * _settings.BACKTEST_QUEUE_WAIT_PER_TASK_SECONDS / 60))

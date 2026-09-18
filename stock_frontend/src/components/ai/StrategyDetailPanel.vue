@@ -7,6 +7,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAiStore } from '@/stores/ai'
 import {
+  backtestBusyNotice,
   createBacktest,
   fetchBacktestResultDetail,
   fetchBacktestResults,
@@ -86,6 +87,7 @@ const btSymbol = ref<SymbolInfo | null>(null)
 const btPeriod = ref('1d')
 const btTask = ref<BacktestTask | null>(null)
 const btRunning = ref(false)
+const btNotice = ref('') // G25：队列繁忙/并发超限的常驻提示
 
 const PERIODS = [
   { label: '日K', value: '1d' },
@@ -107,6 +109,7 @@ async function runBacktest() {
   if (btRunning.value) return
   btRunning.value = true
   btTask.value = null
+  btNotice.value = ''
   try {
     const task = await createBacktest({
       strategy_id: strategy.value.id,
@@ -129,8 +132,10 @@ async function runBacktest() {
         break
       }
     }
-  } catch {
-    /* 错误已 toast */
+  } catch (e) {
+    // G25：队列繁忙/并发超限单独常驻提示（通用 toast 只闪现一次）
+    btNotice.value = backtestBusyNotice(e) ?? ''
+    /* 其它错误已 toast */
   } finally {
     btRunning.value = false
   }
@@ -254,6 +259,7 @@ onMounted(() => void loadResults())
             {{ btRunning ? '回测中…' : '发起回测' }}
           </button>
         </div>
+        <div v-if="btNotice" class="sd__bt-notice">{{ btNotice }}</div>
         <div v-if="btTask" class="sd__bt-status">
           任务 #{{ btTask.id }} · {{ btTask.status }}
           <template v-if="btTask.progress != null"> · 进度 {{ btTask.progress }}%</template>
@@ -340,6 +346,18 @@ onMounted(() => void loadResults())
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* G25：回测队列繁忙/并发超限的常驻提示（比 toast 更持久，便于用户等待后重试） */
+.sd__bt-notice {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--warn, #d08700);
+  background: color-mix(in srgb, var(--warn, #d08700) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn, #d08700) 35%, transparent);
+}
+
 .sd__hint {
   font-size: 12px;
   color: var(--text-muted);

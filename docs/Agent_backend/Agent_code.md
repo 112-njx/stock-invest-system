@@ -490,3 +490,12 @@ Agent的后端编码记录,你需要按照：
 编码内容（描述）：G08 加固的测试经验（供后续参考）。① **跨平台断言要断言"行为"而非"机制"**：内存失控在两平台由不同机制拦截（Windows 看门狗 / POSIX RLIMIT_AS），但都必须**快速拦下且父进程存活**——用例断言 `BacktestError` + `elapsed < 30`，再按平台追加机制断言（Windows 必须命中 `内存增长超过上限` 分支）。② **spawn 要求 `__main__` 可导入且有 `if __name__ == "__main__"` 守卫**：临时验证脚本用 `python - <<EOF`（stdin）或漏写守卫都会报 `OSError: Invalid argument: '<stdin>'` / 递归重跑——本步踩了两次，写探针请落成真实文件并加守卫。③ 引擎既有行为记录：`BacktestContext.__init__` 用 `params or {}`，**空 dict 会被替换成新对象**，故策略对 `context.params` 的写入在 params 为空时不回传（与本步无关，测试断言时需注意）。
 
 ---
+---
+编码时间：2026-09-18
+编码内容（描述）：V0.3 泳道F G25——策略校验增强 + 回测监控 + 队列繁忙提示（P1-4b，前置 G08 已完成）。① **三级校验强制化**：`create_backtest` 在创建任务前跑三级校验（语法→接口→沙箱 dry-run），不通过返回 400/40031 且**不创建任务行、不占用并发配额**；结果按代码哈希缓存 1h（`strategy_valid:{sha256}`）。② **dry-run 移入子进程**：`strategy_validator._dry_run` 改用 G08 的 `run_isolated`，1 根模拟 K 线跑**真实引擎**，限制 CPU 1s / 内存 64MB。原实现是进程内 + 自造的 `_DryRunContext`（与真实 `BacktestContext` 在 T+1/费用/持仓语义上并不一致，"校验通过"不等于"回测能跑"），且**死循环策略会挂住 AI 队列 worker**。③ **新增 services/backtest_monitor.py**：4 个 Prometheus 指标（耗时分布/内存峰值/失败原因分类/异常策略）+ 结构化日志 + 连续失败判定（Redis 计数，成功清零，达 `BACKTEST_ABNORMAL_FAIL_STREAK`=3 判为异常策略）；接入 `execute_backtest` 与 `mark_task_failed`；alerts.yml 增 `BacktestFailureRateHigh` / `BacktestAbnormalStrategy`。④ **队列繁忙提示**：后端 429 的 msg 增「预计等待约 X 分钟」（`estimate_wait_minutes`，口径 = 积压数 × 单任务耗时估算，**放后端算**——前端不做业务计算，且并发度是后端配置）；前端 `backtestBusyNotice()` 识别 42901/42902，在 N 区回测模块加**常驻**提示（通用 toast 只闪现一次），AI 页自动回测失败文案也改用后端 msg（原 `(e as Error).message` 只有 "Request failed with status code 429"，对用户无信息量）。验收：test_backtest_monitor.py 18 项 + test_backtest_isolation.py 42 项全绿；全库 588 passed/2 skipped；前端 vue-tsc + build 通过。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：G25 两个关键设计决策（务必记住）。① **校验器自身故障必须 fail-open**：dry-run 改成子进程后，新增区分「策略自身问题」与「基础设施故障」——只有 `StrategyRuntimeError`/`StrategyResourceError` 才判策略不合格；其余 `BacktestError`（子进程起不来、目标模块无法导入）**放行并告警**。这条兜底不是纸上谈兵：实现过程中用 `python - <<EOF`（stdin）跑探针时，spawn 无法重导入 `__main__`，导致**所有**策略都被判"校验不通过"——若照原样上线，整站回测将不可用。② **CPU rlimit 改为相对当前用量**：`_apply_limits` 原先设绝对值，但 spawn/forkserver 会**先导入目标模块再调用入口**，import 的 CPU 开销被算进策略预算——dry-run 预算仅 1s，会被 import 吃光而误杀正常策略。改为 `soft = 已用 CPU + cpu_seconds`。③ 校验器要求 `initialize` 而**引擎不要求**（`compile_strategy` 中它是可选的），强制校验存在理论回归风险；实测库中 5 条策略仅 1 条不通过且是**空代码**（本就跑不了），0 条因缺 initialize 被拒，故保持校验器现状并记录。
+
+---

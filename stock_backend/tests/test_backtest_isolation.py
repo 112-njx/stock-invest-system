@@ -20,7 +20,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.backtest.engine import BacktestConfig, BacktestError
-from app.backtest.runner import StrategyResourceError, child_rss_bytes, limits_effective, run_isolated
+from app.backtest.runner import (
+    StrategyResourceError,
+    StrategyRuntimeError,
+    child_rss_bytes,
+    limits_effective,
+    run_isolated,
+)
 from app.backtest.sandbox import SandboxError, compile_strategy
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
@@ -557,49 +563,139 @@ def test_execute_backtest_runs_in_subprocess_and_persists(client: TestClient, mo
         _cleanup_user(uname)
 
 
-def test_execute_backtest_fails_fast_on_runaway_strategy(client: TestClient, monkeypatch):
-    """恶意策略（死循环）经服务层执行时被终止并标记 failed，worker 不受影响。"""
-    uname = f"{_PREFIX}{uuid.uuid4().hex[:8]}"
-    r = get_redis_client()
+def _create_strategy_with_code(client: TestClient, token: str, code: str, title: str) -> int:
+    resp = client.post(
+        "/api/v1/strategies",
+        json={"title": title, "description": "G25 测试策略", "code": code, "params": {}, "status": "active"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["id"]
+
+
+def _make_backtest_mocks(monkeypatch):
     monkeypatch.setattr(
         "app.worker.tasks.backtest_tasks.run_backtest_task",
         types.SimpleNamespace(delay=lambda task_id, quota_token=None: None),
     )
     monkeypatch.setattr(kline_repo, "get_bars", lambda db, period, symbol_id, start, end, limit=1000: _fake_bars())
     monkeypatch.setattr(backtest_service, "_save_backtest_memory", lambda *a, **k: None)
+
+
+def test_runaway_strategy_rejected_at_submission(client: TestClient, monkeypatch):
+    """G25 第一层：死循环策略在**提交回测时**就被三级校验拒绝（400），不占用配额、不入队。"""
+    uname = f"{_PREFIX}{uuid.uuid4().hex[:8]}"
+    r = get_redis_client()
+    _make_backtest_mocks(monkeypatch)
+    r.delete(backtest_quota.BACKTEST_QUEUE)
+    try:
+        token = _register(client, uname)
+        sid = _create_strategy_with_code(
+            client, token, "def on_bar(bar, context):\n    while True:\n        pass\n", "G25 死循环"
+        )
+
+        resp = client.post(
+            "/api/v1/backtest", json={"strategy_id": sid, "symbol": "600519", "period": "1d"}, headers=_auth(token)
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert resp.json()["code"] == 40031
+        assert "策略校验未通过" in resp.json()["msg"]
+        # 被拒的提交不得留下任务行
+        assert client.get("/api/v1/backtest/tasks", headers=_auth(token)).json()["data"]["total"] == 0
+    finally:
+        r.delete(backtest_quota.BACKTEST_QUEUE)
+        _cleanup_user(uname)
+
+
+def test_validation_rejects_strategy_with_syntax_error(client: TestClient, monkeypatch):
+    """G25：语法错误策略在提交回测时被拒（带行号），前端可直接定位。"""
+    uname = f"{_PREFIX}{uuid.uuid4().hex[:8]}"
+    r = get_redis_client()
+    _make_backtest_mocks(monkeypatch)
+    r.delete(backtest_quota.BACKTEST_QUEUE)
+    try:
+        token = _register(client, uname)
+        sid = _create_strategy_with_code(client, token, "def on_bar(bar, context):\n  x = \n", "G25 语法错")
+
+        resp = client.post(
+            "/api/v1/backtest", json={"strategy_id": sid, "symbol": "600519", "period": "1d"}, headers=_auth(token)
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert resp.json()["code"] == 40031
+        assert "第 3 行" in resp.json()["msg"] or "语法" in resp.json()["msg"]
+    finally:
+        r.delete(backtest_quota.BACKTEST_QUEUE)
+        _cleanup_user(uname)
+
+
+def test_runtime_isolation_still_catches_late_runaway(client: TestClient, monkeypatch):
+    """G25 第二层：能通过 1 根 bar dry-run、但在后续 bar 死循环的策略，由运行时隔离兜底。
+
+    两层防护互补 —— dry-run 只能覆盖「第 1 根 bar 就出问题」的策略，
+    真正的兜底仍是子进程 + 墙钟 terminate。
+    """
+    uname = f"{_PREFIX}{uuid.uuid4().hex[:8]}"
+    r = get_redis_client()
+    _make_backtest_mocks(monkeypatch)
     monkeypatch.setattr(backtest_service.settings, "BACKTEST_TIME_BUDGET", 2.0)
     monkeypatch.setattr(backtest_service.settings, "BACKTEST_SUBPROCESS_GRACE", 1.0)
     r.delete(backtest_quota.BACKTEST_QUEUE)
     try:
         token = _register(client, uname)
-        # 用死循环策略覆盖
-        resp = client.post(
-            "/api/v1/strategies",
-            json={
-                "title": "G08 死循环",
-                "description": "恶意策略",
-                "code": "def on_bar(bar, context):\n    while True:\n        pass\n",
-                "params": {},
-                "status": "active",
-            },
-            headers=_auth(token),
+        # dry-run 只有 1 根 bar（bar_index=0）→ 校验通过；真实回测到第 2 根才死循环
+        sid = _create_strategy_with_code(
+            client,
+            token,
+            "def initialize(context):\n    pass\n\n"
+            "def on_bar(bar, context):\n    if context.bar_index > 1:\n        while True:\n            pass\n",
+            "G25 延迟死循环",
         )
-        sid = resp.json()["data"]["id"]
-        task_id = client.post(
+        resp = client.post(
             "/api/v1/backtest", json={"strategy_id": sid, "symbol": "600519", "period": "1d"}, headers=_auth(token)
-        ).json()["data"]["id"]
+        )
+        assert resp.status_code == 200, resp.text
+        task_id = resp.json()["data"]["id"]
 
         with pytest.raises(backtest_service.BacktestFatalError, match="墙钟上限"):
             backtest_service.execute_backtest(task_id)
-
-        # 服务层把致命错误交给任务层落库；这里直接验证任务被标记失败且带原因
-        backtest_service.mark_task_failed(task_id, "策略执行超过墙钟上限（测试）")
-        task = client.get(f"/api/v1/backtest/tasks/{task_id}", headers=_auth(token)).json()["data"]
-        assert task["status"] == "failed"
-        assert "墙钟上限" in task["error"]
     finally:
         r.delete(backtest_quota.BACKTEST_QUEUE)
         _cleanup_user(uname)
+
+
+def test_dry_run_infrastructure_failure_does_not_reject(monkeypatch):
+    """校验器自身故障时**放行**（fail-open），不因 dry-run 起不来而挡住用户。
+
+    真实触发场景：宿主经 `python - <<EOF`（stdin）运行时 spawn 无法重导入 __main__，
+    会让**所有**策略都"校验不通过"。运行时隔离（G08）仍是兜底，不该整站不可用。
+    """
+    from app.agent import strategy_validator
+
+    def _boom(*_a, **_k):
+        raise BacktestError("策略子进程异常退出（exitcode=1）")
+
+    monkeypatch.setattr(strategy_validator, "run_isolated", _boom)
+    result = strategy_validator.validate_strategy(_SMA_STRATEGY)
+
+    assert result["valid"] is True, "dry-run 基础设施故障不应拒绝策略"
+    assert result["errors"] == []
+
+
+def test_dry_run_strategy_failure_still_rejects(monkeypatch):
+    """对照：策略**自身**运行期错误仍必须拒绝（fail-open 不能变成 fail-anything）。"""
+    from app.agent import strategy_validator
+
+    def _boom(*_a, **_k):
+        raise StrategyRuntimeError("策略执行失败: ValueError: boom", line=3)
+
+    monkeypatch.setattr(strategy_validator, "run_isolated", _boom)
+    result = strategy_validator.validate_strategy(_SMA_STRATEGY)
+
+    assert result["valid"] is False
+    assert result["errors"][0]["line"] == 3
+    assert "boom" in result["errors"][0]["message"]
 
 
 def test_release_quota_is_noop_without_token():

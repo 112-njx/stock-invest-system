@@ -57,6 +57,7 @@ import multiprocessing
 import os
 import signal
 import time
+import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -86,6 +87,39 @@ class StrategyResourceError(BacktestError):
     继承 ``BacktestError`` 以便 ``backtest_service`` 统一按业务错误处理（不重试）：
     让一个死循环或吃内存的策略重试只会再死一次。
     """
+
+
+class StrategyRuntimeError(BacktestError):
+    """策略自身运行期错误，携带**策略代码行号**（跨进程回传，供校验器/前端定位）。
+
+    行号必须由子进程在异常发生处提取 —— 父进程只拿到字符串，traceback 已经丢了。
+    """
+
+    def __init__(self, message: str, line: int | None = None) -> None:
+        super().__init__(message)
+        self.line = line
+
+
+def _strategy_line(exc: BaseException) -> int | None:
+    """从异常链中提取策略代码（经 ``<string>`` 编译）的行号，取最内层命中帧。"""
+    e: BaseException | None = exc
+    while e is not None:
+        for frame in reversed(traceback.extract_tb(e.__traceback__)):
+            if frame.filename == "<string>" and frame.lineno:
+                return frame.lineno
+        e = e.__cause__
+    return None
+
+
+def _cpu_time_used() -> float:
+    """当前进程已消耗的 CPU 时间（用户态 + 内核态，秒）。非 POSIX 返回 0。"""
+    try:
+        import resource
+
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        return usage.ru_utime + usage.ru_stime
+    except (ImportError, AttributeError):
+        return 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -176,9 +210,14 @@ def _apply_limits(cpu_seconds: int, memory_bytes: int) -> dict:
 
     info: dict[str, Any] = {"enforced": True}
     if cpu_seconds > 0:
-        # 软限制触发 SIGXCPU；硬限制再宽 5s，避免来不及清理
-        resource.setrlimit(resource.RLIMIT_CPU, (int(cpu_seconds), int(cpu_seconds) + 5))
+        # 相对**当前已用** CPU 时间设置：spawn/forkserver 会先导入目标模块再调用本函数，
+        # 那部分 import 开销不应算进策略的 CPU 预算 —— dry-run 预算仅 1s，绝对限额会被 import 吃光
+        # 而误杀正常策略。软限制触发 SIGXCPU；硬限制再宽 5s，避免来不及清理。
+        used = _cpu_time_used()
+        soft = int(used + cpu_seconds)
+        resource.setrlimit(resource.RLIMIT_CPU, (soft, soft + 5))
         info["cpu_seconds"] = int(cpu_seconds)
+        info["cpu_used_before_strategy"] = round(used, 3)
     if memory_bytes > 0:
         baseline = _current_vsz_bytes()
         limit = baseline + memory_bytes
@@ -226,7 +265,15 @@ def _child_main(conn, payload: dict) -> None:
         conn.send({"type": "done", "result": out, "limits": limits})
     except Exception as e:  # noqa: BLE001 —— 含 MemoryError；统一回报给父进程判定
         try:
-            conn.send({"type": "error", "error": f"{type(e).__name__}: {e}", "limits": limits})
+            # 行号必须在这里提取：父进程只收到字符串，traceback 已经丢失（G25 校验器依赖它定位错误）
+            conn.send(
+                {
+                    "type": "error",
+                    "error": f"{type(e).__name__}: {e}",
+                    "line": _strategy_line(e),
+                    "limits": limits,
+                }
+            )
         except Exception:  # noqa: BLE001 —— 内存超限时连序列化都可能失败
             pass
     finally:
@@ -391,8 +438,8 @@ def run_isolated(
         result["_subprocess"] = {**subprocess_meta, "limits": message.get("limits")}
         return result
     if message is not None and message.get("type") == "error":
-        # 策略自身错误（含 MemoryError）→ BacktestError，与进程内执行行为一致
-        raise BacktestError(f"策略执行失败: {message.get('error')}")
+        # 策略自身错误（含 MemoryError）→ BacktestError 子类，携带子进程提取的策略行号
+        raise StrategyRuntimeError(f"策略执行失败: {message.get('error')}", line=message.get("line"))
     if memory_exceeded:
         raise StrategyResourceError(
             f"策略内存增长超过上限 {memory_bytes / 1024 / 1024:.0f} MB"

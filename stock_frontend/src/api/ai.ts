@@ -470,6 +470,20 @@ export interface BacktestResultDetail extends BacktestResult {
   trades?: BacktestTrade[] | null
 }
 
+/**
+ * G25：识别「回测队列繁忙 / 并发超限」限流错误，返回可直接展示的提示文案。
+ *
+ * 后端 429 的 msg 已含积压数与**预计等待分钟数**（估算口径在后端，前端不做业务计算）；
+ * 通用 toast 只闪现一次，提交按钮旁另需一条常驻提示，故单独抽出来供调用方复用。
+ */
+export function backtestBusyNotice(err: unknown): string | null {
+  const e = err as { response?: { status?: number; data?: { code?: number; msg?: string } } }
+  if (e?.response?.status !== 429) return null
+  const code = e.response.data?.code
+  if (code !== 42902 && code !== 42901) return null
+  return e.response.data?.msg || '当前回测队列繁忙，请稍后重试'
+}
+
 /** 发起回测（异步，返回任务） */
 export function createBacktest(payload: {
   strategy_id: number

@@ -1,20 +1,35 @@
-"""策略生成三级校验（阶段八 8.3）：语法 → 接口 → 沙箱 dry-run。
+"""策略三级校验（阶段八 8.3 + G25 增强）：语法 → 接口 → 沙箱 dry-run。
 
 - 第一级：``ast.parse`` 语法校验（含错误行号）；
 - 第二级：接口校验——initialize/on_bar 存在、on_bar 签名为 (bar, context)、无顶层 import；
-- 第三级：沙箱 dry-run——用 1 根模拟 K 线在 RestrictedPython 沙箱执行 initialize()+on_bar()，
-  捕获 NameError/IndexError/ZeroDivisionError 等运行时异常并提取行号。
+- 第三级：沙箱 dry-run——用 1 根模拟 K 线在**独立子进程**内跑真实回测引擎，
+  施加 CPU 1s / 内存 64MB 限制，捕获运行期异常并回传策略代码行号。
+
+**G25（P1-4b）把第三级从进程内改到子进程**，三点收益：
+
+1. 死循环策略被 terminate，**不会挂住调用方** —— 此前进程内执行会挂住 AI 队列 worker，
+   只能等 Celery 硬超时杀进程；
+2. 与真实回测**同引擎、同沙箱**，不再是"近似上下文"（原 ``_DryRunContext`` 与真实
+   ``BacktestContext`` 在 T+1/费用/持仓语义上并不一致，校验通过不代表回测能跑）；
+3. 资源超限策略在**提交回测前**就被拒，而不是跑起来才失败。
 
 返回 ``{"valid": bool, "errors": [{"line": int|None, "message": str}]}``。
 """
 
 import ast
 import logging
-import traceback
 
+from app.backtest.engine import BacktestConfig, BacktestError
+from app.backtest.runner import StrategyResourceError, StrategyRuntimeError, run_isolated
 from app.backtest.sandbox import SandboxError, compile_strategy
 
 logger = logging.getLogger(__name__)
+
+# dry-run 资源限制（G25 规格：CPU 1s / 内存 64MB）
+_DRY_RUN_CPU_SECONDS = 1
+_DRY_RUN_MEMORY_BYTES = 64 * 1024 * 1024
+_DRY_RUN_TIME_BUDGET = 2.0  # 引擎内部时间预算（1 根 bar，正常远低于此）
+_DRY_RUN_GRACE = 3.0  # 子进程墙钟宽限：墙钟上限 = 2 + 3 = 5s
 
 _MOCK_BAR = {
     "ts": 0,
@@ -25,47 +40,6 @@ _MOCK_BAR = {
     "volume": 10000,
     "amount": 105000.0,
 }
-
-
-class _DryRunContext:
-    """dry-run 用轻量上下文，镜像 BacktestContext 的公开接口（策略可安全调用）。"""
-
-    def __init__(self):
-        self.params: dict = {}
-        self.cash: float = 1_000_000
-        self.pos: int = 0
-        self.entry_price: float | None = None
-        self.price: float = 10.0
-        self.bar_index: int = 0
-        self.history: list[dict] = []
-
-    @property
-    def closes(self) -> list[float]:
-        return [b["close"] for b in self.history]
-
-    @property
-    def is_holding(self) -> bool:
-        return self.pos > 0
-
-    def buy(self, shares: int | None = None) -> None:
-        self.pos += shares or 100
-
-    def sell(self, shares: int | None = None) -> None:
-        self.pos = max(0, self.pos - (shares or self.pos))
-
-    def flat(self) -> None:
-        self.pos = 0
-
-
-def _extract_line(exc: BaseException) -> int | None:
-    """从异常链中提取策略代码（<string> 编译）的行号，取最内层命中帧。"""
-    e: BaseException | None = exc
-    while e is not None:
-        for frame in reversed(traceback.extract_tb(e.__traceback__)):
-            if frame.filename == "<string>" and frame.lineno:
-                return frame.lineno
-        e = e.__cause__
-    return None
 
 
 def _check_interface(tree: ast.AST, errors: list[dict]) -> None:
@@ -89,21 +63,37 @@ def _check_interface(tree: ast.AST, errors: list[dict]) -> None:
 
 
 def _dry_run(code: str, errors: list[dict]) -> None:
-    """第三级：沙箱 dry-run（1 根模拟 K 线执行 initialize + on_bar）。"""
+    """第三级：沙箱 dry-run —— 独立子进程内用 1 根模拟 K 线跑真实引擎（CPU 1s / 内存 64MB）。
+
+    先做一次进程内编译，把语法/沙箱类错误（SandboxError）直接报出来并省掉一次进程启动；
+    编译通过后再进子进程跑，捕获运行期异常与资源超限。
+    """
     try:
-        funcs = compile_strategy(code)
+        compile_strategy(code)
     except SandboxError as e:
         errors.append({"line": None, "message": str(e)})
         return
-    ctx = _DryRunContext()
-    bar = dict(_MOCK_BAR)
+
     try:
-        if "initialize" in funcs:
-            funcs["initialize"](ctx)
-        funcs["on_bar"](bar, ctx)
-    except Exception as e:  # noqa: BLE001
-        line = _extract_line(e)
-        errors.append({"line": line, "message": f"{type(e).__name__}: {e}"})
+        run_isolated(
+            code,
+            {},
+            [dict(_MOCK_BAR)],
+            BacktestConfig(time_budget=_DRY_RUN_TIME_BUDGET, period="1d"),
+            grace=_DRY_RUN_GRACE,
+            cpu_seconds=_DRY_RUN_CPU_SECONDS,
+            memory_bytes=_DRY_RUN_MEMORY_BYTES,
+        )
+    except (StrategyRuntimeError, StrategyResourceError) as e:
+        # 策略自身问题（运行期异常 / 超时 / CPU / 内存超限）→ 明确拒绝，带上行号
+        errors.append({"line": getattr(e, "line", None), "message": str(e)})
+    except BacktestError as e:
+        # 既不是策略运行期错误也不是资源超限 → **dry-run 基础设施故障**（子进程起不来、
+        # 目标模块无法导入等）。此时**放行**并告警：校验器自己坏了不该挡住用户提交，
+        # 运行时隔离（G08 子进程 + 墙钟 terminate）仍是兜底。
+        # 实测触发场景：宿主脚本经 `python - <<EOF`（stdin）运行时 spawn 无法重导入 __main__，
+        # 会让**所有**策略都"校验不通过"——正是这条兜底避免了整站不可用。
+        logger.warning("dry-run infrastructure failure, level-3 check skipped: %s", e)
 
 
 def validate_strategy(code: str) -> dict:

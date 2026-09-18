@@ -4,6 +4,8 @@
 结果与任务 success 在同一事务写入（与策略保持原子）；记忆抽取 best-effort 不影响主链路。
 """
 
+import hashlib
+import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -19,14 +21,55 @@ from app.models.kline import KLINE_MODELS
 from app.models.strategy import TradingStrategy
 from app.models.symbol import Symbol
 from app.repositories import backtest_repo, kline_repo, strategy_repo, symbol_repo
-from app.services import backtest_quota
+from app.services import backtest_monitor, backtest_quota
 from app.utils.db import get_session
+from app.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _KLINE_LIMIT = 50_000  # 回测 K 线拉取上限（15m 两年约 8k 根，50k 充足）
 _VALID_FILL = ("close", "open")
+_VALIDATION_CACHE_TTL = 3600  # 三级校验结果缓存秒数（按代码哈希，改代码自动失效）
+
+
+# ---- 提交前三级校验（G25 · P1-4b）----
+def _validate_strategy_or_raise(code: str) -> None:
+    """提交回测前强制三级校验（语法 → 接口 → 沙箱 dry-run），不通过抛 400。
+
+    G25 要求「提交回测前必须通过三级校验」。dry-run 要起子进程（CPU 1s / 内存 64MB），
+    对同一份代码反复校验没有意义，故按**代码哈希**缓存结果 1h（代码一改哈希即变，自动失效）。
+    Redis 不可用时退化为每次都校验（正确性不受影响，只是慢一点）。
+    """
+    digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    cache_key = f"strategy_valid:{digest}"
+    result: dict | None = None
+    try:
+        raw = get_redis_client().get(cache_key)
+        if raw:
+            result = json.loads(raw)
+    except Exception as e:  # noqa: BLE001 —— 缓存不可用不影响校验本身
+        logger.warning("strategy validation cache read failed: %s", e)
+
+    if result is None:
+        from app.agent.strategy_validator import validate_strategy
+
+        result = validate_strategy(code)
+        try:
+            get_redis_client().set(
+                cache_key,
+                json.dumps({"valid": result["valid"], "errors": result["errors"][:5]}, ensure_ascii=False),
+                ex=_VALIDATION_CACHE_TTL,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("strategy validation cache write failed: %s", e)
+
+    if not result["valid"]:
+        detail = "；".join(
+            (f"第 {e['line']} 行：{e['message']}" if e.get("line") else str(e["message"]))
+            for e in result["errors"][:3]
+        )
+        raise ApiError(status_code=400, code=40031, msg=f"策略校验未通过：{detail}")
 
 
 class BacktestFatalError(Exception):
@@ -51,6 +94,8 @@ def create_backtest(
     strategy = strategy_repo.get_strategy(db, user_id, strategy_id)
     if strategy is None:
         raise ApiError(status_code=404, code=40420, msg="策略不存在")
+    # G25：提交回测前强制三级校验 —— 放在配额/队列检查之前，非法策略不占用并发槽位
+    _validate_strategy_or_raise(strategy.code or "")
     symbol_id = _resolve_symbol(db, symbol)
     if symbol_id is None:
         raise ApiError(status_code=404, code=40400, msg="标的不存在")
@@ -60,10 +105,14 @@ def create_backtest(
 
     # G08（P1-4a）：全局队列积压 → 直接拒绝，避免任务排进去干等（全局并发由 worker 数控制）
     if backtest_quota.is_queue_busy():
+        depth = backtest_quota.queue_depth()
         raise ApiError(
             status_code=429,
             code=42902,
-            msg=f"回测队列繁忙（积压 {backtest_quota.queue_depth()} 个），请稍后重试",
+            msg=(
+                f"当前回测队列繁忙（积压 {depth} 个，预计等待约 "
+                f"{backtest_quota.estimate_wait_minutes(depth)} 分钟），请稍后重试"
+            ),
         )
 
     # G08：per-user 并发配额。用一次性 token 作槽位，避免"先建任务再占配额"失败时要回滚任务行；
@@ -142,22 +191,23 @@ def execute_backtest(task_id: int) -> dict:
 
         # G08（P1-4a）：策略在**独立子进程**内执行 —— 死循环/吃内存的策略不会拖垮 worker 主进程；
         # 进度经管道回传，DB 写入仍全部发生在父进程（本函数），保持事务语义不变。
-        if settings.BACKTEST_SUBPROCESS_ENABLED:
-            out = run_isolated(
-                strategy.code,
-                strategy.params,
-                bars_dict,
-                config,
-                grace=settings.BACKTEST_SUBPROCESS_GRACE,
-                cpu_seconds=settings.BACKTEST_CPU_LIMIT_SECONDS,
-                memory_bytes=settings.BACKTEST_MEMORY_LIMIT_MB * 1024 * 1024,
-                on_progress=_progress,
-            )
-        else:
-            from app.backtest.engine import BacktestEngine
+        with backtest_monitor.track_run(task.period) as timing:
+            if settings.BACKTEST_SUBPROCESS_ENABLED:
+                out = run_isolated(
+                    strategy.code,
+                    strategy.params,
+                    bars_dict,
+                    config,
+                    grace=settings.BACKTEST_SUBPROCESS_GRACE,
+                    cpu_seconds=settings.BACKTEST_CPU_LIMIT_SECONDS,
+                    memory_bytes=settings.BACKTEST_MEMORY_LIMIT_MB * 1024 * 1024,
+                    on_progress=_progress,
+                )
+            else:
+                from app.backtest.engine import BacktestEngine
 
-            # 仅本地排查用：进程内执行，无隔离/资源上限保护
-            out = BacktestEngine(config).run(strategy.code, strategy.params, bars_dict, progress_cb=_progress)
+                # 仅本地排查用：进程内执行，无隔离/资源上限保护
+                out = BacktestEngine(config).run(strategy.code, strategy.params, bars_dict, progress_cb=_progress)
         m = metrics.compute_metrics(
             out["trades"], out["equity_curve"], out["initial_cash"],
             out["start_ts"], out["end_ts"], task.period,
@@ -173,6 +223,14 @@ def execute_backtest(task_id: int) -> dict:
 
         _save_backtest_memory(db, strategy.user_id, strategy.title, symbol, result.id, m)
         _notify_backtest_done(db, strategy.user_id, task_id, symbol.name, "success", m)
+        # G25：监控埋点（耗时分布 + 内存峰值 + 清零连续失败计数），best-effort 不影响主链路
+        backtest_monitor.record_success(
+            task.strategy_id,
+            task_id,
+            task.period,
+            timing["duration_s"] or 0.0,
+            (out.get("_subprocess") or {}).get("peak_rss_bytes"),
+        )
         return {"task_id": task_id, "result_id": result.id, "metrics": m}
     except BacktestTimeout as e:
         raise BacktestFatalError(f"回测超时: {e}") from e
@@ -232,6 +290,9 @@ def mark_task_failed(task_id: int, error: str) -> None:
         task = backtest_repo.get_task(db, task_id)
         backtest_repo.update_task(db, task_id, status="failed", error=error[:1000])
         db.commit()
+        # G25：失败原因统计 + 连续失败判定（best-effort，Redis 不可用只降级不报错）
+        if task is not None:
+            backtest_monitor.record_failure(task.strategy_id, task_id, error)
         # G16：回测失败也通知（best-effort）
         if task is not None:
             strategy = db.get(TradingStrategy, task.strategy_id)
