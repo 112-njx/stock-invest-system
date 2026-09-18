@@ -249,3 +249,12 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 影响：任何**外部/第三方**调用方（非本仓库前端）若按裸数组解析，需同步改造。仓库内前端已在同一步适配（`src/api/ai.ts` + `src/stores/ai.ts`），未破坏既有页面。
    - 待确认（G27 处理）：J 区会话列表、M 区策略/Agent 列表的首屏加载量由「全量」改为**一页 100 条**（后端单页上限）。当前无分页 UI，**拥有超过 100 条会话/策略的用户会看不到更早的记录**。G27 将引入 vue-virtual-scroller 虚拟滚动 + 按需续拉解决；若 G27 延后，需临时补「加载更多」入口。
    - 需人工操作：无。
+
+22. **【全泳道 · 环境】git push 失败：SSH 公钥未被 GitHub 授权，本地已积压 6 个提交**
+   - 现象：`git push origin main` 报 `git@ssh.github.com: Permission denied (publickey)`；`ssh -T git@github.com` 同样被拒。远端为 `git@github.com:112-njx/stock-invest-system.git`，`~/.ssh/config` 已把 github.com 指向 `ssh.github.com:443`。
+   - 已排除：私钥文件存在（`~/.ssh/id_ed25519`，指纹 `SHA256:31twrZ6KzaM3nN7TJxg8y4HurmAhZbjqrbN4r0HuWEk`），显式 `-i` 指定并 `IdentitiesOnly=yes` 仍被拒 → **不是 agent 未加载，而是该公钥未登记到 GitHub 账号**（或账号已变更）。
+   - 影响范围：**全泳道**。`git log origin/main..main` 显示 6 个已提交未推送的 commit（含泳道 C 的 G21/G31、G15/G34、G14 与泳道 F 的 G05、泳道 D 的 G09），即其它泳道同样推不上去。
+   - 需人工操作（二选一）：
+     ① 把本机公钥加入 GitHub 账号：复制 `~/.ssh/id_ed25519.pub` 内容 → GitHub Settings → SSH and GPG keys → New SSH key；完成后 `ssh -T git@github.com` 应返回 `Hi <user>!`，再 `git push origin main`。
+     ② 或改用 HTTPS + PAT：`git remote set-url origin https://github.com/112-njx/stock-invest-system.git`，推送时用 Personal Access Token 作为密码（token 勿写进仓库或 compose）。
+   - 备注：代码本身已全部**本地提交完成**（每个细分阶段一个 commit），仅缺推送这一步，不影响本地开发与测试。
