@@ -356,6 +356,15 @@ def test_redis_persistence_enabled_in_compose(compose_path):
     assert "--save" in joined and "60" in joined and "1000" in joined
 
 
+def _worker_services(services: dict) -> dict:
+    """取全部 worker 服务。
+
+    G12（P1-2c）把生产栈的单个 `worker` 按队列拆成 `worker-sync` / `worker-backtest` /
+    `worker-ai`，dev 栈仍是单个 `worker` —— 这里统一收集，断言对两种拓扑都成立。
+    """
+    return {n: s for n, s in services.items() if n == "worker" or n.startswith("worker-")}
+
+
 @pytest.mark.parametrize("compose_path", [DEV_COMPOSE, PROD_COMPOSE], ids=["dev", "prod"])
 def test_pg_wal_archiving_enabled_in_compose(compose_path):
     """db 容器必须开 archive_mode=on 且 archive_command 指向挂载的归档卷，支持 PITR。"""
@@ -373,7 +382,9 @@ def test_pg_wal_archiving_enabled_in_compose(compose_path):
     assert "pgwal" in volumes
     assert "pgwal:/wal-archive" in db["volumes"]
     assert "pgwal:/wal-archive:ro" in services["api"]["volumes"]
-    assert "pgwal:/wal-archive:ro" in services["worker"]["volumes"]
+    # backup 任务由 worker-sync 承载（G12 拆分后），故该 worker 必须挂了 WAL 归档卷
+    sync_worker = _worker_services(services)["worker-sync" if "worker-sync" in services else "worker"]
+    assert "pgwal:/wal-archive:ro" in sync_worker["volumes"]
 
     # 归档卷初始属主是 root，postgres(999) 写不进去 → 必须有一次性 sidecar 先改属主
     assert services["wal-init"]["command"][-1].endswith("chown -R 999:999 /wal-archive")
@@ -382,12 +393,20 @@ def test_pg_wal_archiving_enabled_in_compose(compose_path):
 
 @pytest.mark.parametrize("compose_path", [DEV_COMPOSE, PROD_COMPOSE], ids=["dev", "prod"])
 def test_backup_queue_registered_on_worker(compose_path):
-    """worker 的 -Q 必须包含 backup 队列，否则备份任务无人消费（静默不执行）。"""
-    services = yaml.safe_load(compose_path.read_text(encoding="utf-8"))["services"]
-    command = services["worker"]["command"]
-    queue_index = command.index("-Q") + 1
+    """**至少一个** worker 消费 backup 队列，否则备份任务无人消费（静默不执行）。
 
-    assert "backup" in command[queue_index].split(",")
+    G12 拆分为多 worker 后，「谁消费 backup」由拓扑决定 —— 这里断言"存在消费者"，
+    而不是绑定到某个具体服务名（dev 单 worker 与 prod 的 worker-sync 都应通过）。
+    """
+    services = yaml.safe_load(compose_path.read_text(encoding="utf-8"))["services"]
+    consumers = []
+    for name, svc in _worker_services(services).items():
+        command = svc.get("command") or []
+        if "-Q" in command:
+            consumers.append((name, command[command.index("-Q") + 1].split(",")))
+
+    assert consumers, f"{compose_path.name} 未找到带 -Q 的 worker 服务"
+    assert any("backup" in queues for _, queues in consumers), f"backup 队列无消费者：{consumers}"
 
 
 @pytest.mark.parametrize("script", ["backup_pg.sh", "verify_backup.sh"])

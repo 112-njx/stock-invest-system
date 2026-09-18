@@ -133,18 +133,51 @@ services:
     restart: unless-stopped
     networks: [backend]
 
-  worker:
+  # ---- G12（P1-2c）按队列拆分 worker：每个队列独立扩缩容，互不阻塞 ----
+  # 为什么拆分：合成一个 worker 时，`--pool=solo` 下任何长任务（回测 / 导出 / 备份）
+  # 都会把 15s 的实时轮询堵在队列里；拆开后 sync 队列的延迟不受 backtest/ai 影响。
+  # 扩容：`docker compose up -d --scale worker-sync=2 --scale worker-backtest=2 --scale worker-ai=2`
+  # （三个服务都不映射宿主端口、无 container_name，可安全多实例）
+  # 任务分发：Celery 从 Redis 队列取任务（竞争消费），N 个实例自动分摊，无需额外配置。
+  worker-sync:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
-    # G05：新增 backup 队列（备份任务独立队列；--pool=solo 下仍串行，扩实例时可按队列隔离）
-    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest,sync,ai,backup", "--pool=solo", "--concurrency=1", "-n", "worker@%h"]
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "sync,backup", "--pool=solo", "--concurrency=1", "-n", "sync@%h"]
     environment: *backend_env
     volumes:
       - backenddata:/app/data
       - pgwal:/wal-archive:ro  # G05：备份任务检查 WAL 归档状态
     depends_on:
+      migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
-    # celery 无 HTTP 服务，禁用镜像默认 HTTP healthcheck（避免被误判 unhealthy）
+    healthcheck: { disable: true }
+    restart: unless-stopped
+    networks: [backend]
+
+  worker-backtest:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest", "--pool=solo", "--concurrency=1", "-n", "backtest@%h"]
+    environment: *backend_env
+    volumes:
+      - backenddata:/app/data
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck: { disable: true }
+    restart: unless-stopped
+    networks: [backend]
+
+  worker-ai:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "ai", "--pool=solo", "--concurrency=1", "-n", "ai@%h"]
+    environment: *backend_env
+    volumes:
+      - backenddata:/app/data
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
     healthcheck: { disable: true }
     restart: unless-stopped
     networks: [backend]

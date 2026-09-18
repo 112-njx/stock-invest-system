@@ -513,3 +513,12 @@ Agent的后端编码记录,你需要按照：
 编码内容（描述）：G11 **未完成的验证项（必须如实记住）**：Redis Sentinel 的**自动故障转移未经实证**。实测（最小化本地拓扑：1 sentinel + 1 master + 2 replica，`down-after-milliseconds=3000`）——`docker kill` 主节点后 Sentinel **未把主标记为 s_down**（`sentinel master mymaster` 的 flags 仍为 `master`），35s 内未发生提升，客户端连接旧主超时。已排除：Sentinel 能看到 2 个 replica（`num-slaves=2`）、`resolve-hostnames yes` 已设、replica 侧 `master_link_status` 正确变为 down。**根因未定位，本轮不再深挖**（超出合理成本）。已完整记录到 `docs/ops/read_write_splitting.md` 第 2.3 节，含上线前必做的三步真实验证清单。补充判断依据：单 Sentinel 本身是单点，其切换行为**不代表**生产拓扑（quorum/多数派语义不同），在本机"验证通过"反而可能给出错误信心——故未强行调通并宣称可用。另：`docs/ops/read_write_splitting.md` 第 3 节的监控项依赖 P1-7（未实现），按惯例记录待衔接。
 
 ---
+---
+编码时间：2026-09-18
+编码内容（描述）：V0.3 泳道F G12——Celery 多队列多实例 + 幂等审计 + 无状态验证（P1-2c，泳道 F 最后一步）。① **多队列多实例**：生产 compose 把单个 worker 拆成 `worker-sync`（sync,backup）/ `worker-backtest` / `worker-ai` 三个服务，各自可独立 `--scale`。拆的理由：拆前 `--pool=solo --concurrency=1` 下任何长任务（回测最长 45s / 导出打包 / 备份）都会把 15s 的 realtime_poll 堵在队列里，实时行情延迟直接变分钟级。开发栈保持单 worker（本地单实例降级，有意取舍）。② **幂等审计**：15 个 Celery 任务逐一审计（Celery 是 at-least-once，worker 强杀后未 ack 任务会重投）。14 个天然幂等（K线/快照/目录走 UPSERT、删除类为幂等空操作、备份走同名原子改名、导出按 task_id 覆盖）。**发现并修复 1 处不幂等**：`run_backtest_task` 重复执行会重复落库 `backtest_results`（worker 在提交后 ack 前被杀 → 重投 → 用户看到两条重复回测结果）；修复为 `execute_backtest` 开头幂等短路（任务已 success 且结果存在则直接返回既有 result_id，标记 idempotent）。③ **无状态验证**：API 可随时增减实例；识别出三处进程内状态——`ConnectionManager`（**有意**进程内，消息经 Redis 广播，G10 已实测双实例互通）、**LLM 令牌桶 + 熔断器**（⚠️ 多实例下限流阈值变成 N×30、熔断各实例独立）、**Provider 熔断状态**（⚠️ 每实例独立，影响很小）。后两者**记录未迁移**（迁移需要 Redis 原子计数与跨实例状态同步，属独立改动；已写明触发条件）。④ 新增 `docs/ops/celery_scaling.md`（拆分理由/扩容命令/完整幂等审计表/无状态验证结论）。验收：`tests/test_g12_idempotency.py` 2 项全绿；prod compose config 校验通过（services 含 worker-sync/worker-backtest/worker-ai）。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：G12 已知不一致（记录待统一）：回测任务的**幂等路径**返回的 `metrics` 是 `result.metrics_json`（存储形态），与**首次执行**返回的 `compute_metrics()` 完整返回（含外层 win_rate/profit_loss_ratio/sharpe/annual_return/max_drawdown 等字段）**形状不同但同源**。当前无常驻调用方受影响（API 的结果端点直接读库、不经此返回值；Celery 任务层只用 task_id/result_id），故未强行统一；若后续有调用方依赖该返回值的字段，需补一层转换或让幂等路径重建完整结构。
+
+---

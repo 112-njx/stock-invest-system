@@ -162,6 +162,21 @@ def execute_backtest(task_id: int) -> dict:
         task = backtest_repo.get_task(db, task_id)
         if task is None:
             raise BacktestFatalError(f"回测任务不存在: {task_id}")
+
+        # G12 幂等：任务已成功且结果已落库 → 直接返回既有结果。
+        # Celery 在 worker 被强杀后会重投未 ack 的任务（at-least-once），若不做这层短路，
+        # 同一 task_id 会重复跑一遍并再插一条 backtest_results —— 用户会看到两条重复结果。
+        if task.status == "success":
+            existing = backtest_repo.get_result_by_task(db, task_id)
+            if existing is not None:
+                logger.info("backtest task_id=%s already succeeded, skip (idempotent)", task_id)
+                return {
+                    "task_id": task_id,
+                    "result_id": existing.id,
+                    "metrics": existing.metrics_json,
+                    "idempotent": True,
+                }
+
         backtest_repo.update_task(db, task_id, status="running", progress=0)
         db.commit()
 

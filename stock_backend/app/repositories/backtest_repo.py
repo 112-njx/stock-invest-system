@@ -136,3 +136,8 @@ def list_results_by_strategy(db: Session, strategy_id: int) -> list[BacktestResu
 
 def get_result(db: Session, result_id: int) -> BacktestResult | None:
     return db.get(BacktestResult, result_id)
+
+
+def get_result_by_task(db: Session, task_id: int) -> BacktestResult | None:
+    """按任务取结果（G12 幂等：同一任务已有结果时不再重复执行/重复落库）。"""
+    return db.scalars(select(BacktestResult).where(BacktestResult.task_id == task_id).order_by(BacktestResult.id)).first()
