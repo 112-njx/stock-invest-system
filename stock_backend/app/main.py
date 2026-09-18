@@ -60,11 +60,16 @@ def _startup_tasks() -> None:
 
         from app.api.v1 import ws_market
 
-        _market_loop = asyncio.new_event_loop()
+        # G10 修复：必须把消息调度到 **uvicorn 主事件循环**（WS 连接都挂在它上面）。
+        # 原实现给监听线程单独 asyncio.new_event_loop()，而该 loop **从未 run_forever** ——
+        # run_coroutine_threadsafe 投进去的协程只是排队、永不执行，导致 WS 实时推送
+        # （快照/新K线）经 Redis 桥接**从未真正生效**。握手/订阅/心跳都正常，所以
+        # "WS 连上了"的观察掩盖了它；前端又因"WS 已连接"停掉快照轮询，会一直看旧数据。
+        # 复用主循环与 notification_service 的做法一致（那里用 manager.get_loop()）。
+        main_loop = asyncio.get_running_loop()
 
         def _run_listener():
-            asyncio.set_event_loop(_market_loop)
-            ws_market._market_listener_loop(_market_loop)
+            ws_market._market_listener_loop(main_loop)
 
         threading.Thread(target=_run_listener, name="ws-market-listener", daemon=True).start()
         logger.info("startup market ws listener started")

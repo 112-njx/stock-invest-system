@@ -11,6 +11,26 @@
 #   - 启动入口 docker-entrypoint.sh：等待 DB → Alembic 迁移 → 固定指数种子（均幂等）。
 name: stock-invest
 
+# 后端服务（api / worker / beat / migrate）公共环境变量锚点。
+# 定义在 services 之前：migrate 服务在 api 之前引用它，YAML 锚点必须先定义后使用。
+x-backend-env: &backend_env
+  APP_ENV: ${APP_ENV:-prod}
+  DATABASE_URL: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-123456}@db:5432/stock_invest
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  MEMORY_DIR: /app/data/memory
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+  CORS_ORIGINS: ${CORS_ORIGINS:-}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  # G05（P1-1）备份：默认落 backenddata 卷内。生产建议改为独立磁盘：
+  # 在 .env.docker 设 BACKUP_DIR=/backup 并给 api/worker 加 `- /mnt/backup:/backup` 绑定挂载。
+  BACKUP_DIR: ${BACKUP_DIR:-/app/data/backups}
+  PG_ARCHIVE_DIR: /wal-archive  # 与 db 的 archive_command 目录一致（只读挂载，供归档状态监控）
+  RCLONE_REMOTE: ${RCLONE_REMOTE:-}  # 对象存储远端；为空=模拟模式（不真同步）
+  # RCLONE_CONFIG: ${RCLONE_CONFIG:-}  # 或改用 RCLONE_CONFIG_* / AWS_* 环境变量传凭据（勿写死在此文件）
+
 services:
   wal-init:
     # G05：WAL 归档卷由 Docker 以 root 创建，postgres(uid 999) 写不进去 → archive_command 会持续失败。
@@ -70,31 +90,40 @@ services:
     restart: unless-stopped
     networks: [backend]
 
+  migrate:
+    # G10（P1-2a）：迁移/种子**单点**执行。
+    # 为什么不能把 RUN_MIGRATIONS 放在 api 上：多实例扩容（`--scale api=3`）会让 3 个副本
+    # 并发执行 alembic upgrade + 种子 + presync，撞 pg_type 唯一约束并重复触发 presync
+    # （dev 栈踩过，见 docs/Agent_main_v0.1/deploy_fixed.md 问题三）。故独立成一次性服务，
+    # api/worker/beat 等它成功退出后再启动。
+    # 顺带修复：本文件此前**没有任何服务设置 RUN_MIGRATIONS**，api/worker/beat 全部走
+    # wait_for_migrations.py 等待，无人执行迁移 —— 全新库无法自举。
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["sh", "-c", "echo '[migrate] migrations + seed done'"]
+    environment:
+      <<: *backend_env
+      RUN_MIGRATIONS: "1"
+    volumes:
+      - backenddata:/app/data
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: "no"
+    networks: [backend]
+
   api:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
-    environment: &backend_env
-      APP_ENV: ${APP_ENV:-prod}
-      DATABASE_URL: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-123456}@db:5432/stock_invest
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      MEMORY_DIR: /app/data/memory
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      # G05（P1-1）备份：默认落 backenddata 卷内。生产建议改为独立磁盘：
-      # 在 .env.docker 设 BACKUP_DIR=/backup 并给 api/worker 加 `- /mnt/backup:/backup` 绑定挂载。
-      BACKUP_DIR: ${BACKUP_DIR:-/app/data/backups}
-      PG_ARCHIVE_DIR: /wal-archive  # 与 db 的 archive_command 目录一致（只读挂载，供归档状态监控）
-      RCLONE_REMOTE: ${RCLONE_REMOTE:-}  # 对象存储远端；为空=模拟模式（不真同步）
-      # RCLONE_CONFIG: ${RCLONE_CONFIG:-}  # 或改用 RCLONE_CONFIG_* / AWS_* 环境变量传凭据（勿写死在此文件）
+    environment: *backend_env
     volumes:
       - backenddata:/app/data
       - pgwal:/wal-archive:ro  # G05：只读挂载 WAL 归档卷，/metrics 可读归档文件数
     depends_on:
+      migrate: { condition: service_completed_successfully }  # G10：等迁移单点完成
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
+    # G10（P1-2a）多实例扩容：docker compose up -d --scale api=3
+    # 本服务不映射宿主端口（仅 nginx 发布），可安全扩容；nginx 经 upstream api_upstream
+    # least_conn 分发，WS 消息由 Redis pub/sub 广播，无需 sticky session。
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 30s
@@ -143,7 +172,8 @@ services:
       # - /path/to/certs/fullchain.pem:/etc/nginx/certs/fullchain.pem:ro
       # - /path/to/certs/privkey.pem:/etc/nginx/certs/privkey.pem:ro
     environment:
-      NGINX_PROXY_PASS: http://api:8000
+      # G10：后端上游改由 deploy/nginx/nginx.conf 内的 upstream api_upstream 定义，
+      # 本变量在该模板中已不再引用（前端镜像自带默认模板仍在用，见 dev / 根 compose）
       SSL_REDIRECT: ${SSL_REDIRECT:-false}
     # 等 api 健康就绪再启动 nginx，避免启动期全接口 502（api 已配 /health healthcheck）
     depends_on:

@@ -365,3 +365,9 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 需要我手动配置（如果有的话）：无。
 
 ---
+
+时间：2026-09-18
+修复bug内容（描述）：WS 实时推送经 Redis 桥接**从未真正生效**（G10 验证时发现，严重）。现象：G10 做「多实例广播验证」时起两个真实 API 进程各连一个 WS 客户端，向 market:updates 发布快照，两边**都收不到**。根因：main.py 启动市场监听线程时给线程**单独 asyncio.new_event_loop()**，而该 loop **从未 run_forever()** —— 监听函数 _market_listener_loop 是同步阻塞循环（while True: pubsub.get_message(timeout=1.0)），直接调用并未驱动那个 loop；于是 dispatch_market_payload 里的 asyncio.run_coroutine_threadsafe(_dispatch(...), _market_loop) 只是把协程排进队列，**永远不会被执行**。监听线程确实收到了 Redis 消息，只是分发那一步静默丢弃。**为何长期未被发现**：WS 的握手、鉴权、订阅、心跳全部正常（浏览器"WS 连接成功"的观察成立），而前端 useSnapshotPolling 一旦检测到 WS 已连接就**停掉快照轮询**——于是实时快照/新K线推送全丢，页面停在旧数据，且没有任何报错。修复：把消息调度到 **uvicorn 主事件循环**（WS 连接都挂在它上面），复用 asyncio.get_running_loop()，与 notification_service 用 manager.get_loop() 的既有做法一致。验证：新增 tests/test_ws_multi_instance.py 2 项——① 双实例各连一个客户端，发布一次快照**两边都收到**（这是 P1-2a 的核心不变式，也是 Nginx 可以不用 sticky session 的依据）；② 未订阅该标的的实例**收不到**（多实例不等于消息泄漏给无关连接）。修复前 2 项全失败、修复后全通过。**教训**：跨线程向 asyncio 投递协程时，目标 loop 必须是**正在运行**的那个（uvicorn 主循环），不能自建一个"看起来属于这个线程"的 loop。
+需要我手动配置（如果有的话）：无。
+
+---
