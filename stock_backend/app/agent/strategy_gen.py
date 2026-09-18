@@ -44,8 +44,8 @@ def on_bar(bar, context):
 5. 只依据用户描述设计，数据不足时在 description 说明假设。
 
 ## 沙箱约束（必须遵守，违反会导致校验失败、生成失败）
-- 禁止对 context 的属性使用 += / -= / *= 等增强赋值（如 `context.pos += 1` 会编译失败）；
-  仓位变化一律通过 context.buy()/context.sell()/context.flat()。
+- 仓位变化一律通过 context.buy()/context.sell()/context.flat()，不要直接改 context.pos/context.cash。
+- 局部变量可以正常使用 += / -= / *= 等增强赋值（如 `total += bar['close']`）。
 - `context.closes`、`context.is_holding` 是只读属性，禁止赋值（如 `context.closes = ...` 会报错），只能读取。
 - 自定义状态变量（均线参数、计数等）在 initialize 中用 `context.xxx = ...` 一次性设置；on_bar 内禁止再对 context 属性赋值。
 - 中间计算结果用局部变量保存，不要写回 context。

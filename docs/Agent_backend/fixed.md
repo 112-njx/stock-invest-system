@@ -347,3 +347,15 @@ ealtime_poll 同步 K 线后立即触发指标预计算并写入 Redis，用户�
 时间：2026-09-18
 修复bug内容（描述）：G14 引入的测试注入缝隙回归（自查发现）。现象：`test_chat.py::test_chat_api_stream_and_requires_token` 失败——该用例 monkeypatch `chat_service.get_llm_service` 注入 `FakeLLMService(available=False)` 以验证降级文案，但 G14 把 `stream_chat` 的装配改为 `build_llm_service_for_user(db, user_id)`，内部直接 import 单例、绕过了被 patch 的符号，导致测试替身失效、真实服务被调用。修复：`build_llm_service_for_user` 增 `base` 参数，`stream_chat` 传 `base=get_llm_service()` 保留注入缝隙；并对无 `with_api_key` 的测试替身直接原样返回（不做 key 装配与用量统计）。教训：改动「取服务实例」的代码路径时，必须确认既有测试的 monkeypatch 打在哪一层。
 需要我手动配置（如果有的话）：无。
+
+时间：2026-09-18
+修复bug内容（描述）：策略沙箱不支持增强赋值（`x += 1` 直接运行时 NameError）。现象：G08 做沙箱安全审计时，用 `x += 1` 构造 CPU 占用测试策略，报 `NameError: name '_inplacevar_' is not defined`。根因：RestrictedPython 8.4 的 transformer **仍会**把 `x += 1` 编译成 `x = _inplacevar_('+=', x, 1)`，但该守卫函数已从包内移除（旧实现直通 `operator.iadd` 到任意对象，是已知逃逸向量），需要宿主自己提供——本项目的 `_build_globals()` 从未提供，于是**策略里任何 `+=`/`-=`/`*=` 都会在运行时炸**，而这是最常用的 Python 写法。影响面：AI 生成的策略、用户手写策略只要用增量赋值就必失败；且报错信息（NameError 指向 `_inplacevar_`）对用户完全不可理解。另发现 `app/agent/strategy_gen.py` 的提示词把该限制描述为「对 context 属性使用 += 会**编译失败**」，两处都不准确（实际是任何 `+=` 都在**运行时**失败）。修复：在 `sandbox.py` 补 `_guarded_inplacevar`，**按操作数类型白名单**（bool/int/float/complex/str/bytes/bytearray/list/tuple/dict/set/frozenset）放行，非白名单类型抛 TypeError —— 既恢复 `+=` 可用性，又不重新打开 `operator.iadd` 的逃逸面；同步修正 `strategy_gen.py` 提示词。回归测试：`tests/test_backtest_isolation.py` 覆盖「+= 可用」「非白名单类型拒绝」。
+需要我手动配置（如果有的话）：无。
+
+---
+
+时间：2026-09-18
+修复bug内容（描述）：容器内整个应用无法导入（api/worker/beat 全部起不来）。现象：在 Linux 容器跑 `pytest`，`app/worker/tasks/ai_tasks.py` → `app.agent.memory` → `app.services.llm` 导入链在 `llm_service.py:171` 报 `NameError: name 'LLMService' is not defined`。根因：`LLMService.with_api_key()` 的返回注解写成 `-> LLMService`（引用类自身），类体内注解在 **Python 3.12 是急切求值**，此时 `LLMService` 尚未绑定到模块命名空间；本地 Python 3.14 采用 PEP 649 惰性注解故不报错——与 `deploy_fixed.md` 问题二（`chromadb.PersistentClient | None`）**完全同类**的版本差异坑，只在容器暴露。影响：G14（泳道 C）提交 b624279 起，生产/开发容器镜像导入即崩，非本地开发可见。修复：`llm_service.py` 顶部加 `from __future__ import annotations`（与 `store.py` 同一处置方式）。验证：容器内 `import app.main` 成功、`celery` 注册 15 个任务。由泳道 F 在 G08 期间发现并修复（跨泳道，已如实披露）。
+需要我手动配置（如果有的话）：无。**经验**：容器是 Python 3.12、本地是 3.14，凡「类体内自引用注解」或「`X | None` 且 X 为函数」的写法，本地不报错但容器必炸——新增此类注解时一律加 `from __future__ import annotations`。
+
+---

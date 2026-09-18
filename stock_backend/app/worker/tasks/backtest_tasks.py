@@ -38,23 +38,30 @@ def _log(task_type: str, task_id: str, status: str, message: str) -> None:
     task_soft_time_limit=settings.BACKTEST_SOFT_TIME_LIMIT,  # 软超时（秒）
     task_time_limit=settings.BACKTEST_HARD_TIME_LIMIT,  # 硬超时（秒，策略死循环兜底，worker 被终止重启）
 )
-def run_backtest_task(self, task_id: int) -> dict:
+def run_backtest_task(self, task_id: int, quota_token: str | None = None) -> dict:
+    """执行回测任务。``quota_token`` 为 G08 的 per-user 并发槽位，在**终态**释放。
+
+    重试路径刻意不释放（任务仍占并发位）；worker 被 SIGKILL 时由配额 stale 清理兜底。
+    """
     _log("backtest", self.request.id, "running", f"start task_id={task_id}")
     try:
         result = backtest_service.execute_backtest(task_id)
         _log("backtest", self.request.id, "success", f"done task_id={task_id}")
+        backtest_service.release_quota(task_id, quota_token)
         return result
     except backtest_service.BacktestFatalError as exc:
-        # 业务错误：不重试，直接失败
+        # 业务错误（含 G08 的策略资源超限）：不重试，直接失败
         logger.warning("backtest fatal task_id=%s: %s", task_id, exc)
         backtest_service.mark_task_failed(task_id, str(exc))
         _log("backtest", self.request.id, "failed", f"task_id={task_id} fatal: {exc}")
+        backtest_service.release_quota(task_id, quota_token)
         raise
     except Exception as exc:  # noqa: BLE001
         logger.exception("backtest failed task_id=%s", task_id)
         _log("backtest", self.request.id, "failed", f"task_id={task_id}: {exc}")
         if self.request.retries < self.max_retries:
-            backtest_service.mark_task_queued(task_id)  # 重试前回到 queued
+            backtest_service.mark_task_queued(task_id)  # 重试前回到 queued（保留并发位）
             raise self.retry(exc=exc) from exc
         backtest_service.mark_task_failed(task_id, f"{type(exc).__name__}: {exc}")
+        backtest_service.release_quota(task_id, quota_token)
         raise

@@ -8,6 +8,12 @@
 - token 统计 + 审计日志（结构化 JSON，含 prompt/响应截断/耗时/错误）
 """
 
+# 惰性求值注解（G08 修复）：LLMService.with_api_key 的返回注解引用类自身，
+# Python 3.12（容器）在类体执行时急切求值会抛 NameError: name 'LLMService' is not defined，
+# 导致 api/worker/beat **整个无法导入启动**；Python 3.13+ 默认惰性故本地不报错。
+# 与 store.py 同类问题（见 docs/Agent_main_v0.1/deploy_fixed.md 问题二）。
+from __future__ import annotations
+
 import asyncio
 import logging
 import time

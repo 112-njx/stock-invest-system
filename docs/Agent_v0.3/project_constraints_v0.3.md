@@ -212,16 +212,24 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
      - 迁移前须有 G05 的全量备份 + 恢复演练通过（本步已具备：`docs/ops/disaster_recovery.md` 第 3、4 节实测可执行）。
    - **需人工操作**：无。
 
-20. **【泳道 F · 全泳道通用】`git push` 走 SSH 被拒（publickey），需人工修复 SSH key 或改用 HTTPS remote**
-   - 现象：`git push origin main` 报 `git@ssh.github.com: Permission denied (publickey)`；`ssh -T git@github.com` 与 `ssh -i ~/.ssh/id_ed25519 -T git@github.com` 均同样被拒。
-   - 现状：`~/.ssh/config` 把 `github.com` 指向 `ssh.github.com:443`（穿透 443 的常规配置），本机存在 `id_ed25519`，但该公钥未被 GitHub 账号接受（未登记 / 账号变更 / 密钥已轮换）。
-   - **本轮绕过方式（未改任何配置）**：改用显式 HTTPS URL 推送，凭据由 Windows 凭据管理器（`credential.helper=manager`）提供，已验证可用：
+20. **【泳道 F · 全泳道通用】`git push` 走 SSH 被拒（publickey）—— 已定位并解决：私钥带口令，非交互调用抑制了口令提示**
+   - 现象：`git push origin main` 报 `git@ssh.github.com: Permission denied (publickey)`；`ssh -T git@github.com` 与显式 `-i ~/.ssh/id_ed25519` 均同样被拒。
+   - **真实根因（已实测确认，与第 22 条的判断相反）**：`~/.ssh/id_ed25519` **已登记在 GitHub 账号上，且工作正常**——它是一把**带口令（passphrase）的私钥**。非交互式调用（agent 环境无 TTY、以及我最初用的 `ssh -o BatchMode=yes`）会**抑制口令提示**，ssh 找不到可用身份便统一报 `Permission denied (publickey)`，**这个报错具有误导性**：它既表示"key 未授权"，也表示"key 有口令但拿不到口令"。**以后遇到该报错不要直接断定公钥未登记**。
+   - **验证与解决（实测通过）**：把私钥加载进 `ssh-agent` 后 SSH 立即恢复：
+     ```
+     eval "$(ssh-agent -s)"
+     ssh-add ~/.ssh/id_ed25519        # 交互式输入口令；非交互场景可用 SSH_ASKPASS + SSH_ASKPASS_REQUIRE=force
+     ssh -T git@github.com            # → Hi 112-njx! You've successfully authenticated
+     ```
+     本次由用户提供口令后加载成功，`git ls-remote origin` / `git fetch origin` 均正常，SSH remote 已可用。
+   - **注意（本次会话的 agent 为一次性 daemon）**：ssh-agent 进程在会话结束后消失，下次仍需 `ssh-add` 重新加载（口令不落盘，这是 ssh-agent 的设计意图）。若希望免口令推送，见下方"可选人工操作"。
+   - 本轮绕过方式（**已不再需要，仅作备用**）：显式 HTTPS URL 推送，凭据由 Windows 凭据管理器（`credential.helper=manager`）提供，已验证可用：
      `git push https://github.com/112-njx/stock-invest-system.git main`
-     未修改 `origin` remote、未改 `~/.ssh/*`——保持你的 SSH 配置原样。
-   - 需人工操作（二选一）：
-     ① **修 SSH**：把 `~/.ssh/id_ed25519.pub` 内容加到 GitHub → Settings → SSH and GPG keys（或生成新密钥并登记），之后 `git push origin main` 恢复正常；
-     ② **改走 HTTPS**：`git remote set-url origin https://github.com/112-njx/stock-invest-system.git`（凭据已在凭据管理器中，可直接用）。
-   - 影响：不修的话每次推送都需用上面的显式 HTTPS URL（各泳道 agent 已按此方式推送，main 未阻塞）。
+     全程未修改 `origin` remote、未改 `~/.ssh/*`。
+   - 可选人工操作（二选一，均非阻塞）：
+     ① **免口令**：`ssh-keygen -p -f ~/.ssh/id_ed25519` 把口令改空（**降低安全性**，本机私钥泄露即可直接推代码，不建议）；
+     ② **改走 HTTPS**：`git remote set-url origin https://github.com/112-njx/stock-invest-system.git`（凭据已在凭据管理器，免口令）。
+   - ⚠️ **安全提醒**：口令已在对话中明文出现，建议尽快 `ssh-keygen -p -f ~/.ssh/id_ed25519` **更换口令**（保持非空），或轮换该密钥对。
 
 20. **【泳道 C · G15/G34】MEMORY_ENCRYPTION_KEY 未配置 —— 生产必须配置（开发环境已临时配置）**
    - 现状：G15（记忆文件加密）/ G34（memory_chunks.content 加密）均使用 AES-256-GCM，密钥从环境变量 `MEMORY_ENCRYPTION_KEY` 读取（32 字节随机，64 位 hex）。按约束 5「未配置前用环境变量占位，禁止硬编码密钥」，`config.py` 中该字段默认空串，**代码内无任何硬编码兜底**；未配置时加密写入直接抛 `EncryptionKeyMissing`（不会静默降级为明文）。
@@ -250,14 +258,11 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - 待确认（G27 处理）：J 区会话列表、M 区策略/Agent 列表的首屏加载量由「全量」改为**一页 100 条**（后端单页上限）。当前无分页 UI，**拥有超过 100 条会话/策略的用户会看不到更早的记录**。G27 将引入 vue-virtual-scroller 虚拟滚动 + 按需续拉解决；若 G27 延后，需临时补「加载更多」入口。
    - 需人工操作：无。
 
-22. **【全泳道 · 环境】git push 失败：SSH 公钥未被 GitHub 授权，本地已积压 6 个提交**
-   - 现象：`git push origin main` 报 `git@ssh.github.com: Permission denied (publickey)`；`ssh -T git@github.com` 同样被拒。远端为 `git@github.com:112-njx/stock-invest-system.git`，`~/.ssh/config` 已把 github.com 指向 `ssh.github.com:443`。
-   - 已排除：私钥文件存在（`~/.ssh/id_ed25519`，指纹 `SHA256:31twrZ6KzaM3nN7TJxg8y4HurmAhZbjqrbN4r0HuWEk`），显式 `-i` 指定并 `IdentitiesOnly=yes` 仍被拒 → **不是 agent 未加载，而是该公钥未登记到 GitHub 账号**（或账号已变更）。
-   - 影响范围：**全泳道**。`git log origin/main..main` 显示 6 个已提交未推送的 commit（含泳道 C 的 G21/G31、G15/G34、G14 与泳道 F 的 G05、泳道 D 的 G09），即其它泳道同样推不上去。
-   - 需人工操作（二选一）：
-     ① 把本机公钥加入 GitHub 账号：复制 `~/.ssh/id_ed25519.pub` 内容 → GitHub Settings → SSH and GPG keys → New SSH key；完成后 `ssh -T git@github.com` 应返回 `Hi <user>!`，再 `git push origin main`。
-     ② 或改用 HTTPS + PAT：`git remote set-url origin https://github.com/112-njx/stock-invest-system.git`，推送时用 Personal Access Token 作为密码（token 勿写进仓库或 compose）。
-   - 备注：代码本身已全部**本地提交完成**（每个细分阶段一个 commit），仅缺推送这一步，不影响本地开发与测试。
+22. **【全泳道 · 环境】git push 失败：SSH 公钥未被 GitHub 授权，本地已积压 6 个提交 —— 已解决（根因判断有误，见第 20 条）**
+   - ⚠️ **本条的根因结论已被证伪，请以第 20 条为准**：该公钥**已登记在 GitHub 账号上且工作正常**，真正的失败原因是**私钥带口令**，而非交互式调用（无 TTY / `BatchMode=yes`）拿不到口令提示，ssh 便统一报 `Permission denied (publickey)`。**该报错同时表示"key 未授权"和"key 有口令但无法输入口令"，不能据此断定公钥未登记。**
+   - **解决**：`eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519`（输入口令）后 `ssh -T git@github.com` 返回 `Hi 112-njx!`，`git push origin main` 恢复正常。已积压的 6 个提交（含泳道 C 的 G21/G31、G15/G34、G14，泳道 F 的 G05，泳道 D 的 G09）**均已推送，main 与远端同步**。
+   - 保留原记录（供回溯，勿据此行动）：现象 `git@ssh.github.com: Permission denied (publickey)`；私钥文件存在（指纹 `SHA256:31twrZ6KzaM3nN7TJxg8y4HurmAhZbjqrbN4r0HuWEk`）；远端 `git@github.com:112-njx/stock-invest-system.git`；`~/.ssh/config` 把 github.com 指向 `ssh.github.com:443`。
+   - 需人工操作：**无（已解决）**。可选免口令方案与安全提醒见第 20 条。
 
 24. **【泳道 G · G27】新增前端依赖 vue-virtual-scroller，部署前需重新 npm install**
    - 现状：`stock_frontend/package.json` 新增 `vue-virtual-scroller@^3.0.5`（peer `vue ^3.3.0`，与本项目 Vue 3.5 兼容），`package-lock.json` 已同步；`src/main.ts` 引入其 CSS。
@@ -285,3 +290,11 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - **关键坑（后续改动务必遵守）**：未登录状态下**任何鉴权请求都不能发出** —— `src/api/http.ts` 的 401 拦截器在 refresh 失败时会 `clearAuth()` 并跳登录页，会把免登录访客直接弹走。G35 已为 `/watchlist`、支撑压力位、通知未读数、API Key 状态、会话/策略/Agent 列表全部加了未登录短路；**新增鉴权调用时请同样先判 `user.token`**。
    - **待人工浏览器确认**（jsdom 不做布局计算，自动化脚本无法覆盖）：① `/` `/login` `/ai` `/terms` `/privacy` `/disclaimer` 六个路由打开正常、未登录**不白屏**；② 登录弹窗 Tab 切换、登录成功后弹窗关闭且当前页用户态刷新（头像变昵称、关注列表出现、AI 页列表加载）、**不跳转**；③ 头像下拉四项（个人设置/我的数据跳首页对应区块、通知中心打开铃铛面板、退出登录）可用；④ 登录页左右 56/44 分栏、三卡片 3D 倾斜（移入跟随、移出 0.4s 回正）、窄屏 <1024px 堆叠滚动；⑤ page3 底部「年化收益率」完整可见未被裁切。
    - 需人工操作：无（以上均为验收确认项）。
+
+23. **【泳道 F · G08 发现】容器内整个应用无法导入（Python 3.12 急切注解）—— 已修复（跨泳道，泳道 C 的 G14 引入）**
+   - 现象：Linux 容器内跑 pytest / 启动服务，`app/worker/tasks/ai_tasks.py` → `app.agent.memory` → `app.services.llm` 导入链在 `app/services/llm/llm_service.py:171` 报 `NameError: name 'LLMService' is not defined`，**api / worker / beat 三个容器全部起不来**。
+   - 根因：`LLMService.with_api_key()` 的返回注解写成 `-> LLMService`（引用类自身），类体内注解在 **Python 3.12 是急切求值**，此刻 `LLMService` 尚未绑定到模块命名空间。本地 Python 3.14 走 PEP 649 惰性注解故不报错 —— 与 `deploy_fixed.md` 问题二（`chromadb.PersistentClient | None`）**完全同类**的"本地 3.14 / 容器 3.12"版本差异坑，**只在容器暴露**。
+   - 影响范围：泳道 C 的 G14（提交 b624279）起，容器镜像导入即崩；本地开发不可见，属高危（部署后才炸）。
+   - **已修复**（泳道 F 在 G08 期间发现并修）：`llm_service.py` 顶部加 `from __future__ import annotations`（与 `store.py` 同处置）。验证：容器内 `import app.main` 成功、celery 注册 15 个任务。
+   - 需人工操作：无。**经验（全泳道）**：凡「类体内自引用注解」或「`X | None` 且 X 为函数」的写法，本地 3.14 不报错但容器 3.12 必炸 —— 新增此类注解一律加 `from __future__ import annotations`。建议 G36 收尾时全仓扫一遍类内自引用注解。
+   - 附：同类问题已出现两次（`store.py` 的 chromadb、本次 llm_service），根因都是"本地解释器版本高于容器"，属结构性问题而非偶发。

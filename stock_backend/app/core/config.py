@@ -147,6 +147,22 @@ class Settings(BaseSettings):
     BACKTEST_SOFT_TIME_LIMIT: int = 120  # Celery 任务软超时（秒）
     BACKTEST_HARD_TIME_LIMIT: int = 180  # Celery 任务硬超时（秒，触发后 worker 被终止重启）
 
+    # ---- 回测沙箱子进程隔离（G08 · P1-4a）----
+    # 策略执行从 worker 主进程移到独立子进程：死循环由父进程 terminate 兜底（不影响 worker 与其它任务），
+    # CPU/内存硬上限由 rlimit 施加（**仅 POSIX 生效**，Windows 无 resource 模块，见 app/backtest/runner.py）。
+    BACKTEST_SUBPROCESS_ENABLED: bool = True  # 置 false 退回进程内执行（仅本地排查用，无隔离保护）
+    # 子进程启动方式：auto（POSIX=forkserver / Windows=spawn）/ fork / forkserver / spawn。
+    # auto 刻意不用 fork —— Celery worker 是多线程进程，fork 子进程可能继承其它线程持有的锁而死锁
+    # （Python 3.12 起发 DeprecationWarning，3.14 在 Linux 已默认改 forkserver）。
+    # fork 更快（COW 共享 K 线、免 pickle），确需时可显式设 fork 自担风险。
+    BACKTEST_SUBPROCESS_START_METHOD: str = "auto"
+    BACKTEST_SUBPROCESS_GRACE: float = 15.0  # 子进程墙钟超时 = BACKTEST_TIME_BUDGET + 本值（秒）
+    BACKTEST_CPU_LIMIT_SECONDS: int = 45  # 子进程 CPU 时间上限（秒，POSIX）；应 ≤ 墙钟超时
+    BACKTEST_MEMORY_LIMIT_MB: int = 512  # 子进程内存**增长**上限（MB，POSIX）：限额 = 基线 VSZ + 本值
+    BACKTEST_MAX_CONCURRENT_PER_USER: int = 3  # 同一用户同时运行的回测数上限，超出返回 429
+    BACKTEST_QUEUE_BUSY_THRESHOLD: int = 20  # 回测队列积压超过该值即拒绝新任务（返回"队列繁忙"）
+    BACKTEST_QUOTA_STALE_SECONDS: int = 300  # 并发配额残留自愈阈值（秒）：worker 崩溃后超此值的槽位自动回收
+
     # ---- 备份与灾难恢复（G05 · P1-1）----
     # 备份根目录：容器内挂独立卷 /backup，本地默认 data/backups。
     # 生产建议挂宿主机独立磁盘（与数据盘分离，避免同盘故障同时丢数据+备份）。

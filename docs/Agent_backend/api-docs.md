@@ -1193,6 +1193,30 @@ curl -X POST "http://127.0.0.1:8000/api/v1/backtest" -H "Authorization: Bearer e
 {"code":0,"msg":"回测已提交","data":{"id":17,"strategy_id":1,"symbol_id":125,"period":"1d","status":"queued","progress":0,"error":null,"created_at":"...","updated_at":"..."}}
 ```
 
+**G08 新增限流响应（HTTP 429，P1-4a）**
+
+提交前会做两道并发检查，命中即返回 429 且**不创建任务行、不入队**：
+
+| code | 触发条件 | msg 示例 | 前端建议 |
+|---|---|---|---|
+| `42901` | 同一用户同时运行的回测数达 `BACKTEST_MAX_CONCURRENT_PER_USER`（默认 3） | `同时运行的回测已达上限（3/3），请等待当前回测完成` | 提示等待，可轮询进行中任务 |
+| `42902` | 回测队列积压 ≥ `BACKTEST_QUEUE_BUSY_THRESHOLD`（默认 20） | `回测队列繁忙（积压 25 个），请稍后重试` | 显示"回测队列繁忙"提示（G25 前端） |
+
+```json
+{"code":42901,"msg":"同时运行的回测已达上限（3/3），请等待当前回测完成","data":null}
+```
+
+> 并发槽位在任务**终态**释放（成功 / 业务失败 / 重试耗尽）；worker 被强杀时由
+> `BACKTEST_QUOTA_STALE_SECONDS`（默认 300s）自动回收，不会把用户永久锁死。
+
+**G08 执行隔离说明（P1-4a）**
+
+策略代码在**独立子进程**内执行，父进程（Celery worker）只做调度与 DB 写入：
+
+- 死循环 → 父进程在 `BACKTEST_TIME_BUDGET + BACKTEST_SUBPROCESS_GRACE`（默认 30+15s）后强制终止子进程，**worker 与其他任务不受影响**；
+- POSIX（生产容器）额外施加 `RLIMIT_CPU` / `RLIMIT_AS` 硬上限（超限 → 任务失败，错误信息含原因）；
+- Windows 本地开发无 `resource` 模块，**CPU/内存硬上限不生效**，死循环防护仍由 terminate 提供。
+
 ## 2. 任务状态轮询
 
 - **接口名称**：回测任务状态

@@ -5,18 +5,21 @@
 """
 
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
 from app.backtest import metrics
-from app.backtest.engine import BacktestConfig, BacktestEngine, BacktestError, BacktestTimeout
+from app.backtest.engine import BacktestConfig, BacktestError, BacktestTimeout
+from app.backtest.runner import run_isolated
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.models.kline import KLINE_MODELS
 from app.models.strategy import TradingStrategy
 from app.models.symbol import Symbol
 from app.repositories import backtest_repo, kline_repo, strategy_repo, symbol_repo
+from app.services import backtest_quota
 from app.utils.db import get_session
 
 logger = logging.getLogger(__name__)
@@ -54,16 +57,42 @@ def create_backtest(
 
     end = end or datetime.now(UTC)
     start = start or end - timedelta(days=settings.BACKTEST_DEFAULT_DAYS)
-    task = backtest_repo.create_task(db, strategy_id, symbol_id, period, start, end, fill_on)
-    db.commit()
+
+    # G08（P1-4a）：全局队列积压 → 直接拒绝，避免任务排进去干等（全局并发由 worker 数控制）
+    if backtest_quota.is_queue_busy():
+        raise ApiError(
+            status_code=429,
+            code=42902,
+            msg=f"回测队列繁忙（积压 {backtest_quota.queue_depth()} 个），请稍后重试",
+        )
+
+    # G08：per-user 并发配额。用一次性 token 作槽位，避免"先建任务再占配额"失败时要回滚任务行；
+    # token 随任务传给 worker，由任务在终态释放（见 backtest_tasks.run_backtest_task）。
+    quota_token = uuid.uuid4().hex
+    granted, running = backtest_quota.acquire(user_id, quota_token)
+    if not granted:
+        raise ApiError(
+            status_code=429,
+            code=42901,
+            msg=f"同时运行的回测已达上限（{running}/{settings.BACKTEST_MAX_CONCURRENT_PER_USER}），请等待当前回测完成",
+        )
+
+    try:
+        task = backtest_repo.create_task(db, strategy_id, symbol_id, period, start, end, fill_on)
+        db.commit()
+    except Exception:
+        backtest_quota.release(user_id, quota_token)  # 建任务失败 → 立即归还配额
+        raise
 
     # 异步入队（Celery backtest 队列）；broker 不可用时任务留 queued 由运维重放
     try:
         from app.worker.tasks.backtest_tasks import run_backtest_task
 
-        run_backtest_task.delay(task.id)
+        run_backtest_task.delay(task.id, quota_token)
     except Exception as e:  # noqa: BLE001
         logger.warning("backtest enqueue failed task_id=%s: %s", task.id, e)
+        # 入队失败 → 归还配额，否则用户要等 stale 阈值才能再提交
+        backtest_quota.release(user_id, quota_token)
     return task
 
 
@@ -111,7 +140,24 @@ def execute_backtest(task_id: int) -> dict:
         def _progress(pct: int) -> None:
             backtest_repo.update_task(db, task_id, progress=pct)
 
-        out = BacktestEngine(config).run(strategy.code, strategy.params, bars_dict, progress_cb=_progress)
+        # G08（P1-4a）：策略在**独立子进程**内执行 —— 死循环/吃内存的策略不会拖垮 worker 主进程；
+        # 进度经管道回传，DB 写入仍全部发生在父进程（本函数），保持事务语义不变。
+        if settings.BACKTEST_SUBPROCESS_ENABLED:
+            out = run_isolated(
+                strategy.code,
+                strategy.params,
+                bars_dict,
+                config,
+                grace=settings.BACKTEST_SUBPROCESS_GRACE,
+                cpu_seconds=settings.BACKTEST_CPU_LIMIT_SECONDS,
+                memory_bytes=settings.BACKTEST_MEMORY_LIMIT_MB * 1024 * 1024,
+                on_progress=_progress,
+            )
+        else:
+            from app.backtest.engine import BacktestEngine
+
+            # 仅本地排查用：进程内执行，无隔离/资源上限保护
+            out = BacktestEngine(config).run(strategy.code, strategy.params, bars_dict, progress_cb=_progress)
         m = metrics.compute_metrics(
             out["trades"], out["equity_curve"], out["initial_cash"],
             out["start_ts"], out["end_ts"], task.period,
@@ -132,6 +178,30 @@ def execute_backtest(task_id: int) -> dict:
         raise BacktestFatalError(f"回测超时: {e}") from e
     except BacktestError as e:
         raise BacktestFatalError(str(e)) from e
+    finally:
+        db.close()
+
+
+def release_quota(task_id: int, quota_token: str | None) -> None:
+    """释放 per-user 并发配额（G08）。``quota_token`` 为空（历史/进程内调用）时跳过。
+
+    在任务**终态**调用：成功、业务失败、重试耗尽。**重试中的任务不释放** ——
+    它仍占着一个并发位，否则重试期间用户可以超额提交。
+    worker 被 SIGKILL 等极端情况下不会走到这里，由 ``BACKTEST_QUOTA_STALE_SECONDS``
+    的过期清理兜底自愈。
+    """
+    if not quota_token:
+        return
+    db = get_session()
+    try:
+        task = backtest_repo.get_task(db, task_id)
+        if task is None:
+            return
+        strategy = db.get(TradingStrategy, task.strategy_id)
+        if strategy is not None:
+            backtest_quota.release(strategy.user_id, quota_token)
+    except Exception as e:  # noqa: BLE001 —— 释放失败不应影响任务终态
+        logger.warning("release backtest quota failed task_id=%s: %s", task_id, e)
     finally:
         db.close()
 

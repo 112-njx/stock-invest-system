@@ -76,7 +76,12 @@ def _create_strategy(client: TestClient, token: str) -> int:
 
 def _make_mocks(monkeypatch, bars=None):
     """mock 掉 Celery delay 与 K 线源（避免 Redis/真实行情），记忆抽取 no-op。"""
-    monkeypatch.setattr("app.worker.tasks.backtest_tasks.run_backtest_task", types.SimpleNamespace(delay=lambda task_id: None))
+    # G08：run_backtest_task.delay 现接受 (task_id, quota_token)；mock 需同签名，
+    # 否则会走 create_backtest 的"入队失败"分支（静默归还配额），测试不再覆盖真实入队路径
+    monkeypatch.setattr(
+        "app.worker.tasks.backtest_tasks.run_backtest_task",
+        types.SimpleNamespace(delay=lambda task_id, quota_token=None: None),
+    )
     monkeypatch.setattr(kline_repo, "get_bars", lambda db, period, symbol_id, start, end, limit=1000: (bars if bars is not None else _fake_bars()))
     monkeypatch.setattr(backtest_service, "_save_backtest_memory", lambda *a, **k: None)
 

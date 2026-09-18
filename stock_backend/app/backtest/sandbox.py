@@ -7,6 +7,7 @@
 
 import ast
 import logging
+import operator
 from types import SimpleNamespace
 from typing import Any
 
@@ -48,6 +49,44 @@ def _noop_print(*_args: Any, **_kwargs: Any) -> None:
     """策略内 print 丢弃（避免污染任务 stdout）。"""
 
 
+# 增强赋值（`x += y`）支持的运算符
+_INPLACE_OPS = {
+    "+=": operator.iadd,
+    "-=": operator.isub,
+    "*=": operator.imul,
+    "/=": operator.itruediv,
+    "//=": operator.ifloordiv,
+    "%=": operator.imod,
+    "**=": operator.ipow,
+    "|=": operator.ior,
+    "&=": operator.iand,
+    "^=": operator.ixor,
+    ">>=": operator.irshift,
+    "<<=": operator.ilshift,
+}
+
+# 增强赋值允许的操作数类型白名单：均为内建安全类型，其 __iadd__ 等无副作用，
+# 不可能借它拿到 dunder 或执行任意代码。
+_INPLACE_SAFE_TYPES = (bool, int, float, complex, str, bytes, bytearray, list, tuple, dict, set, frozenset)
+
+
+def _guarded_inplacevar(op: str, x: Any, y: Any) -> Any:
+    """增强赋值守卫（``x += y`` 被编译为 ``x = _inplacevar_('+=', x, y)``）。
+
+    RestrictedPython 8.x 的 transformer **仍会生成**这个调用，但包内已不再提供实现
+    （旧实现直接 ``operator.iadd`` 作用于任意对象，是已知逃逸向量）。缺了它，策略里任何
+    ``x += 1`` 都会在运行时抛 ``NameError: name '_inplacevar_' is not defined`` ——
+    极常用的写法直接不可用。这里按**类型白名单**补回：只放行内建安全类型，
+    既恢复 ``+=`` 可用性，又不重新打开逃逸面。
+    """
+    func = _INPLACE_OPS.get(op)
+    if func is None:
+        raise TypeError(f"不支持的增强赋值运算符: {op}")
+    if not isinstance(x, _INPLACE_SAFE_TYPES):
+        raise TypeError(f"增强赋值仅支持内建安全类型，实际为 {type(x).__name__}")
+    return func(x, y)
+
+
 def _build_globals() -> dict:
     """构造一份受限全局命名空间（每策略一份，exec 会污染命名空间）。"""
     return {
@@ -58,6 +97,7 @@ def _build_globals() -> dict:
         "_getiter_": iter,
         "_unpack_sequence_": guarded_unpack_sequence,
         "_iter_unpack_sequence_": guarded_iter_unpack_sequence,
+        "_inplacevar_": _guarded_inplacevar,  # 增强赋值守卫（见上）
         "_print_": lambda _getattr_: SimpleNamespace(_call_print=_noop_print),
         "__name__": "__restricted__",
     }

@@ -460,3 +460,24 @@ Agent的后端编码记录,你需要按照：
 ---
 编码时间：2026-09-18
 编码内容（描述）：V0.3 泳道G G09——列表分页 + 消息游标分页（P1-6a）。新增 app/schemas/pagination.py：PageParams（page≥1 / size 1~100，offset 属性）+ page_envelope（{items,total,page,size,total_pages}，空列表 total_pages=0）+ cursor_envelope（{items,has_more,next_cursor}）+ 消息 limit 常量（默认 50 / 上限 200）。5 个列表端点统一接入信封：GET /conversations、/strategies、/agents、/backtest/tasks（后四者原为裸数组），/agent/runs 原已分页、本轮补齐 total_pages。仓储层加 offset/limit 与 count 配套函数（list_* 的 offset/limit 默认 None 保持内部全量调用不变，如 backtest_service 取全部策略 id、chat_service 取全量消息组装 LLM 上下文）。消息端点改游标分页：不传 before 取最新 limit 条，传 before 取更早一页；排序键 (created_at,id)，游标过滤用「created_at < ? OR (created_at = ? AND id < ?)」双分支而非行值比较（SQLite 测试库不支持 `(a,b)<(c,d)`），多取一条判 has_more，返回前 reverse 保证对外升序（与旧全量接口一致，前端渲染顺序不变）。游标 message_id 不属于该会话或不存在 → 400/40005（防跨会话越权探测）。验收：新增 tests/test_pagination.py 11 项全绿；5 个既有测试文件（test_conversations / test_agents / test_strategies / test_chat / test_backtest_api）的分页消费点同步改为 ["data"]["items"]；全库 528 passed。
+---
+编码时间：2026-09-18
+编码内容（描述）：V0.3 泳道F G08——策略子进程隔离 + 资源限制（P1-4a）。新增 `app/backtest/runner.py`：策略从 worker 主进程移到**独立子进程**执行，父进程只做调度与 DB 写入（进度经管道回传，事务语义不变）；子进程施加 `RLIMIT_CPU`/`RLIMIT_AS`，父进程墙钟超时（`BACKTEST_TIME_BUDGET + BACKTEST_SUBPROCESS_GRACE` = 30+15s，显著小于 Celery 软超时 120s）后 terminate→kill，**worker 与其它任务不受影响**。新增 `app/services/backtest_quota.py`：per-user 并发用 **Redis ZSET + Lua 原子取配额**（而非 INCR 计数器——后者在 worker 崩溃时永久泄漏会把用户锁死；ZSET 按 stale 阈值自愈），队列积压超阈值直接 429。`create_backtest` 加两道 429（42901 用户并发上限 / 42902 队列繁忙）且不产生任务行；槽位在任务终态释放，重试中不释放。config 新增 8 项 BACKTEST_* 限额。`execute_backtest` 改走 `run_isolated`（`BACKTEST_SUBPROCESS_ENABLED=false` 可退回进程内，作逃生开关）。验收：`test_backtest_isolation.py` 36 项（Windows 34 passed/2 skipped，Linux 35 passed/1 skipped），全库 562 passed/2 skipped，ruff 全绿。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：G08 关键设计坑（务必记住）。① **RLIMIT_AS 不能直接设成预算值**：worker 进程 import 了 chromadb/onnxruntime，fork 后子进程继承父进程地址空间（VSZ 可能 1GB+），直接设 512MB 会让子进程**任何新分配立即失败**，策略连第一行都跑不起来。实现改为「读子进程当前 VSZ + 预算」，语义变成"策略自身额外增长不超过 N MB"，自校准。② **不用 fork，用 forkserver**：Celery worker 是多线程进程，fork 出的子进程可能继承其它线程在 fork 瞬间持有的锁而死锁（Python 3.12 起发 `DeprecationWarning`，3.14 在 Linux 已默认改 forkserver）。实测容器内该告警确实触发，改用 forkserver 后 `-W error::DeprecationWarning` 下全绿；代价是 bars 需 pickle（8k 根约 30ms，相对回测耗时可忽略）。`BACKTEST_SUBPROCESS_START_METHOD=fork` 可显式退回（自担风险）。③ **平台差异必须如实回报而非假装一致**：Windows 无 `resource` 模块，CPU/内存硬上限**不生效**，只有 terminate 兜底；`_subprocess.limits.enforced` 如实回报，测试按平台分别断言（POSIX 专属用例在 Windows skip、在 Linux 容器实跑通过）。④ **spawn/forkserver 要求 `__main__` 可导入**：用 `python - <<EOF`（stdin）方式跑测试脚本会报 `OSError: Invalid argument: '<stdin>'`——这是宿主脚本的问题，Celery 控制台脚本与 pytest 入口都有 `if __name__ == "__main__"` 守卫，不受影响；写验证脚本请落成真实文件。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：G08 顺带修复两个缺陷（详见 fixed.md 同日两条）。① **沙箱不支持增强赋值**：RestrictedPython 8.4 的 transformer 仍把 `x += 1` 编译成 `_inplacevar_('+=', x, 1)`，但该守卫已从包内移除（旧实现直通 `operator.iadd` 是已知逃逸向量），本项目 `_build_globals()` 从未提供 → **策略里任何 `+=`/`-=`/`*=` 运行时 NameError**。已在 `sandbox.py` 按**操作数类型白名单**补回 `_guarded_inplacevar`（放行内建安全类型，其余抛 TypeError，不重开逃逸面），并修正 `strategy_gen.py` 提示词里"对 context 属性 += 会编译失败"的错误描述。② **容器内整个应用无法导入**（跨泳道，泳道 C 的 G14 引入）：`llm_service.py` 类体内自引用注解 `-> LLMService` 在 Python 3.12 急切求值 → NameError，api/worker/beat 全部起不来；本地 3.14 惰性注解不报错。已加 `from __future__ import annotations`（与 store.py 同处置）。已记入 project_constraints 第 23 条。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：G08 安全审计结论（RestrictedPython 8.4，版本已在 requirements.lock 锁定）。实测逃逸向量全部被拦：`__class__`/`__bases__`/`__subclasses__`/`__globals__`/`__mro__`/`__code__`/`__dict__` 属性访问**编译期**拒（`invalid attribute name`）；`getattr(x,'__class__')` 无法绕过——`getattr` 根本不在受限内建里（运行时 NameError）；`'{0.__class__}'.format(x)` 与 `format_map` 运行时 `NotImplementedError`；`import`/`__import__`/`open`/`eval`/`exec` 编译期硬拒。审计向量已固化为 `tests/test_backtest_isolation.py` 的回归用例（参数化 7+5+2 项）。已知限制（非安全洞，供 G25 提示词参考）：受限内建不含 `getattr`，策略不能用它；`bytearray` 等未列入安全内建，策略里不可用。
+
+---
+编码时间：2026-09-18
+编码内容（描述）：G08 跨泳道改动披露。① `tests/test_backtest_api.py`（泳道 D）改 1 行：Celery mock 由 `delay=lambda task_id: None` 改为 `delay=lambda task_id, quota_token=None: None` —— 本步给 `run_backtest_task` 加了第二个参数，不改 mock 会让该测试静默走"入队失败"分支（不再覆盖真实入队路径）。② `app/services/llm/llm_service.py`（泳道 C）加 1 行 `from __future__ import annotations`，修复上述容器导入崩溃。③ `app/agent/strategy_gen.py`（泳道 B/E 的 AI 链路）改 2 行提示词，修正 `+=` 的错误描述。均已在提交信息与 project_constraints 中如实披露，未回退任何他人改动。另：`backtest_service.py` 只改执行层调用点（`BacktestEngine.run` → `run_isolated`）与入队/配额，**未动撮合、配对、metrics、序列化逻辑**（泳道 D G20/G32 的产出），符合跨泳道边界约定。
+
+---
