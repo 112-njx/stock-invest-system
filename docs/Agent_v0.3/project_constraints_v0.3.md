@@ -298,3 +298,18 @@ P1-12(pgvector) ──→ P0-3b(向量content加密)
    - **已修复**（泳道 F 在 G08 期间发现并修）：`llm_service.py` 顶部加 `from __future__ import annotations`（与 `store.py` 同处置）。验证：容器内 `import app.main` 成功、celery 注册 15 个任务。
    - 需人工操作：无。**经验（全泳道）**：凡「类体内自引用注解」或「`X | None` 且 X 为函数」的写法，本地 3.14 不报错但容器 3.12 必炸 —— 新增此类注解一律加 `from __future__ import annotations`。建议 G36 收尾时全仓扫一遍类内自引用注解。
    - 附：同类问题已出现两次（`store.py` 的 chromadb、本次 llm_service），根因都是"本地解释器版本高于容器"，属结构性问题而非偶发。
+
+24. **【泳道 F · G25】策略校验器要求 `initialize`，而回测引擎不要求 —— 口径不一致（待确认，当前保持现状）**
+   - 现状：`strategy_validator._check_interface` 把「缺少 initialize 函数」判为**校验不通过**；但引擎侧 `app/backtest/sandbox.py::compile_strategy` 明确把 `initialize` 当作**可选**（`init = glb.get("initialize"); if callable(init): ...`，只强制 `on_bar`）。
+   - 影响：G25 把三级校验**强制**在提交回测前执行后，理论上会拒掉「没有 initialize 但引擎完全能跑」的策略。对**手工编写**的策略尤其可能（AI 生成路径的提示词要求写 initialize，不受影响）。
+   - **实测评估（2026-09-18）**：本机库中 5 条策略跑三级校验，仅 1 条不通过且原因是**代码为空**（本就跑不了），**0 条因缺 initialize 被拒** → 回归风险是理论上的，暂无实际影响。
+   - 当前决策：**保持校验器现状**（不改其它泳道的契约），仅记录。校验失败信息会明确写出「缺少 initialize 函数」，用户可自行补上。
+   - 需人工确认（二选一）：
+     ① 保持现状（推荐，零风险且实测无影响）；
+     ② 若希望两边口径一致，把校验器的 initialize 检查改为可选（仅保留 `on_bar` 强制）—— 属 `strategy_validator` owner 的改动，一行删改 + 更新 `tests/test_strategy_validator.py` 对应用例。
+
+25. **【泳道 F · G08】Windows 本地开发：CPU 无硬上限（内存已由跨平台看门狗覆盖）**
+   - 现状：策略子进程的 CPU 上限靠 POSIX 的 `RLIMIT_CPU`（内核级）实现，**Windows 没有 `resource` 模块**，本地开发机上 CPU 上限**不生效**；内存上限已由跨平台 RSS 看门狗补齐（见第 20~22 条之外的 fixed.md 2026-09-18 条），但 CPU 仍只有**墙钟兜底**（`BACKTEST_TIME_BUDGET + GRACE` = 默认 45s）。
+   - 影响面：**仅本地开发机**，且危害有限 —— CPU 失控只占单核、且被墙钟硬封顶 45s（对比内存失控曾达 ~600MB/s 无上限，故内存优先补齐）。生产容器（Linux）`RLIMIT_CPU` 正常生效。
+   - 残余风险：**dev/prod 行为仍有一处分叉** —— 一个 CPU 耗时超过 45s 的策略在本地表现为"墙钟超时"，在生产会先撞 `RLIMIT_CPU`；两者的失败语义一致（都判失败、都不可重试），仅错误原因文案不同，故影响很小。
+   - 需人工操作：无。若确需在 Windows 也精确限制 CPU，可选方案是 Windows Job Object（需 `pywin32` 或一段 ctypes），评估后认为**收益不抵成本**（仅开发机、且已有墙钟兜底），未实施。
