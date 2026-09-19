@@ -31,9 +31,11 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined
           if (id.includes('lightweight-charts')) return 'charts'
-          if (id.includes('axios')) return 'axios'
-          if (id.includes('vue') || id.includes('pinia') || id.includes('vue-router')) return 'vue-vendor'
-          return undefined
+          // 其余三方依赖统一进 vendor chunk（含 axios/vue/pinia/vue-router）。
+          // 不要把 axios 单独切一块：axios 1.19 内部对命名空间助手有跨 chunk 引用，
+          // 与项目 http.ts chunk 形成循环依赖，生产构建下求值顺序错误，
+          // 运行时报 "e is not a function"（dev 预打包单文件不暴露）。
+          return 'vendor'
         },
       },
     },
