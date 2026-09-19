@@ -12,9 +12,12 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import AuthForm from '@/components/auth/AuthForm.vue'
 import { useAuthModalStore } from '@/stores/authModal'
+import { useLegalModalStore } from '@/stores/legalModal'
 import { toast } from '@/utils/toast'
 
 const modal = useAuthModalStore()
+// 法律弹窗叠在登录弹窗之上（z-index 1600 > 1500）时，ESC 只关法律弹窗
+const legalModal = useLegalModalStore()
 
 function onSuccess() {
   modal.hide()
@@ -22,7 +25,7 @@ function onSuccess() {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') modal.hide()
+  if (e.key === 'Escape' && !legalModal.open) modal.hide()
 }
 
 onMounted(() => document.addEventListener('keydown', onKeydown))

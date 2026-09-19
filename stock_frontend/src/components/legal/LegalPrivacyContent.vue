@@ -1,10 +1,12 @@
 <script setup lang="ts">
-/** G03：隐私政策（/privacy）——收集信息类型、使用方式、存储方式、用户权利、数据安全措施。 */
-import LegalPage from './LegalPage.vue'
+/**
+ * G03：隐私政策正文（原 /privacy 页面 slot 内容）。
+ * 改为法律弹窗（LegalModal）复用：只保留正文，标题/生效日期/关闭由弹窗骨架提供。
+ */
 </script>
 
 <template>
-  <LegalPage title="隐私政策" updated-at="2026-09-17">
+  <div>
     <p>
       本隐私政策说明量化回测助手（以下简称"本产品"）如何收集、使用、存储与保护您的个人信息。
       本产品依据《中华人民共和国个人信息保护法》《中华人民共和国网络安全法》等法律法规制定本政策。
@@ -116,5 +118,5 @@ import LegalPage from './LegalPage.vue'
       如对本政策或个人信息处理有任何疑问、意见或投诉，
       可通过产品内"关于/法律"页面公示的联系渠道与开发者联系。
     </p>
-  </LegalPage>
+  </div>
 </template>

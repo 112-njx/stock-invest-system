@@ -3,8 +3,9 @@
  *
  * 做法：用 esbuild 打包**真实的** `src/router/index.ts`（把所有 `.vue` 视图替换为空组件桩，
  * 把 `@/api/monitor` 换成内存桩以免拉入 axios/网络），在 jsdom 下断言：
- * - `/` `/market` `/market/detail` `/ai` `/login` `/terms` `/privacy` `/disclaimer`
+ * - `/` `/market` `/market/detail` `/ai` `/login` `/terms`
  *   与 G33 三条找回密码路由的 name / meta.bare 符合方案 B 定义
+ * - `/privacy` `/disclaimer` 已改为法律弹窗、不再有独立页面，旧链接重定向到 `/`
  * - 未登录可浏览行情页与 AI 页（不再被强制跳登录页）
  * - 已登录访问 `/login` 会被守卫送回首页（deep link 登录页对已登录用户不展示）
  *
@@ -92,8 +93,6 @@ console.log('\n[1] 路由表（方案 B）')
     ['/reset-password', 'reset-password', true],
     ['/verify-email', 'verify-email', true],
     ['/terms', 'terms', true],
-    ['/privacy', 'privacy', true],
-    ['/disclaimer', 'disclaimer', true],
   ]
   for (const [path, name, bare] of expect) {
     const r = router.resolve(path)
@@ -110,6 +109,15 @@ console.log('\n[1] 路由表（方案 B）')
     legacy.matched.some((m) => m.redirect === '/'),
     JSON.stringify(legacy.matched.map((m) => m.redirect))
   )
+  // 免责声明 / 隐私政策改为弹窗，旧 URL 同样重定向到首页（不残留空白独立页）
+  for (const path of ['/privacy', '/disclaimer']) {
+    const r = router.resolve(path)
+    check(
+      `${path} 重定向到 /`,
+      r.matched.some((m) => m.redirect === '/'),
+      JSON.stringify(r.matched.map((m) => m.redirect))
+    )
+  }
 }
 
 /* ------------------------------------------------------------------ */

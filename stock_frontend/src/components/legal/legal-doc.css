@@ -1,0 +1,47 @@
+/**
+ * 法律文档正文共享排版。
+ * 免责声明 / 隐私政策弹窗（LegalModal）与用户协议独立页（LegalPage）共用一套样式，
+ * 避免同一套 h2/h3/ul/.legal-note 规则在两处重复维护。
+ */
+.legal-doc-body {
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--text-secondary);
+}
+.legal-doc-body h2 {
+  margin: 20px 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.legal-doc-body h2:first-child {
+  margin-top: 0;
+}
+.legal-doc-body h3 {
+  margin: 14px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.legal-doc-body p {
+  margin: 0 0 10px;
+}
+.legal-doc-body ul,
+.legal-doc-body ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+.legal-doc-body li {
+  margin-bottom: 4px;
+}
+.legal-doc-body strong {
+  color: var(--text);
+}
+.legal-doc-body .legal-note {
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: var(--bg-panel-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  font-size: 12.5px;
+}

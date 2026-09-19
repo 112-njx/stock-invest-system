@@ -2,16 +2,24 @@
 /**
  * G03：底部版权条（所有页面可见）。
  * 「© 2026 stock-agent-聂久翔 | 免责声明 | 隐私政策」
+ * G03 改造：免责声明 / 隐私政策不再跳转独立路由，改为打开全局轻量弹窗（LegalModal）。
  */
+import { useLegalModalStore } from '@/stores/legalModal'
+
+const legalModal = useLegalModalStore()
 </script>
 
 <template>
   <footer class="app-footer">
     <span class="app-footer__copy">© 2026 stock-agent-聂久翔</span>
     <span class="app-footer__sep">|</span>
-    <RouterLink to="/disclaimer" class="app-footer__link">免责声明</RouterLink>
+    <button type="button" class="app-footer__link" @click="legalModal.show('disclaimer')">
+      免责声明
+    </button>
     <span class="app-footer__sep">|</span>
-    <RouterLink to="/privacy" class="app-footer__link">隐私政策</RouterLink>
+    <button type="button" class="app-footer__link" @click="legalModal.show('privacy')">
+      隐私政策
+    </button>
   </footer>
 </template>
 
@@ -30,7 +38,12 @@
   color: var(--text-muted);
 }
 .app-footer__link {
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
   color: var(--text-muted);
+  background: none;
+  border: none;
   cursor: pointer;
 }
 .app-footer__link:hover {

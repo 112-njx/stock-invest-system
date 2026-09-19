@@ -18,6 +18,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import type { Announcement } from '@/api/types'
 import { useAuthModalStore } from '@/stores/authModal'
+import { useLegalModalStore } from '@/stores/legalModal'
 import { useNotificationStore } from '@/stores/notification'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
@@ -29,6 +30,7 @@ const theme = useThemeStore()
 const user = useUserStore()
 const notification = useNotificationStore()
 const authModal = useAuthModalStore()
+const legalModal = useLegalModalStore()
 
 const menuOpen = ref(false)
 const cellRef = ref<HTMLElement | null>(null)
@@ -539,14 +541,14 @@ const menuStyle = computed(() => ({
           <span class="security-row__text">用户协议</span>
           <span class="security-row__arrow">›</span>
         </RouterLink>
-        <RouterLink to="/privacy" class="security-row">
+        <button class="security-row" @click="legalModal.show('privacy')">
           <span class="security-row__text">隐私政策</span>
           <span class="security-row__arrow">›</span>
-        </RouterLink>
-        <RouterLink to="/disclaimer" class="security-row">
+        </button>
+        <button class="security-row" @click="legalModal.show('disclaimer')">
           <span class="security-row__text">免责声明</span>
           <span class="security-row__arrow">›</span>
-        </RouterLink>
+        </button>
       </div>
     </div>
 

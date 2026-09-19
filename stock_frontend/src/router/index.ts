@@ -61,24 +61,16 @@ const router = createRouter({
       meta: { bare: true },
     },
     // G03：法律页面
+    // 《用户协议》保留独立页面；免责声明 / 隐私政策改为全局轻量弹窗（LegalModal），
+    // 不再配置专属 URL。旧链接（书签、邮件等）重定向回首页，避免落到空白页。
     {
       path: '/terms',
       name: 'terms',
       component: () => import('@/views/legal/TermsView.vue'),
       meta: { bare: true },
     },
-    {
-      path: '/privacy',
-      name: 'privacy',
-      component: () => import('@/views/legal/PrivacyView.vue'),
-      meta: { bare: true },
-    },
-    {
-      path: '/disclaimer',
-      name: 'disclaimer',
-      component: () => import('@/views/legal/DisclaimerView.vue'),
-      meta: { bare: true },
-    },
+    { path: '/privacy', redirect: '/' },
+    { path: '/disclaimer', redirect: '/' },
   ],
 })
 

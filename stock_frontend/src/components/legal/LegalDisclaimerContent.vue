@@ -1,10 +1,12 @@
 <script setup lang="ts">
-/** G03：免责声明（/disclaimer）——明确研究辅助工具定位与投资风险自负。 */
-import LegalPage from './LegalPage.vue'
+/**
+ * G03：免责声明正文（原 /disclaimer 页面 slot 内容）。
+ * 改为法律弹窗（LegalModal）复用：只保留正文，标题/生效日期/关闭由弹窗骨架提供。
+ */
 </script>
 
 <template>
-  <LegalPage title="免责声明" updated-at="2026-09-17">
+  <div>
     <div class="legal-note">
       <strong>本产品为量化研究辅助工具，非证券投资咨询服务。</strong>
       本产品不提供任何投资建议、荐股或代客理财服务，亦不构成任何形式的要约或承诺。
@@ -90,5 +92,5 @@ import LegalPage from './LegalPage.vue'
       如本声明与《用户协议》存在冲突，以本声明中关于投资风险与责任限制的约定为准。
       您使用本产品即视为已阅读、理解并接受本免责声明的全部内容。
     </p>
-  </LegalPage>
+  </div>
 </template>

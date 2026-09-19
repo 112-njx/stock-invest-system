@@ -13,6 +13,7 @@ import { useRouter } from 'vue-router'
 import { restoreAccount } from '@/api/account'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
+import { useLegalModalStore } from '@/stores/legalModal'
 import { useUserStore } from '@/stores/user'
 import { toast } from '@/utils/toast'
 
@@ -31,6 +32,7 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const userStore = useUserStore()
+const legalModal = useLegalModalStore()
 
 const tab = ref<'login' | 'register'>(props.initialTab)
 const username = ref('')
@@ -76,8 +78,12 @@ function validate(): boolean {
 }
 
 function openLegal(name: 'terms' | 'privacy' | 'disclaimer') {
-  const url = router.resolve({ name }).href
-  window.open(url, '_blank')
+  // 《用户协议》仍为独立页面，新标签页打开以免打断注册；隐私政策/免责声明走轻量弹窗
+  if (name === 'terms') {
+    window.open(router.resolve({ name: 'terms' }).href, '_blank')
+    return
+  }
+  legalModal.show(name)
 }
 
 function onQqLogin() {

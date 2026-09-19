@@ -1,9 +1,11 @@
 <script setup lang="ts">
 /**
- * G03：法律页面公共骨架（用户协议 / 隐私政策 / 免责声明）。
- * 统一标题、生效日期、正文排版与「返回」入口，三个页面只提供内容插槽。
+ * G03：法律页面公共骨架（仅《用户协议》/terms 继续使用）。
+ * 统一标题、生效日期、正文排版与「返回」入口，页面只提供内容插槽。
+ * 免责声明 / 隐私政策已改为 LegalModal 轻量弹窗，正文排版抽到共享样式 legal-doc.css。
  */
 import { useRouter } from 'vue-router'
+import '@/components/legal/legal-doc.css'
 
 defineProps<{ title: string; updatedAt: string }>()
 
@@ -11,7 +13,7 @@ const router = useRouter()
 
 function goBack() {
   if (window.history.length > 1) router.back()
-  else router.push({ name: 'market' })
+  else router.push({ name: 'market-home' })
 }
 </script>
 
@@ -23,7 +25,7 @@ function goBack() {
         <p class="legal-head__meta">生效日期：{{ updatedAt }}</p>
       </header>
 
-      <div class="legal-body">
+      <div class="legal-doc-body">
         <slot />
       </div>
 
@@ -65,48 +67,7 @@ function goBack() {
   font-size: 12px;
   color: var(--text-muted);
 }
-.legal-body {
-  font-size: 13px;
-  line-height: 1.9;
-  color: var(--text-secondary);
-}
-.legal-body :deep(h2) {
-  margin: 20px 0 8px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-}
-.legal-body :deep(h2:first-child) {
-  margin-top: 0;
-}
-.legal-body :deep(h3) {
-  margin: 14px 0 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-.legal-body :deep(p) {
-  margin: 0 0 10px;
-}
-.legal-body :deep(ul),
-.legal-body :deep(ol) {
-  margin: 0 0 10px;
-  padding-left: 20px;
-}
-.legal-body :deep(li) {
-  margin-bottom: 4px;
-}
-.legal-body :deep(strong) {
-  color: var(--text);
-}
-.legal-body :deep(.legal-note) {
-  margin: 12px 0;
-  padding: 10px 12px;
-  background: var(--bg-panel-2);
-  border-left: 3px solid var(--accent);
-  border-radius: 4px;
-  font-size: 12.5px;
-}
+/* 正文排版（h2/h3/ul/.legal-note 等）使用共享样式 legal-doc.css 的 .legal-doc-body */
 .legal-foot {
   margin-top: 24px;
   padding-top: 16px;
