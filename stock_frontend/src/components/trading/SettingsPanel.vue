@@ -355,6 +355,18 @@ function toggleMenu() {
   menuOpen.value = !menuOpen.value
 }
 
+/** 下拉菜单：打开改密 / 改邮箱弹窗（先收起菜单，避免弹窗关闭后菜单仍残留） */
+function pickSecurity(dialog: Exclude<SecurityDialog, null>) {
+  menuOpen.value = false
+  openSecurity(dialog)
+}
+
+/** 下拉菜单：打开系统公告历史（先收起菜单） */
+function pickAnnouncements() {
+  menuOpen.value = false
+  void openAnnouncements()
+}
+
 async function onLogout() {
   menuOpen.value = false
   await user.logout() // G19：调后端吊销会话 + 清 Cookie + 清本地状态
@@ -387,7 +399,7 @@ const menuStyle = computed(() => ({
         </div>
       </button>
 
-      <!-- 下拉菜单 Popover -->
+      <!-- 下拉菜单 Popover：退出登录 + 原「账号安全」三入口（改密 / 改邮箱 / 系统公告） -->
       <Teleport to="body">
         <div v-if="menuOpen" class="user-menu" :style="menuStyle">
           <div class="user-menu__item" @click="onLogout">
@@ -400,6 +412,26 @@ const menuStyle = computed(() => ({
             </svg>
             <span>退出登录</span>
           </div>
+
+          <div class="user-menu__sep" />
+
+          <!-- 原「账号安全」模块三入口，保持原上下编排：修改密码 → 修改邮箱 → 系统公告 -->
+          <button type="button" class="user-menu__row" @click="pickSecurity('password')">
+            <span class="user-menu__row-label">修改密码</span>
+            <span class="user-menu__arrow">›</span>
+          </button>
+          <button type="button" class="user-menu__row" @click="pickSecurity('email')">
+            <span class="user-menu__row-label">修改邮箱</span>
+            <!-- 邮箱绑定状态移到「修改邮箱」右侧（原面板底部的当前邮箱注记） -->
+            <span class="user-menu__email">
+              当前邮箱：{{ user.user?.email || '未绑定' }}<template v-if="user.user?.email && !user.user?.email_verified">（未验证）</template>
+            </span>
+            <span class="user-menu__arrow">›</span>
+          </button>
+          <button type="button" class="user-menu__row" @click="pickAnnouncements">
+            <span class="user-menu__row-label">系统公告</span>
+            <span class="user-menu__arrow">›</span>
+          </button>
         </div>
       </Teleport>
     </div>
@@ -419,29 +451,8 @@ const menuStyle = computed(() => ({
       </button>
     </div>
 
-    <!-- G33：账号安全区块（改密 / 改邮箱），仅新增，不改上方结构；G35：未登录隐藏（接口需鉴权） -->
-    <div v-if="user.token" class="settings-block settings-block--col">
-      <span class="settings-block__label">账号安全</span>
-      <div class="security-rows">
-        <button class="security-row" @click="openSecurity('password')">
-          <span class="security-row__text">修改密码</span>
-          <span class="security-row__arrow">›</span>
-        </button>
-        <button class="security-row" @click="openSecurity('email')">
-          <span class="security-row__text">修改邮箱</span>
-          <span class="security-row__arrow">›</span>
-        </button>
-        <!-- G16：系统公告历史入口 -->
-        <button class="security-row" @click="openAnnouncements">
-          <span class="security-row__text">系统公告</span>
-          <span class="security-row__arrow">›</span>
-        </button>
-      </div>
-      <span class="security-note">
-        当前邮箱：{{ user.user?.email || '未绑定' }}
-        <template v-if="user.user?.email && !user.user?.email_verified">（未验证）</template>
-      </span>
-    </div>
+    <!-- 原「账号安全」模块（修改密码 / 修改邮箱 / 系统公告 / 当前邮箱）已上移至用户 Cell 下拉菜单，
+         该区域按需求暂时保留空白，不再放置其它内容。对应弹窗与逻辑保留在本组件下方。 -->
 
     <!-- G17：数据与隐私（导出我的数据）；G35：未登录隐藏 -->
     <div v-if="user.token" id="settings-data" class="settings-block settings-block--col">
@@ -810,6 +821,53 @@ const menuStyle = computed(() => ({
 .user-menu__icon {
   flex: none;
   color: var(--text-secondary);
+}
+/* 浮层分隔线（退出登录 与 账号安全入口之间） */
+.user-menu__sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+/* 浮层内的功能行（修改密码 / 修改邮箱 / 系统公告） */
+.user-menu__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.user-menu__row:hover {
+  background: var(--bg-hover);
+}
+.user-menu__row-label {
+  flex: none;
+}
+/* 邮箱绑定状态：位于「修改邮箱」右侧、箭头之前，超长省略 */
+.user-menu__email {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu__arrow {
+  flex: none;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-muted);
 }
 
 .settings-block {
