@@ -723,7 +723,9 @@ const menuStyle = computed(() => ({
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 6px;
-  overflow: hidden;
+  /* 未来功能项增多时，面板内容超高可鼠标滚轮纵向滚动（横向仍裁剪，不出现横滚条） */
+  overflow-x: hidden;
+  overflow-y: auto;
   position: relative;
 }
 
@@ -805,6 +807,10 @@ const menuStyle = computed(() => ({
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   padding: 4px;
   min-width: 160px;
+  /* 未来菜单项增多时限制最大高度，超出后鼠标滚轮滚动，不顶出屏幕 */
+  max-height: min(70vh, 480px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 .user-menu__item {
   display: flex;
