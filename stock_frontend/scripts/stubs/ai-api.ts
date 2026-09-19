@@ -96,3 +96,7 @@ export function fetchAgentRunDetail() {
   return Promise.resolve({ id: 0 })
 }
 export const AGENT_NODE_ORDER = [] as const
+
+export function backtestBusyNotice() {
+  return null
+}
