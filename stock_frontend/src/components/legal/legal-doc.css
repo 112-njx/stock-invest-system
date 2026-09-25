@@ -1,7 +1,7 @@
 /**
  * 法律文档正文共享排版。
  * 免责声明 / 隐私政策弹窗（LegalModal）与用户协议独立页（LegalPage）共用一套样式，
- * 避免同一套 h2/h3/ul/.legal-note 规则在两处重复维护。
+ * 避免同一套 h2/h3/ol 规则在两处重复维护。
  */
 .legal-doc-body {
   font-size: 13px;
@@ -37,11 +37,24 @@
 .legal-doc-body strong {
   color: var(--text);
 }
-.legal-doc-body .legal-note {
-  margin: 12px 0;
-  padding: 10px 12px;
-  background: var(--bg-panel-2);
-  border-left: 3px solid var(--accent);
-  border-radius: 4px;
-  font-size: 12.5px;
+
+/* 条款编号列表：以（1）（2）…显示，每个列表独立从（1）开始 */
+.legal-doc-body ol.legal-num {
+  padding: 0;
+  list-style: none;
+  counter-reset: legal-item;
+}
+.legal-doc-body ol.legal-num > li {
+  position: relative;
+  margin-bottom: 6px;
+  padding-left: 2.6em;
+  counter-increment: legal-item;
+}
+.legal-doc-body ol.legal-num > li::before {
+  content: "（" counter(legal-item) "）";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--text);
+  white-space: nowrap;
 }

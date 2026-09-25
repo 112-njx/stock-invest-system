@@ -67,7 +67,7 @@ function goBack() {
   font-size: 12px;
   color: var(--text-muted);
 }
-/* 正文排版（h2/h3/ul/.legal-note 等）使用共享样式 legal-doc.css 的 .legal-doc-body */
+/* 正文排版（h2/h3/ol 等）使用共享样式 legal-doc.css 的 .legal-doc-body */
 .legal-foot {
   margin-top: 24px;
   padding-top: 16px;
