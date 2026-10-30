@@ -41,7 +41,11 @@ def search_symbols(db: Session, q: str, type_: str | None = None, limit: int = 1
     rows = _query_search_rows(db, q, type_, limit)
     if not rows and (type_ in (None, "stock")):
         # 外部回退：akshare 实时过滤，写入目录（is_catalog=True）+ 缓存，再重查本地
-        ext = get_provider().search_ak_stock(q, limit)
+        from app.utils.redis_client import get_redis_client
+
+        redis = get_redis_client()
+        miss_key = f'provider:search-miss:{type_ or "all"}:{q}'
+        ext = get_provider().search_ak_stock(q, limit) if redis.set(miss_key, '1', nx=True, ex=3600) else []
         if ext:
             symbol_repo.upsert_catalog_symbols(db, [(c, n, "stock", "SSE") for c, n in ext])
             db.commit()

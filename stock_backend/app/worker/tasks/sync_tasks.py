@@ -66,6 +66,12 @@ def kline_backfill(symbol_id: int, period: str, start_iso: str, end_iso: str) ->
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_init_fixed_indices")
 def kline_init_fixed_indices(self) -> dict:
     """固定指数预同步（V0.2 1.1）：49 条固定大盘/行业指数全周期K线，进度写 sync_status。"""
+    from app.utils.redis_client import get_redis_client
+
+    redis = get_redis_client()
+    lock = redis.lock('provider:presync:running', timeout=7200)
+    if not lock.acquire(blocking=False):
+        return {'skipped': 'fixed indices sync already running'}
     _log("kline_init", self.request.id, "running", "fixed indices presync start")
     try:
         result = sync_service.run_fixed_indices_sync()
@@ -75,6 +81,9 @@ def kline_init_fixed_indices(self) -> dict:
         logger.exception("kline_init_fixed_indices failed")
         _log("kline_init", self.request.id, "failed", str(exc))
         raise
+    finally:
+        redis.delete('provider:presync:queued')
+        lock.release()
 
 
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_incremental")
@@ -116,6 +125,11 @@ def realtime_poll(self, symbol_id: int | None = None, force: bool = False) -> di
 )
 def catalog_sync(self) -> dict:
     """全量标的目录同步（每日凌晨 + 启动/手动触发）。外部源异常自动重试 3 次（3s/9s/27s）。"""
+    from app.utils.redis_client import get_redis_client
+
+    lock = get_redis_client().lock('provider:catalog:running', timeout=3600)
+    if not lock.acquire(blocking=False):
+        return {'skipped': 'catalog sync already running'}
     _log("catalog_sync", self.request.id, "running", "start")
     try:
         result = sync_service.run_catalog_sync()
@@ -128,6 +142,8 @@ def catalog_sync(self) -> dict:
         logger.exception("catalog_sync failed")
         _log("catalog_sync", self.request.id, "failed", str(exc))
         raise
+    finally:
+        lock.release()
 
 
 @celery_app.task(name="app.worker.tasks.sync_tasks.provider_probe")

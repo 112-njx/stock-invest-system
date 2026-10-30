@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user_optional, get_read_db
+from app.api.deps import get_current_admin, get_current_user_optional, get_read_db
 from app.core.exceptions import ApiError
 from app.core.response import ok
 from app.models.symbol import Symbol
@@ -42,15 +42,9 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
 
     key = f"kline-backfill:{payload.symbol_id}:{payload.period}:{payload.start.isoformat()}:{payload.end.isoformat()}"
     redis = get_redis_client()
-    if payload.retry:
-        existing = redis.get(key)
-        if existing:
-            from app.worker.celery_app import celery_app
-
-            if celery_app.AsyncResult(existing).ready():
-                redis.delete(key)
+    # 同一历史窗口一小时内复用任务结果；主动 retry 也不绕过冷却期。
     task_id = str(uuid4())
-    if not redis.set(key, task_id, ex=300, nx=True):
+    if not redis.set(key, task_id, ex=3600, nx=True):
         return ok(data={"task_id": redis.get(key)})
     try:
         kline_backfill.apply_async(
@@ -193,11 +187,16 @@ def get_sync_status(
 
 
 @router.post("/fetch-all")
-def fetch_all() -> dict:
+def fetch_all(current: User = Depends(get_current_admin)) -> dict:
     """一次性全量同步（免鉴权，本地测试/运维用）：固定指数K线+快照 + 全量实时快照，同步执行不依赖 Celery/beat。
 
     用于本地无法触发定时任务时一次性补齐大盘/行业指数数据，返回固定指数同步结果与实时轮询结果。
     """
+    from app.utils.redis_client import get_redis_client
+
+    redis = get_redis_client()
+    if not redis.set('provider:fetch-all:cooldown', '1', nx=True, ex=86400):
+        raise ApiError(status_code=429, msg='全量刷新每天最多触发一次')
     fixed = sync_service.run_fixed_indices_sync(skip_existing=False)
     realtime = sync_service.run_realtime_poll()
     return ok(data={"fixed_indices": fixed, "realtime": realtime}, msg="全量同步完成")

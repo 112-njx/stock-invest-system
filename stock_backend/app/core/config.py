@@ -54,14 +54,16 @@ class Settings(BaseSettings):
     # ---- 行情同步 ----
     DATA_PROVIDER_PRIORITY: str = "eastmoney,sina,ths"  # Provider 优先级链（逗号分隔，可调整顺序/禁用）
     PROVIDER_CIRCUIT_FAILURE_THRESHOLD: int = 3  # Provider 连续失败 N 次熔断
-    PROVIDER_CIRCUIT_COOLDOWN: int = 60  # Provider 熔断冷却（秒），冷却后半开探测
-    PROVIDER_PROBE_INTERVAL: int = 60  # 熔断中 Provider 后台探测间隔（秒）
+    PROVIDER_CIRCUIT_COOLDOWN: int = 600  # Provider 熔断冷却（秒），冷却后半开探测
+    PROVIDER_PROBE_INTERVAL: int = 600  # 熔断中 Provider 后台探测间隔（秒）
     KLINE_INIT_DAYS: int = 730  # 首次全量拉取天数（约2年）
-    REALTIME_POLL_INTERVAL: int = 15  # 实时轮询间隔（秒），降频规避东财风控（原 5s 触发限流）
+    REALTIME_POLL_INTERVAL: int = 1800  # 实时轮询间隔（秒）
+    PROVIDER_MIN_INTERVAL_SECONDS: int = 2  # 单数据源跨进程请求间隔
+    PROVIDER_DAILY_BUDGET: int = 2000  # 单数据源每日请求预算
     SYNC_INCREMENTAL_HOUR: int = 16  # 每日增量同步时刻（本地时区小时）
     SYNC_INCREMENTAL_MINUTE: int = 30
     SYNC_TIMEOUT: int = 30  # 数据源请求超时（秒）
-    SYNC_RETRY_TIMES: int = 3  # 外部源重试次数
+    SYNC_RETRY_TIMES: int = 2  # 外部源最多尝试两次
     SYNC_RETRY_BACKOFF: float = 2.0  # 退避基数（秒）
     SYNC_DAILY_LIST_TIMES: str = "16,17"  # 增量同步 beat cron 小时，逗号分隔
 

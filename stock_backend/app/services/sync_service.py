@@ -100,9 +100,17 @@ def maybe_presync_fixed_indices() -> dict:
                 incomplete_quality += 1
         if stale == 0 and incomplete_quality == 0:
             return {"triggered": False, "stale": 0, "total": total}
-        from app.worker.tasks.sync_tasks import kline_init_fixed_indices
+        from app.utils.redis_client import get_redis_client
 
-        task = kline_init_fixed_indices.delay()
+        redis = get_redis_client()
+        if not redis.set('provider:presync:queued', '1', nx=True, ex=3600):
+            return {"triggered": False, "reason": "already queued", "stale": stale, "total": total}
+        from app.worker.tasks.sync_tasks import kline_init_fixed_indices
+        try:
+            task = kline_init_fixed_indices.delay()
+        except Exception:
+            redis.delete('provider:presync:queued')
+            raise
         ops_repo.upsert_sync_status(
             db,
             "fixed_indices",
@@ -243,6 +251,12 @@ def run_catalog_sync() -> dict:
     """
     db = get_session()
     try:
+        from app.utils.redis_client import get_redis_client
+
+        redis = get_redis_client()
+        daily_key = f'provider:catalog:done:{datetime.now(settings.tz):%Y%m%d}'
+        if redis.exists(daily_key):
+            return {'status': 'done', 'skipped': 'already synced today'}
         provider = get_provider()
         ops_repo.upsert_sync_status(db, "catalog", "running", 0, 0, "全量目录同步开始", started_at=datetime.now(UTC))
         catalog = provider.fetch_catalog()
@@ -263,6 +277,8 @@ def run_catalog_sync() -> dict:
             db, "catalog", status, 100, stock_count + etf_count, message, finished_at=datetime.now(UTC)
         )
         db.commit()
+        if status == 'done':
+            redis.set(daily_key, '1', ex=172800)
         logger.info("catalog sync: %s", message)
         return {
             "stock_count": stock_count,

@@ -34,6 +34,11 @@ const router = createRouter({
       name: 'ai',
       component: () => import('@/views/AIView.vue'),
     },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('@/views/AdminView.vue'),
+    },
     // 独立页（不显示顶部导航/公告条）
     {
       path: '/login',
@@ -74,6 +79,9 @@ const router = createRouter({
  */
 router.beforeEach((to) => {
   const user = useUserStore()
+  if (to.name === 'admin' && !(user.user?.username === 'root' && user.user.is_admin)) {
+    return { name: 'market-home' }
+  }
   if (to.name === 'login' && user.token) {
     return { name: 'market-home' }
   }

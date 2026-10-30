@@ -8,8 +8,10 @@
 import NotificationBell from '@/components/layout/NotificationBell.vue'
 import UserMenu from '@/components/layout/UserMenu.vue'
 import { useThemeStore } from '@/stores/theme'
+import { useUserStore } from '@/stores/user'
 
 const theme = useThemeStore()
+const user = useUserStore()
 </script>
 
 <template>
@@ -22,6 +24,7 @@ const theme = useThemeStore()
     <nav class="appbar__nav">
       <RouterLink to="/" class="appbar__link">行情</RouterLink>
       <RouterLink to="/ai" class="appbar__link">AI 策略</RouterLink>
+      <RouterLink v-if="user.user?.username === 'root' && user.user.is_admin" to="/admin" class="appbar__link">管理后台</RouterLink>
     </nav>
 
     <div class="appbar__right">

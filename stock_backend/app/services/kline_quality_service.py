@@ -119,10 +119,18 @@ def check_and_repair(db, symbol, provider, *, now: datetime | None = None) -> di
         symbol_param, asset_type = _provider_params(symbol)
         for first, last in _ranges(missing, expected):
             # 含两端缓冲，兼容提供器日期边界及周末。
+            from app.utils.redis_client import get_redis_client
+
+            redis = get_redis_client()
+            cooldown_key = f'provider:gap-cooldown:{symbol.id}:{first}:{last}'
+            if not redis.set(cooldown_key, '1', nx=True, ex=86400):
+                continue
             try:
                 required = {day for day in missing if first <= day <= last}
                 bars = _fetch_gap_bars(provider, symbol_param, asset_type, first, last, required)
                 added += kline_repo.upsert_bars(db, "1d", symbol.id, bars)
+                if {market_cache.as_utc(bar.ts).date() for bar in bars} >= required:
+                    redis.delete(cooldown_key)
             except Exception:
                 db.rollback()
                 added = 0

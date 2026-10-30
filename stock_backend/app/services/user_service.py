@@ -250,7 +250,16 @@ def add_watchlist(db: Session, user_id: int, symbol: str) -> dict:
             entry.sync_status = "pending"
             from app.worker.tasks.sync_tasks import kline_init
 
-            kline_init.delay(symbol_id=symbol_id)  # 异步同步该标的K线（不阻塞响应）
+            from app.utils.redis_client import get_redis_client
+
+            redis = get_redis_client()
+            key = f'provider:kline-init:queued:{symbol_id}'
+            if redis.set(key, '1', nx=True, ex=3600):
+                try:
+                    kline_init.delay(symbol_id=symbol_id)
+                except Exception:
+                    redis.delete(key)
+                    raise
     db.commit()
     db.refresh(entry)
     result = _watchlist_rows(db, [entry])[0]
