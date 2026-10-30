@@ -8,11 +8,11 @@
  * 纯状态管理，无 UI 依赖。
  */
 import { defineStore } from 'pinia'
-import { wsClient, type WsKlineMessage, type WsSnapshotMessage } from '@/utils/wsClient'
+import { wsClient, type WsKlineMessage, type WsKlineRefreshMessage, type WsSnapshotMessage } from '@/utils/wsClient'
 import { useMarketStore } from '@/stores/market'
 import type { KLineBar, Snapshot } from '@/api/market'
 
-type KlineUpdateHandler = (symbolId: number, period: string, bar: KLineBar) => void
+type KlineUpdateHandler = (symbolId: number, period: string, bar: KLineBar | null) => void
 
 export const useWsStore = defineStore('ws', {
   state: () => ({
@@ -39,6 +39,9 @@ export const useWsStore = defineStore('ws', {
           this.handleSnapshot(msg as WsSnapshotMessage)
         } else if (msg.type === 'kline') {
           this.handleKline(msg as WsKlineMessage)
+        } else if (msg.type === 'kline_refresh') {
+          const refresh = msg as WsKlineRefreshMessage
+          this._klineHandler?.(refresh.symbol_id, refresh.period, null)
         }
       })
 

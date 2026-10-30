@@ -31,10 +31,12 @@ import {
   addSupportResistance,
   fetchIndicators,
   fetchKLine,
+  fetchKlineQuality,
   fetchSupportResistance,
   removeSupportResistance,
   type IndicatorRow,
   type KLineBar,
+  type KlineQuality,
   type SupportResistanceItem,
 } from '@/api/market'
 import type { SymbolInfo } from '@/api/market'
@@ -89,6 +91,19 @@ const ws = useWsStore()
 const container = ref<HTMLDivElement | null>(null)
 const loading = ref(false)
 const error = ref('')
+const quality = ref<KlineQuality | null>(null)
+let loadVersion = 0
+
+const qualityWarning = computed(() => {
+  if (quality.value?.status === 'partial') {
+    const ranges = quality.value.missing_ranges.slice(0, 2).map((r) => r.join('～')).join('、')
+    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''}`
+  }
+  if (quality.value?.status === 'unknown') return '交易日历不可用，历史数据未能核验'
+  if (quality.value?.status === 'unchecked') return '历史数据尚未核验'
+  return ''
+})
+const currentPrice = computed(() => props.symbol ? market.snapshots[props.symbol.id]?.price : null)
 
 let chart: IChartApi | null = null
 let candleSeries: ISeriesApi<'Candlestick'> | null = null
@@ -525,16 +540,21 @@ function setIndicatorData() {
 
 async function loadKline() {
   if (!props.symbol) return
+  const version = ++loadVersion
+  const symbolId = props.symbol.id
+  const period = market.period
   loading.value = true
   error.value = ''
+  quality.value = null
   const t0 = performance.now()
   try {
-    const loaded = await fetchKLine({
-      symbol: props.symbol.id,
-      period: market.period,
-      limit: props.recentMonths ? 5000 : undefined,
-    })
+    const [loaded, checked] = await Promise.all([
+      fetchKLine({ symbol: symbolId, period, limit: props.recentMonths ? 5000 : undefined }),
+      fetchKlineQuality(symbolId, period).catch(() => null),
+    ])
+    if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
     const bars = recentBars(loaded)
+    quality.value = checked
     if (!chart) initChart()
     candleSeries?.setData(toCandleData(bars))
     lastBar = bars.length ? bars[bars.length - 1] : null
@@ -553,10 +573,11 @@ async function loadKline() {
     if (props.showIndicators && enabledList.value.length) {
       try {
         indicatorRows.value = await fetchIndicators({
-          symbol: props.symbol.id,
-          period: market.period,
+          symbol: symbolId,
+          period,
           names: 'macd,kdj,volume,amount',
         })
+        if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
         setIndicatorData()
       } catch { /* 指标失败不阻塞K线 */ }
     }
@@ -566,9 +587,9 @@ async function loadKline() {
       symbol: props.symbol.code, period: market.period, bars: bars.length,
     })
   } catch {
-    error.value = 'K 线加载失败'
+    if (version === loadVersion) error.value = 'K 线加载失败'
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
@@ -637,26 +658,11 @@ defineExpose({
 })
 
 /* ---------- 实时行情 ---------- */
-watch(
-  () => (props.symbol ? market.snapshots[props.symbol.id]?.price : undefined),
-  (price) => {
-    if (price == null || !lastBar || !candleSeries) return
-    const next: KLineBar = {
-      ...lastBar, close: price,
-      high: Math.max(lastBar.high, price),
-      low: Math.min(lastBar.low, price),
-    }
-    candleSeries.update({
-      time: toUtcSeconds(next.ts),
-      open: next.open, high: next.high, low: next.low, close: next.close,
-    })
-  }
-)
-
 watch(() => props.markers, () => drawMarkers(), { deep: false })
 
 watch(() => props.symbol, (newSym, oldSym) => {
   if (!props.symbol) {
+    loadVersion++
     lastBar = null
     candleSeries?.setData([])
     clearSRLines()
@@ -690,6 +696,8 @@ onMounted(() => {
   // V0.2：注册 WS kline 更新回调
   ws.setKlineHandler((symbolId, period, bar) => {
     if (props.symbol?.id === symbolId && market.period === period) {
+      if (!bar) { void loadKline(); return }
+      if (lastBar && toUtcSeconds(bar.ts) < toUtcSeconds(lastBar.ts)) return
       lastBar = bar
       candleSeries?.update({
         time: toUtcSeconds(bar.ts),
@@ -782,6 +790,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
     <header class="kline-chart__header">
       <div class="kline-chart__header-left">
         <span class="kline-chart__symbol">{{ symbolTitle }}</span>
+        <span v-if="currentPrice != null" class="kline-chart__live-price">现价 {{ currentPrice.toFixed(2) }}</span>
         <button v-if="showSrButton" class="sr-btn" title="支撑/压力位设置" @click="openSrDialog">
           <svg class="sr-btn__icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M6 2 L2 8 L6 14" />
@@ -809,6 +818,8 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
         </div>
       </div>
     </header>
+
+    <div v-if="qualityWarning" class="kline-chart__quality" :title="qualityWarning">{{ qualityWarning }}</div>
 
     <div ref="container" class="kline-chart__body" @dblclick.stop="emit('dblclick')">
       <!-- V0.2：加载中顶部细进度条（无闪烁切换时提示） -->
@@ -948,6 +959,8 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   font-weight: 600;
   white-space: nowrap;
 }
+.kline-chart__live-price { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+.kline-chart__quality { padding: 3px 10px; font-size: 11px; color: #eab308; background: var(--bg-panel); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sr-btn {
   display: inline-flex;
   align-items: center;

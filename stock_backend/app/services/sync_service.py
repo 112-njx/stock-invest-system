@@ -44,13 +44,18 @@ def _provider_params(sym: Symbol) -> tuple[str, str]:
 
 def _write_bars(db, period: str, symbol_id: int, bars) -> int:
     """幂等写 K 线 + 失效缓存 + 推送最新末根（WS 增量）。"""
+    previous_latest = kline_repo.latest_ts(db, period, symbol_id) if bars else None
     added = kline_repo.upsert_bars(db, period, symbol_id, bars)
     if added:
         market_cache.invalidate_kline_cache(symbol_id, period)
-        if bars:
+        from app.services.indicator_service import invalidate_indicator_cache
+
+        invalidate_indicator_cache(symbol_id, period)
+        newest = max(bars, key=lambda b: b.ts)
+        if previous_latest is None or market_cache.as_utc(newest.ts) > market_cache.as_utc(previous_latest):
             from app.ws import publisher
 
-            publisher.publish_kline(symbol_id, period, market_cache.kline_bar_to_dict(bars[-1]))
+            publisher.publish_kline(symbol_id, period, market_cache.kline_bar_to_dict(newest))
     return added
 
 
@@ -84,7 +89,16 @@ def maybe_presync_fixed_indices() -> dict:
     db = get_session()
     try:
         stale, total = stale_fixed_index_count(db)
-        if stale == 0:
+        from app.services import kline_quality_service
+
+        incomplete_quality = 0
+        for sym in symbol_repo.list_fixed_indices(db):
+            if not kline_quality_service.eligible(sym):
+                continue
+            quality = kline_quality_service.get_quality(db, sym.id, "1d")
+            if quality is None or quality.status != "complete":
+                incomplete_quality += 1
+        if stale == 0 and incomplete_quality == 0:
             return {"triggered": False, "stale": 0, "total": total}
         from app.worker.tasks.sync_tasks import kline_init_fixed_indices
 
@@ -95,7 +109,7 @@ def maybe_presync_fixed_indices() -> dict:
             "queued",
             0,
             total,
-            f"检测到 {stale}/{total} 个固定指数无/过期数据，已触发预同步",
+            f"检测到 {stale} 个指数无/过期数据、{incomplete_quality} 个待核验/补洞，已触发预同步",
             started_at=datetime.now(UTC),
         )
         db.commit()
@@ -131,6 +145,7 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
         skipped = 0  # 已有数据跳过拉取的标的数
         attempted = 0  # 实际发起拉取的标的数
         written_total = 0  # 全部标的所有周期累计写入条数
+        incomplete = 0
         for i, sym in enumerate(symbols, 1):
             if skip_existing and kline_repo.latest_ts(db, "1d", sym.id) is not None:
                 # 已有日K：跳过全量重拉，标记已同步；过期数据交给每日增量任务兜底
@@ -142,6 +157,11 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
                     db, "fixed_indices", "running", progress, total, f"已同步 {i}/{total}（{skipped} 个已有数据跳过）"
                 )
                 db.commit()
+                from app.services import kline_quality_service
+
+                quality = kline_quality_service.check_and_repair(db, sym, provider)
+                if quality["status"] in ("partial", "unknown"):
+                    incomplete += 1
                 results[sym.code or sym.name] = {"skipped": True}
                 continue
             attempted += 1
@@ -160,6 +180,11 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
             progress = int(i / total * 100)
             ops_repo.upsert_sync_status(db, "fixed_indices", "running", progress, total, f"已同步 {i}/{total}")
             db.commit()
+            from app.services import kline_quality_service
+
+            quality = kline_quality_service.check_and_repair(db, sym, provider)
+            if quality["status"] in ("partial", "unknown"):
+                incomplete += 1
             # 预同步内直接生成快照（K线推导兜底），避免"预同步完成但快照仍空"
             snap = derive_snapshot_from_kline(db, sym)
             if snap is not None:
@@ -181,8 +206,11 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
             )
             db.commit()
             raise RuntimeError("fixed indices presync: data sources returned no K-line bars at all")
+        final_status = "partial" if incomplete else "done"
         ops_repo.upsert_sync_status(
-            db, "fixed_indices", "done", 100, total, "固定指数预同步完成", finished_at=datetime.now(UTC)
+            db, "fixed_indices", final_status, 100, total,
+            f"固定指数同步完成，{incomplete} 个境内指数数据不完整或未核验" if incomplete else "固定指数预同步完成",
+            finished_at=datetime.now(UTC),
         )
         db.commit()
         return results
@@ -332,6 +360,7 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
         ensure_current_partitions(db)
         symbols: list[Symbol] = [db.get(Symbol, symbol_id)] if symbol_id else symbol_repo.list_kline_sync_symbols(db)
         results: dict = {}
+        incomplete = 0
         for sym in symbols:
             if sym is None:
                 continue
@@ -344,7 +373,20 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
                 counts[period] = added
             ops_repo.upsert_sync_task(db, "kline_incremental", sym.id, "success", datetime.now(UTC))
             db.commit()
+            from app.services import kline_quality_service
+
+            quality = kline_quality_service.check_and_repair(db, sym, provider)
+            if quality["status"] in ("partial", "unknown"):
+                incomplete += 1
             results[sym.code or sym.name] = counts
+        if symbol_id is None:
+            ops_repo.upsert_sync_status(
+                db, "fixed_indices", "partial" if incomplete else "done", 100,
+                len([s for s in symbols if s.is_fixed_index]),
+                f"每日同步完成，{incomplete} 个境内指数数据不完整或未核验",
+                finished_at=datetime.now(UTC),
+            )
+            db.commit()
         return results
     finally:
         db.close()

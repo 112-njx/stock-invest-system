@@ -38,6 +38,17 @@ export interface KLineBar {
   amount: number
 }
 
+export interface KlineQuality {
+  status: 'unchecked' | 'unknown' | 'partial' | 'complete' | 'unsupported'
+  missing_count: number
+  missing_ranges: string[][]
+  checked_at?: string | null
+}
+
+export function fetchKlineQuality(symbol: string | number, period: Period) {
+  return request<KlineQuality>({ url: '/kline/quality', params: { symbol, period }, silent: true })
+}
+
 export interface Snapshot {
   symbol_id: number
   code: string

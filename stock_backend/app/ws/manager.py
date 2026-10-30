@@ -115,5 +115,15 @@ class ConnectionManager:
                         },
                     )
 
+    async def broadcast_kline_refresh(self, payload: dict) -> None:
+        """历史补洞后通知订阅者重新读取完整序列。"""
+        symbol_id = payload.get("symbol_id")
+        for conns in list(self._connections.values()):
+            for state in conns:
+                if symbol_id in state.subscribed:
+                    await self._send(state, {
+                        "type": "kline_refresh", "symbol_id": symbol_id, "period": payload.get("period"),
+                    })
+
 
 manager = ConnectionManager()

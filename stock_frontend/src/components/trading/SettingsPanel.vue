@@ -13,10 +13,8 @@ import type { ExportTaskInfo } from '@/api/account'
 import { fetchApiKeyStatus, saveApiKey } from '@/api/account'
 import type { ApiKeyStatus } from '@/api/account'
 import { changeEmailApi, changePasswordApi } from '@/api/auth'
-import { fetchAnnouncementHistory } from '@/api/notifications'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
-import type { Announcement } from '@/api/types'
 import { useAuthModalStore } from '@/stores/authModal'
 import { useLegalModalStore } from '@/stores/legalModal'
 import { useNotificationStore } from '@/stores/notification'
@@ -111,30 +109,6 @@ async function submitEmail() {
   } finally {
     secLoading.value = false
   }
-}
-
-// ---- G16：系统公告入口（I 区查看历史公告）----
-const annOpen = ref(false)
-const annLoading = ref(false)
-const annList = ref<Announcement[]>([])
-
-async function openAnnouncements() {
-  annOpen.value = true
-  annLoading.value = true
-  try {
-    annList.value = await fetchAnnouncementHistory()
-  } catch {
-    annList.value = []
-  } finally {
-    annLoading.value = false
-  }
-}
-
-function annTimeText(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 // ---- G17：数据导出（个人设置页「导出我的数据」按钮 + 进度 + 下载链接）----
@@ -355,10 +329,10 @@ function pickSecurity(dialog: Exclude<SecurityDialog, null>) {
   openSecurity(dialog)
 }
 
-/** 下拉菜单：打开系统公告历史（先收起菜单） */
-function pickAnnouncements() {
+/** 下拉菜单：打开删除账户确认弹窗 */
+function pickDanger() {
   menuOpen.value = false
-  void openAnnouncements()
+  openDanger()
 }
 
 async function onLogout() {
@@ -393,7 +367,7 @@ const menuStyle = computed(() => ({
         </div>
       </button>
 
-      <!-- 下拉菜单 Popover：退出登录 + 原「账号安全」三入口（改密 / 改邮箱 / 系统公告） -->
+      <!-- 下拉菜单 Popover：退出登录、账号设置与删除账户 -->
       <Teleport to="body">
         <div v-if="menuOpen" class="user-menu" :style="menuStyle">
           <div class="user-menu__item" @click="onLogout">
@@ -409,7 +383,7 @@ const menuStyle = computed(() => ({
 
           <div class="user-menu__sep" />
 
-          <!-- 原「账号安全」模块三入口，保持原上下编排：修改密码 → 修改邮箱 → 系统公告 -->
+          <!-- 账号设置 -->
           <button type="button" class="user-menu__row" @click="pickSecurity('password')">
             <span class="user-menu__row-label">修改密码</span>
             <span class="user-menu__arrow">›</span>
@@ -422,8 +396,8 @@ const menuStyle = computed(() => ({
             </span>
             <span class="user-menu__arrow">›</span>
           </button>
-          <button type="button" class="user-menu__row" @click="pickAnnouncements">
-            <span class="user-menu__row-label">系统公告</span>
+          <button type="button" class="user-menu__row user-menu__row--danger" @click="pickDanger">
+            <span class="user-menu__row-label">删除账户</span>
             <span class="user-menu__arrow">›</span>
           </button>
         </div>
@@ -444,9 +418,6 @@ const menuStyle = computed(() => ({
         <span class="theme-switch__thumb">{{ theme.mode === 'dark' ? '🌙' : '☀' }}</span>
       </button>
     </div>
-
-    <!-- 原「账号安全」模块（修改密码 / 修改邮箱 / 系统公告 / 当前邮箱）已上移至用户 Cell 下拉菜单，
-         该区域按需求暂时保留空白，不再放置其它内容。对应弹窗与逻辑保留在本组件下方。 -->
 
     <!-- G17：数据与隐私（导出我的数据）；G35：未登录隐藏 -->
     <div v-if="user.token" id="settings-data" class="settings-block settings-block--col">
@@ -490,13 +461,6 @@ const menuStyle = computed(() => ({
       </div>
     </div>
 
-    <!-- G18：危险区（删除账户）；G35：未登录隐藏 -->
-    <div v-if="user.token" class="settings-block settings-block--col danger-block">
-      <span class="settings-block__label danger-block__label">危险操作</span>
-      <button class="danger-btn" @click="openDanger">删除账户</button>
-      <span class="security-note">注销后 30 天内可恢复，逾期将永久删除全部数据。</span>
-    </div>
-
     <!-- G03：关于/法律入口 + 产品定位声明 -->
     <div class="settings-block settings-block--col about-block">
       <span class="settings-block__label">关于 / 法律</span>
@@ -523,30 +487,6 @@ const menuStyle = computed(() => ({
     <div class="settings-dev">
       <span class="settings-dev__text">本软件由 Xhope(发誓不做夜猫子)全程开发</span>
     </div>
-
-    <!-- G16：系统公告历史弹窗 -->
-    <Teleport to="body">
-      <div v-if="annOpen" class="sec-mask" @click.self="annOpen = false">
-        <div class="sec-dialog sec-dialog--wide">
-          <h3 class="sec-dialog__title">系统公告</h3>
-          <div v-if="annLoading" class="ann-empty">加载中…</div>
-          <div v-else-if="annList.length === 0" class="ann-empty">暂无公告</div>
-          <ul v-else class="ann-list">
-            <li v-for="a in annList" :key="a.id" class="ann-list__item">
-              <div class="ann-list__head">
-                <span class="ann-list__title">{{ a.title }}</span>
-                <span v-if="!a.is_active" class="ann-list__badge">已停用</span>
-              </div>
-              <p class="ann-list__content">{{ a.content }}</p>
-              <span class="ann-list__time">{{ annTimeText(a.created_at) }}</span>
-            </li>
-          </ul>
-          <div class="sec-dialog__actions">
-            <BaseButton type="button" variant="ghost" @click="annOpen = false">关闭</BaseButton>
-          </div>
-        </div>
-      </div>
-    </Teleport>
 
     <!-- G03：关于本产品弹窗（产品定位声明） -->
     <Teleport to="body">
@@ -825,7 +765,7 @@ const menuStyle = computed(() => ({
   margin: 4px 6px;
   background: var(--border);
 }
-/* 浮层内的功能行（修改密码 / 修改邮箱 / 系统公告） */
+/* 浮层内的功能行 */
 .user-menu__row {
   display: flex;
   align-items: center;
@@ -845,6 +785,10 @@ const menuStyle = computed(() => ({
 }
 .user-menu__row:hover {
   background: var(--bg-hover);
+}
+.user-menu__row--danger,
+.user-menu__row--danger .user-menu__arrow {
+  color: var(--down, #ef4444);
 }
 .user-menu__row-label {
   flex: none;
@@ -1014,84 +958,12 @@ const menuStyle = computed(() => ({
   margin-top: 4px;
 }
 
-/* G16：系统公告历史弹窗 */
-.sec-dialog--wide {
-  width: 460px;
-}
-.ann-empty {
-  padding: 24px 0;
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.ann-list {
-  list-style: none;
-  margin: 0 0 4px;
-  padding: 0;
-  max-height: 320px;
-  overflow-y: auto;
-}
-.ann-list__item {
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-}
-.ann-list__head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.ann-list__title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-.ann-list__badge {
-  padding: 1px 5px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
-  font-size: 10px;
-  color: var(--text-muted);
-}
-.ann-list__content {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
-.ann-list__time {
-  display: block;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
 /* G17：数据导出 */
 .security-row__text--accent {
   color: var(--accent);
 }
 
-/* G18：危险区（删除账户） */
-.danger-block {
-  margin-top: 2px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-.danger-block__label {
-  color: var(--down, #ef4444);
-}
-.danger-btn {
-  padding: 7px 10px;
-  border: 1px solid var(--down, #ef4444);
-  border-radius: 4px;
-  color: var(--down, #ef4444);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-.danger-btn:hover {
-  background: rgba(239, 68, 68, 0.12);
-}
+/* G18：删除账户确认弹窗 */
 .danger-dialog__title {
   color: var(--down, #ef4444);
 }

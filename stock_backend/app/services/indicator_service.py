@@ -112,6 +112,16 @@ def _set_cache(key: str, rows: list[dict]) -> None:
         logger.warning("indicator cache set failed: %s", key)
 
 
+def invalidate_indicator_cache(symbol_id: int, period: str) -> None:
+    """中间补洞不改变最新时间戳，须显式清掉该标的/周期的指标缓存。"""
+    try:
+        redis = get_redis_client()
+        for key in redis.scan_iter(match=f"indicator:{symbol_id}:{period}:*"):
+            redis.delete(key)
+    except Exception:  # noqa: BLE001
+        logger.warning("indicator cache invalidate failed: %s:%s", symbol_id, period)
+
+
 def _bars_to_df(bars) -> pd.DataFrame:
     rows = [
         {

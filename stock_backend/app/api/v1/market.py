@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user_optional, get_read_db
 from app.core.exceptions import ApiError
 from app.core.response import ok
+from app.models.symbol import Symbol
 from app.models.user import User
 from app.repositories import ops_repo, user_repo
 from app.schemas.market import KlineBarOut, SnapshotOut, SymbolOut, SymbolSearchOut
@@ -72,6 +73,23 @@ def get_kline(
         raise ApiError(status_code=400, msg=str(exc)) from exc
     data = [KlineBarOut(**b).model_dump(mode="json") for b in bars]
     return ok(data=data)
+
+
+@router.get("/kline/quality")
+def get_kline_quality(
+    symbol: str = Query(...),
+    period: str = Query("1d", pattern="^(15m|1d|1w|1mon)$"),
+    db: Session = Depends(get_read_db),
+) -> dict:
+    from app.services import kline_quality_service
+
+    symbol_id = market_service.resolve_symbol_id(db, symbol)
+    sym = db.get(Symbol, symbol_id) if symbol_id is not None else None
+    if sym is None:
+        raise ApiError(status_code=404, msg="标的不存在")
+    if period != "1d" or not kline_quality_service.eligible(sym):
+        return ok(data={"status": "unsupported", "missing_count": 0, "missing_ranges": [], "checked_at": None})
+    return ok(data=kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period)))
 
 
 @router.get("/snapshot")
