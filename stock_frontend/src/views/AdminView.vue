@@ -54,7 +54,7 @@ onMounted(load)
 </template>
 
 <style scoped>
-.admin{max-width:1100px;margin:0 auto;padding:24px;color:var(--text)}
+.admin{width:100%;max-width:1100px;min-height:0;flex:1;overflow-y:auto;margin:0 auto;padding:24px;color:var(--text)}
 header{display:flex;align-items:center;justify-content:space-between}h1{font-size:22px}h2{font-size:17px;margin:0 0 12px}
 section{background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;padding:20px;margin:16px 0}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}article{padding:14px;background:var(--bg-hover);border-radius:6px}article h3{font-size:14px;margin:0 0 8px}strong{font-size:22px}p{color:var(--text-secondary);font-size:13px}
