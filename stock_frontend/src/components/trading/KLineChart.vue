@@ -212,6 +212,43 @@ function toUtcSeconds(ts: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp
 }
 
+const shanghaiDateTime = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+})
+const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+function chartDateParts(time: Time) {
+  const date = typeof time === 'number'
+    ? new Date(time * 1000)
+    : typeof time === 'string'
+      ? new Date(`${time}T00:00:00Z`)
+      : new Date(Date.UTC(time.year, time.month - 1, time.day))
+
+  if (market.period === '15m') {
+    const parts = Object.fromEntries(shanghaiDateTime.formatToParts(date).map((part) => [part.type, part.value]))
+    return { year: parts.year, month: parts.month, day: parts.day, hour: parts.hour, minute: parts.minute }
+  }
+  return {
+    year: String(date.getUTCFullYear()),
+    month: String(date.getUTCMonth() + 1).padStart(2, '0'),
+    day: String(date.getUTCDate()).padStart(2, '0'),
+    hour: '', minute: '',
+  }
+}
+
+function formatAxisMonth(time: Time): string {
+  const { year, month } = chartDateParts(time)
+  return `${year}-${month}`
+}
+
+function formatCrosshairDate(time: Time): string {
+  const { year, month, day, hour, minute } = chartDateParts(time)
+  const weekday = weekdays[new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay()]
+  return `${weekday} ${year}-${month}-${day}${market.period === '15m' ? ` ${hour}:${minute}` : ''}`
+}
+
 /* ---------- 图表初始化 ---------- */
 function initChart() {
   if (!container.value || chart) return
@@ -230,8 +267,10 @@ function initChart() {
       horzLines: { color: c.grid },
     },
     rightPriceScale: { borderColor: c.grid, scaleMargins: { top: 0.06, bottom: 0.06 } },
+    localization: { timeFormatter: formatCrosshairDate },
     timeScale: {
       borderColor: c.grid,
+      tickMarkFormatter: formatAxisMonth,
       timeVisible: true,
       secondsVisible: false,
       rightOffset: 4,
