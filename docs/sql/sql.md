@@ -53,7 +53,7 @@
 
 - **`set_updated_at()` 触发器**：users / conversations / trading_strategies / backtest_tasks / user_agents / agent_runs 更新时自动维护 `updated_at`。
 - **`create_kline_partitions(p_table, p_start, p_end)`**：按月批量创建 K 线分区，并建默认分区兜底越界写入；后续扩分区直接调用。
-- **02_seed_fixed_indices.sql**：写入 49 条固定大盘/行业指数（`is_fixed_index=TRUE`），是 G/H 区列表的固定数据来源；行业指数 `code` 留空待同步回填；按 `(type, name)` 幂等 upsert。
+- **02_seed_fixed_indices.sql**：写入 42 条固定大盘/行业指数（`is_fixed_index=TRUE`），是 G/H 区列表的固定数据来源；行业指数 `code` 留空待同步回填；按 `(type, name)` 幂等 upsert。不可稳定获取的 7 个板块保留标的历史记录，但不再固定展示。
 
 ## 七、设计要点（跨表）
 

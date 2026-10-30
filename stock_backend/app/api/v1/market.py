@@ -143,11 +143,17 @@ def get_kline_quality(
         return ok(data={"status": "unsupported", "missing_count": 0, "missing_ranges": [], "checked_at": None})
     data = kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period))
     tasks = [ops_repo.latest_sync_task(db, kind, sym.id) for kind in ('kline_incremental', 'kline_init')]
-    data['sync_status'] = 'syncing' if any(
+    symbol_syncing = any(
         task is not None and task.status == 'running' and task.last_run_at is not None
         and datetime.now(task.last_run_at.tzinfo) - task.last_run_at < timedelta(hours=2)
         for task in tasks
-    ) else 'idle'
+    )
+    # Fixed-index pre-sync is queued as one batch. Until the worker reaches a
+    # symbol, its per-symbol SyncTask is not running yet, so the batch status
+    # must also be considered to avoid displaying “暂未同步” for queued symbols.
+    batch = ops_repo.get_latest_sync_status(db, "fixed_indices") if sym.is_fixed_index else None
+    batch_syncing = batch is not None and batch.status in {"queued", "running"}
+    data['sync_status'] = 'syncing' if symbol_syncing or batch_syncing else 'idle'
     return ok(data=data)
 
 

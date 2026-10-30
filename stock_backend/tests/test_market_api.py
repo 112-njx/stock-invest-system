@@ -55,7 +55,7 @@ def test_symbols_fixed_indices(client: TestClient):
     body = resp.json()
     assert body["code"] == 0
     data = body["data"]
-    assert len(data) == 49
+    assert len(data) == 42
     sorts = [d["sort_order"] for d in data]
     assert sorts == sorted(sorts)
 
@@ -64,7 +64,7 @@ def test_home_indices_combines_ordered_symbols_and_snapshots(client: TestClient)
     resp = client.get("/api/v1/market/home-indices")
     assert resp.status_code == 200
     rows = resp.json()["data"]
-    assert len(rows) == 49
+    assert len(rows) == 42
     assert [row["sort_order"] for row in rows] == sorted(row["sort_order"] for row in rows)
     assert all(row["type"] == "index" and "snapshot" in row for row in rows)
     assert all(
@@ -143,8 +143,8 @@ def test_sync_status_returns_latest_record(client: TestClient):
                 scope="fixed_indices",
                 status="running",
                 progress=35,
-                total=49,
-                message="已同步 35/49",
+                total=42,
+                message="已同步 35/42",
                 started_at=datetime.now(UTC),
             )
         )
@@ -154,7 +154,7 @@ def test_sync_status_returns_latest_record(client: TestClient):
     try:
         resp = client.get("/api/v1/sync-status", params={"scope": "fixed_indices"})
         data = resp.json()["data"]
-        assert data == {"status": "running", "progress": 35, "total": 49, "message": "已同步 35/49"}
+        assert data == {"status": "running", "progress": 35, "total": 42, "message": "已同步 35/42"}
     finally:
         db = get_session()
         try:

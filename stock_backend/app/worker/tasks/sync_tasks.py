@@ -66,7 +66,7 @@ def kline_backfill(symbol_id: int, period: str, start_iso: str, end_iso: str) ->
 
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_init_fixed_indices")
 def kline_init_fixed_indices(self) -> dict:
-    """固定指数预同步（V0.2 1.1）：49 条固定大盘/行业指数全周期K线，进度写 sync_status。"""
+    """固定指数预同步：同步当前固定大盘/行业指数，进度写 sync_status。"""
     from app.utils.redis_client import get_redis_client
 
     redis = get_redis_client()

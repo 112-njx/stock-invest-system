@@ -1008,7 +1008,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
         <span>{{ props.symbol.code || props.symbol.name }} · {{ watermarkPeriod }}</span>
         <span>{{ props.symbol.name }}</span>
       </div>
-      <div v-if="historyState && historyWidth > 0" class="kline-chart__history" :style="{ width: `${historyWidth}px` }">
+      <div v-if="historyState && historyWidth > 0 && (historyState !== 'empty' || loadedBars.length > 0)" class="kline-chart__history" :style="{ width: `${historyWidth}px` }">
         <span v-if="historyState === 'loading'">数据加载中</span>
         <button v-else-if="historyState === 'empty'" @click.stop="retryHistory">{{ loadedBars.length ? '该区间无数据，继续向前' : '暂无数据，点击重试' }}</button>
         <button v-else @click.stop="retryHistory">加载失败，点击重试</button>
