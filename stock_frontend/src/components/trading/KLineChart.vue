@@ -97,6 +97,7 @@ const error = ref('')
 const historyState = ref<'loading' | 'empty' | 'failed' | ''>('')
 const historyWidth = ref(0)
 const quality = ref<KlineQuality | null>(null)
+let qualityTimer: ReturnType<typeof setInterval> | null = null
 const hoveredCandle = ref<{ bar: KLineBar; change: number | null; percent: number | null } | null>(null)
 let loadVersion = 0
 let loadedBars: KLineBar[] = []
@@ -108,7 +109,7 @@ let retryBackfill = false
 const qualityWarning = computed(() => {
   if (quality.value?.status === 'partial') {
     const ranges = quality.value.missing_ranges.slice(0, 2).map((r) => r.join('～')).join('、')
-    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''}`
+    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${quality.value.sync_status === 'syncing' ? '同步中' : '暂未同步'}`
   }
   if (quality.value?.status === 'unknown') return '交易日历不可用，历史数据未能核验'
   if (quality.value?.status === 'unchecked') return '历史数据尚未核验'
@@ -850,6 +851,15 @@ onMounted(() => {
     loadKline()
     loadSRLines()
   }
+  qualityTimer = setInterval(async () => {
+    if (!props.symbol || !quality.value || quality.value.status !== 'partial') return
+    const symbolId = props.symbol.id
+    const period = market.period
+    const checked = await fetchKlineQuality(symbolId, period).catch(() => null)
+    if (!checked || props.symbol?.id !== symbolId || market.period !== period) return
+    if (checked.status === 'complete') { void loadKline(); return }
+    quality.value = checked
+  }, 10000)
   // V0.2：注册 WS kline 更新回调
   ws.setKlineHandler((symbolId, period, bar) => {
     if (props.symbol?.id === symbolId && market.period === '1w' && (period === '1d' || period === '1w')) {
@@ -873,6 +883,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (qualityTimer) clearInterval(qualityTimer)
   container.value?.removeEventListener('dblclick', onDblClick, true)
   chart?.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange)
   window.removeEventListener('wheel', onWheel, true)

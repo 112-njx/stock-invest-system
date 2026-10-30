@@ -2,12 +2,13 @@
 
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.orm import Session
 
 from app.data_providers.factory import get_provider
+from app.core.config import get_settings
 from app.models.kline import KLINE_MODELS, Kline1d
 from app.models.snapshot import EtfPremium, IndexValuation, SnapshotRealtime, StockFundamental
 from app.models.symbol import Symbol
@@ -184,6 +185,55 @@ def get_snapshots(db: Session, symbol_ids: list[int]) -> list[dict]:
             snaps[snap.symbol_id] = d
             market_cache.set_snapshot_cache(snap.symbol_id, d)
 
+    # 固定指数的日 K 若比快照覆盖的交易日更新，响应中以 K 线收盘数据为准。
+    # 一次查询取每个指数最近两根；只改响应，不覆盖原始实时快照及其缓存。
+    fixed_ids = [sid for sid in symbol_ids if sid in symbols and symbols[sid].is_fixed_index]
+    kline_override_ids: set[int] = set()
+    if fixed_ids:
+        latest_two = select(
+            Kline1d.symbol_id, Kline1d.ts, Kline1d.open, Kline1d.high, Kline1d.low,
+            Kline1d.close, Kline1d.volume, Kline1d.amount,
+        ).where(Kline1d.symbol_id == Symbol.id).order_by(Kline1d.ts.desc()).limit(2).lateral()
+        bars_by_symbol: dict[int, list] = {}
+        for row in db.execute(select(latest_two).select_from(Symbol).join(latest_two, true())
+                              .where(Symbol.id.in_(fixed_ids)).order_by(latest_two.c.symbol_id, latest_two.c.ts.desc())):
+            bars_by_symbol.setdefault(row.symbol_id, []).append(row)
+        now_local = datetime.now(get_settings().tz)
+        for sid, bars in bars_by_symbol.items():
+            latest = bars[0]
+            latest_day = market_cache.as_utc(latest.ts).date()
+            mainland = symbols[sid].market in {'SSE', 'SZSE', 'CSI'}
+            finished = latest_day < now_local.date() or (
+                mainland and latest_day == now_local.date() and now_local.time() >= dt_time(15, 30)
+            )
+            if not finished:
+                continue
+            snap = snaps.get(sid) or {}
+            snap_time = snap.get('updated_at')
+            if isinstance(snap_time, str):
+                snap_time = datetime.fromisoformat(snap_time.replace('Z', '+00:00'))
+            snap_utc = market_cache.as_utc(snap_time)
+            snap_local = snap_utc.astimezone(get_settings().tz) if snap_utc else None
+            snap_day = snap_local.date() if snap_local else None
+            if snap.get('price') is not None and snap_day is not None and (
+                snap_day > latest_day or (snap_day == latest_day and (not mainland or snap_local.time() >= dt_time(15, 30)))
+            ):
+                continue
+            previous = bars[1] if len(bars) > 1 else None
+            close = float(latest.close)
+            pre_close = float(previous.close) if previous else close
+            change = close - pre_close
+            snaps[sid] = {
+                'price': close, 'change': change,
+                'change_pct': change / pre_close * 100 if pre_close else None,
+                'open': float(latest.open), 'high': float(latest.high), 'low': float(latest.low),
+                'pre_close': pre_close, 'volume': int(latest.volume), 'amount': float(latest.amount),
+                'turnover': None,
+                'amplitude': (float(latest.high) - float(latest.low)) / pre_close * 100 if pre_close else None,
+                'updated_at': latest.ts.isoformat(),
+            }
+            kline_override_ids.add(sid)
+
     stock_ids = [sid for sid in symbols if symbols[sid].type == "stock"]
     etf_ids = [sid for sid in symbols if symbols[sid].type == "etf"]
     index_ids = [sid for sid in symbols if symbols[sid].type == "index"]
@@ -206,6 +256,7 @@ def get_snapshots(db: Session, symbol_ids: list[int]) -> list[dict]:
             "code": sym.code,
             "name": sym.name,
             "type": sym.type,
+            "source": "kline" if symbol_id in kline_override_ids else "snapshot",
         }
         item.update(
             {

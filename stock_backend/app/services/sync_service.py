@@ -71,17 +71,18 @@ def _mark_watchlist_synced(db, symbol_id: int, status: str) -> None:
 
 # ---- V0.2 1.1 启动预同步 / 缓存预热 ----
 def stale_fixed_index_count(db) -> tuple[int, int]:
-    """固定指数最新日K超过阈值天数或无数据的数量，返回 (stale, total)。
+    """统计缺少最新已完成交易日日 K 的境内固定指数；海外指数保留宽限判断。"""
+    from app.services import kline_quality_service
 
-    阈值 7 自然日：日K是 T+1 收盘才有，盘中看昨日日K属正常；7 天覆盖周末+小长假，
-    避免每次重启都误判 stale 触发全量同步（过期数据由每日增量任务自愈）。
-    """
     symbols = symbol_repo.list_fixed_indices(db)
+    latest_day = kline_quality_service.last_completed_mainland_day(db)
     threshold = datetime.now(UTC) - timedelta(days=7)
     stale = 0
     for sym in symbols:
         ts = market_cache.as_utc(kline_repo.latest_ts(db, "1d", sym.id))  # DB naive → UTC
-        if ts is None or ts < threshold:
+        if ts is None or (
+            kline_quality_service.eligible(sym) and latest_day is not None and ts.date() < latest_day
+        ) or (not kline_quality_service.eligible(sym) and ts < threshold):
             stale += 1
     return stale, len(symbols)
 
@@ -157,10 +158,11 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
         written_total = 0  # 全部标的所有周期累计写入条数
         incomplete = 0
         for i, sym in enumerate(symbols, 1):
+            ops_repo.upsert_sync_task(db, "kline_init", sym.id, "running", datetime.now(UTC))
+            db.commit()
             if skip_existing and kline_repo.latest_ts(db, "1d", sym.id) is not None:
                 # 已有日K：跳过全量重拉，标记已同步；过期数据交给每日增量任务兜底
                 skipped += 1
-                ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
                 _mark_watchlist_synced(db, sym.id, "done")
                 progress = int(i / total * 100)
                 ops_repo.upsert_sync_status(
@@ -170,6 +172,8 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
                 from app.services import kline_quality_service
 
                 quality = kline_quality_service.check_and_repair(db, sym, provider)
+                ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
+                db.commit()
                 if quality["status"] in ("partial", "unknown"):
                     incomplete += 1
                 results[sym.code or sym.name] = {"skipped": True}
@@ -185,7 +189,6 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
                 bars = provider.fetch_kline(symbol_param, period, start, end, asset_type)
                 counts[period] = _write_bars(db, period, sym.id, bars)
                 written_total += counts[period]
-            ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
             _mark_watchlist_synced(db, sym.id, "done")
             progress = int(i / total * 100)
             ops_repo.upsert_sync_status(db, "fixed_indices", "running", progress, total, f"已同步 {i}/{total}")
@@ -193,6 +196,8 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
             from app.services import kline_quality_service
 
             quality = kline_quality_service.check_and_repair(db, sym, provider)
+            ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
+            db.commit()
             written_total += quality.get("added", 0)
             if quality["status"] in ("partial", "unknown"):
                 incomplete += 1
@@ -384,17 +389,19 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
             if sym is None:
                 continue
             ops_repo.upsert_sync_task(db, "kline_incremental", sym.id, "running", datetime.now(UTC))
+            db.commit()
             counts: dict = {}
             for period in ALL_PERIODS:
                 symbol_param, asset_type = _provider_params(sym)
                 bars = provider.fetch_kline(symbol_param, period, start, end, asset_type)
                 added = _write_bars(db, period, sym.id, bars)
                 counts[period] = added
-            ops_repo.upsert_sync_task(db, "kline_incremental", sym.id, "success", datetime.now(UTC))
             db.commit()
             from app.services import kline_quality_service
 
             quality = kline_quality_service.check_and_repair(db, sym, provider)
+            ops_repo.upsert_sync_task(db, "kline_incremental", sym.id, "success", datetime.now(UTC))
+            db.commit()
             if quality["status"] in ("partial", "unknown"):
                 incomplete += 1
             results[sym.code or sym.name] = counts

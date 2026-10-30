@@ -45,6 +45,14 @@ def _last_completed(days: list[date], now: datetime) -> date | None:
     return candidates[-1] if candidates else None
 
 
+def last_completed_mainland_day(db, now: datetime | None = None) -> date | None:
+    """固定指数启动检查使用与缺口检测相同的交易日边界。"""
+    now = now or datetime.now(UTC)
+    today = now.astimezone(settings.tz).date()
+    days = _calendar(db, today - timedelta(days=30), today)
+    return _last_completed(days, now) if days else None
+
+
 def _ranges(days: list[date], all_days: list[date]) -> list[tuple[date, date]]:
     positions = {day: i for i, day in enumerate(all_days)}
     result: list[tuple[date, date]] = []

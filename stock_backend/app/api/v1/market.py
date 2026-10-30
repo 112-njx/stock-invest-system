@@ -141,7 +141,14 @@ def get_kline_quality(
         raise ApiError(status_code=404, msg="标的不存在")
     if period != "1d" or not kline_quality_service.eligible(sym):
         return ok(data={"status": "unsupported", "missing_count": 0, "missing_ranges": [], "checked_at": None})
-    return ok(data=kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period)))
+    data = kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period))
+    tasks = [ops_repo.latest_sync_task(db, kind, sym.id) for kind in ('kline_incremental', 'kline_init')]
+    data['sync_status'] = 'syncing' if any(
+        task is not None and task.status == 'running' and task.last_run_at is not None
+        and datetime.now(task.last_run_at.tzinfo) - task.last_run_at < timedelta(hours=2)
+        for task in tasks
+    ) else 'idle'
+    return ok(data=data)
 
 
 @router.get("/snapshot")

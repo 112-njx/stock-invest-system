@@ -40,6 +40,7 @@ export interface KLineBar {
 
 export interface KlineQuality {
   status: 'unchecked' | 'unknown' | 'partial' | 'complete' | 'unsupported'
+  sync_status?: 'syncing' | 'idle'
   missing_count: number
   missing_ranges: string[][]
   checked_at?: string | null
@@ -51,6 +52,7 @@ export function fetchKlineQuality(symbol: string | number, period: Period) {
 
 export interface Snapshot {
   symbol_id: number
+  source?: 'snapshot' | 'kline'
   code: string
   name: string
   type: SymbolType
