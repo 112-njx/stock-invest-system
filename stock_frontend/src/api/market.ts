@@ -19,6 +19,15 @@ export interface SymbolInfo {
   has_kline?: boolean
 }
 
+export interface HomeIndex extends SymbolInfo {
+  snapshot: Snapshot | null
+}
+
+/** 首页固定指数名单与已有价格，一次返回；不触发外部行情抓取。 */
+export function fetchHomeIndices() {
+  return request<HomeIndex[]>({ url: '/market/home-indices', silent: true })
+}
+
 export interface KLineBar {
   ts: string
   open: number
@@ -27,6 +36,17 @@ export interface KLineBar {
   close: number
   volume: number
   amount: number
+}
+
+export interface KlineQuality {
+  status: 'unchecked' | 'unknown' | 'partial' | 'complete' | 'unsupported'
+  missing_count: number
+  missing_ranges: string[][]
+  checked_at?: string | null
+}
+
+export function fetchKlineQuality(symbol: string | number, period: Period) {
+  return request<KlineQuality>({ url: '/kline/quality', params: { symbol, period }, silent: true })
 }
 
 export interface Snapshot {
@@ -122,6 +142,16 @@ export function fetchKLine(params: {
   return request<KLineBar[]>({ url: '/kline', params })
 }
 
+export function requestKlineBackfill(params: { symbol_id: number; period: Period; start: string; end: string; retry?: boolean }) {
+  return request<{ task_id: string }>({ url: '/kline/backfill', method: 'post', data: params, silent: true })
+}
+
+export function fetchKlineBackfillStatus(taskId: string) {
+  return request<{ status: 'loading' | 'done' | 'failed'; fetched?: number }>({
+    url: `/kline/backfill/${encodeURIComponent(taskId)}`, silent: true,
+  })
+}
+
 /** 批量实时快照（symbols 为 symbol_id 或代码逗号分隔；silent 供轮询使用，失败不 toast） */
 export function fetchSnapshot(symbols: Array<string | number>, silent = false) {
   return request<Snapshot[]>({ url: '/snapshot', params: { symbols: symbols.join(',') }, silent })
@@ -148,6 +178,8 @@ export function fetchIndicators(params: {
   period: Period
   names?: string
   limit?: number
+  start?: string
+  end?: string
 }) {
   return request<IndicatorRow[]>({ url: '/indicators', params })
 }

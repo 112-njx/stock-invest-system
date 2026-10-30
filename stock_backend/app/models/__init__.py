@@ -6,6 +6,7 @@ from .base import Base
 from .email_log import EmailLog
 from .export_task import ExportTask
 from .kline import KLINE_MODELS, Kline1d, Kline1mon, Kline1w, Kline15m
+from .kline_quality import KlineQuality, TradingDay
 from .notification import AdminAnnouncement, Notification
 from .ops import SyncTask, TaskLog
 from .session import UserSession
@@ -32,6 +33,7 @@ __all__ = [
     "Kline15m",
     "Kline1d",
     "Kline1mon",
+    "KlineQuality",
     "Kline1w",
     "MemoryChunk",
     "Notification",
@@ -43,6 +45,7 @@ __all__ = [
     "SyncTask",
     "TaskLog",
     "TradingStrategy",
+    "TradingDay",
     "User",
     "UserAgent",
     "UserMemoryFile",

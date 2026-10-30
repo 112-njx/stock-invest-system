@@ -1,11 +1,9 @@
 <script setup lang="ts">
-/** G03：用户协议（/terms）——服务条款、用户行为规范、知识产权、免责条款、争议解决。 */
-import LegalPage from './LegalPage.vue'
+/** 用户协议正文，供全局法律弹窗复用。 */
 </script>
 
 <template>
-  <LegalPage title="用户协议" updated-at="2026-09-17">
-    <p>
+<p>
       量化回测助手（以下简称"本产品"）由个人开发者（以下称"开发者"）独立开发并运营。
       注册、登录或使用本产品之前，请您把本协议完整读一遍；
       勾选同意或实际使用本产品，即视为您接受本协议的全部条款。
@@ -76,5 +74,5 @@ import LegalPage from './LegalPage.vue'
       本协议任一条款被认定无效或不可执行的，不影响其余条款的效力。
       开发者修订本协议后会在本页面公示，公示后继续使用本产品，即视为接受修订内容。
     </p>
-  </LegalPage>
 </template>
+

@@ -10,8 +10,9 @@ import { computed } from 'vue'
 import type { SymbolInfo } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
 import { formatPct, formatPrice, trendClass } from '@/utils/color'
+import { snapshotTime } from '@/utils/homeIndexCache'
 
-const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; loading?: boolean; error?: boolean }>(), {
+const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; loading?: boolean; error?: boolean; cachedIds?: Set<number> }>(), {
   loading: false,
   error: false,
 })
@@ -28,6 +29,16 @@ function onSelect(s: SymbolInfo) {
 
 function onDblClick(s: SymbolInfo) {
   emit('dblclick', s)
+}
+
+function priceNote(s: SymbolInfo): string {
+  const snap = market.snapshots[s.id]
+  if (!snap?.updated_at) return '暂无价格数据'
+  const date = new Date(snapshotTime(snap.updated_at))
+  if (Number.isNaN(date.getTime())) return '价格时间未知'
+  const time = date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
+  const stale = props.cachedIds?.has(s.id) || Date.now() - date.getTime() > 5 * 60 * 1000
+  return `${stale ? '旧数据 · ' : ''}更新于 ${time}`
 }
 </script>
 
@@ -65,7 +76,7 @@ function onDblClick(s: SymbolInfo) {
           @click="onSelect(s)"
           @dblclick="onDblClick(s)"
         >
-          <span class="col-name" :title="s.name">{{ s.name }}</span>
+          <span class="col-name" :title="`${s.name} · ${priceNote(s)}`">{{ s.name }}</span>
           <span class="col-num" :class="trendClass(market.snapshots[s.id]?.change_pct)">
             {{ formatPrice(market.snapshots[s.id]?.price) }}
           </span>
@@ -74,6 +85,7 @@ function onDblClick(s: SymbolInfo) {
           </span>
           <span class="col-num col-etf">{{ s.etf_linked || '--' }}</span>
           <span class="col-num col-opp">--</span>
+          <span class="idx-row__time" :class="{ 'is-stale': cachedIds?.has(s.id) }">{{ priceNote(s) }}</span>
         </div>
       </template>
     </div>
@@ -188,6 +200,13 @@ function onDblClick(s: SymbolInfo) {
 .idx-row:last-child {
   border-bottom: none;
 }
+.idx-row__time {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.2;
+}
+.idx-row__time.is-stale { color: var(--text-secondary); }
 .idx-row:hover {
   background: var(--bg-hover);
 }

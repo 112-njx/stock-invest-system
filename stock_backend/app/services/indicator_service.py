@@ -17,6 +17,7 @@ from app.models.kline import KLINE_MODELS
 from app.repositories import kline_repo
 from app.services import market_service
 from app.services.indicators import INDICATORS, get_indicator
+from app.utils import market_cache
 from app.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,11 @@ def compute_indicators(
     if start is None:
         start = end - timedelta(days=_DEFAULT_BACK_DAYS)
 
-    bars = kline_repo.get_bars(db, period, symbol_id, start, end, limit=limit, offset=0)
+    if explicit_range:
+        # 从库中最早的 K 线起算递推指标，返回时再裁到请求区间，避免补页交界处数值跳变。
+        bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end, limit=100000)
+    else:
+        bars = kline_repo.latest_bars(db, period, symbol_id, limit=limit)
     if not bars:
         return []
 
@@ -69,6 +74,8 @@ def compute_indicators(
     for name in names:
         df = get_indicator(name, (params or {}).get(name)).calculate(df)
     rows = _df_to_rows(df)
+    if explicit_range:
+        rows = [row for row in rows if market_cache.as_utc(datetime.fromisoformat(row["ts"])) >= market_cache.as_utc(start)]
     _set_cache(key, rows)
     return rows
 
@@ -110,6 +117,16 @@ def _set_cache(key: str, rows: list[dict]) -> None:
         get_redis_client().set(key, json.dumps(rows), ex=settings.INDICATOR_CACHE_TTL)
     except Exception:  # noqa: BLE001
         logger.warning("indicator cache set failed: %s", key)
+
+
+def invalidate_indicator_cache(symbol_id: int, period: str) -> None:
+    """中间补洞不改变最新时间戳，须显式清掉该标的/周期的指标缓存。"""
+    try:
+        redis = get_redis_client()
+        for key in redis.scan_iter(match=f"indicator:{symbol_id}:{period}:*"):
+            redis.delete(key)
+    except Exception:  # noqa: BLE001
+        logger.warning("indicator cache invalidate failed: %s:%s", symbol_id, period)
 
 
 def _bars_to_df(bars) -> pd.DataFrame:

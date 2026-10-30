@@ -144,6 +144,7 @@ onBeforeUnmount(() => {
         <!-- A+B 合并：K 线 + 技术指标多 pane，共享时间轴；G32：叠加回测买卖点 -->
         <KLineChart
           :symbol="market.current"
+          :recent-months="4"
           :show-sr-button="true"
           :show-indicators="true"
           :markers="visibleMarkers"

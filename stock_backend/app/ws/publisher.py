@@ -27,3 +27,7 @@ def publish_snapshot(symbol_id: int, data: dict) -> None:
 
 def publish_kline(symbol_id: int, period: str, bar: dict) -> None:
     _publish({"symbol_id": symbol_id, "type": "kline", "period": period, "bar": bar})
+
+
+def publish_kline_refresh(symbol_id: int, period: str) -> None:
+    _publish({"symbol_id": symbol_id, "type": "kline_refresh", "period": period})

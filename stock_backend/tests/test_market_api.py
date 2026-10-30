@@ -60,6 +60,19 @@ def test_symbols_fixed_indices(client: TestClient):
     assert sorts == sorted(sorts)
 
 
+def test_home_indices_combines_ordered_symbols_and_snapshots(client: TestClient):
+    resp = client.get("/api/v1/market/home-indices")
+    assert resp.status_code == 200
+    rows = resp.json()["data"]
+    assert len(rows) == 49
+    assert [row["sort_order"] for row in rows] == sorted(row["sort_order"] for row in rows)
+    assert all(row["type"] == "index" and "snapshot" in row for row in rows)
+    assert all(
+        row["snapshot"] is None or row["snapshot"]["symbol_id"] == row["id"]
+        for row in rows
+    )
+
+
 def test_symbols_search_exact_code(client: TestClient):
     resp = client.get("/api/v1/symbols/search", params={"q": "600519"})
     assert resp.status_code == 200

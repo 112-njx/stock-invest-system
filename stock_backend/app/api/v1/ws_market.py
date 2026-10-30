@@ -186,6 +186,8 @@ async def _dispatch(loop: asyncio.AbstractEventLoop, payload: dict) -> None:
         await manager.broadcast_snapshots({int(symbol_id): payload.get("data", {})})
     elif kind == "kline":
         await manager.broadcast_kline(payload)
+    elif kind == "kline_refresh":
+        await manager.broadcast_kline_refresh(payload)
 
 
 def _market_listener_loop(loop: asyncio.AbstractEventLoop) -> None:

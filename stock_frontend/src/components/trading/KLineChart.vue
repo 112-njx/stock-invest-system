@@ -31,10 +31,14 @@ import {
   addSupportResistance,
   fetchIndicators,
   fetchKLine,
+  fetchKlineQuality,
+  fetchKlineBackfillStatus,
   fetchSupportResistance,
+  requestKlineBackfill,
   removeSupportResistance,
   type IndicatorRow,
   type KLineBar,
+  type KlineQuality,
   type SupportResistanceItem,
 } from '@/api/market'
 import type { SymbolInfo } from '@/api/market'
@@ -68,6 +72,8 @@ const props = withDefaults(
     symbol: SymbolInfo | null
     showSrButton?: boolean
     showIndicators?: boolean
+    /** 首次打开时的可见自然月数；更早数据仍可向左加载 */
+    recentMonths?: number
     /** G32：回测买卖点标记（空数组/不传则不渲染） */
     markers?: BacktestTrade[]
   }>(),
@@ -85,8 +91,30 @@ const theme = useThemeStore()
 const ws = useWsStore()
 
 const container = ref<HTMLDivElement | null>(null)
+const chartHost = ref<HTMLDivElement | null>(null)
 const loading = ref(false)
 const error = ref('')
+const historyState = ref<'loading' | 'empty' | 'failed' | ''>('')
+const historyWidth = ref(0)
+const quality = ref<KlineQuality | null>(null)
+const hoveredCandle = ref<{ bar: KLineBar; change: number | null; percent: number | null } | null>(null)
+let loadVersion = 0
+let loadedBars: KLineBar[] = []
+let historyCursor = ''
+let initialViewport = true
+let historyBusy = false
+let retryBackfill = false
+
+const qualityWarning = computed(() => {
+  if (quality.value?.status === 'partial') {
+    const ranges = quality.value.missing_ranges.slice(0, 2).map((r) => r.join('～')).join('、')
+    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''}`
+  }
+  if (quality.value?.status === 'unknown') return '交易日历不可用，历史数据未能核验'
+  if (quality.value?.status === 'unchecked') return '历史数据尚未核验'
+  return ''
+})
+const currentPrice = computed(() => props.symbol ? market.snapshots[props.symbol.id]?.price : null)
 
 let chart: IChartApi | null = null
 let candleSeries: ISeriesApi<'Candlestick'> | null = null
@@ -142,6 +170,7 @@ const PERIODS: { label: string; value: Period }[] = [
 const symbolTitle = computed(() =>
   props.symbol ? `${props.symbol.name} ${props.symbol.code}` : '未选择标的'
 )
+const watermarkPeriod = computed(() => PERIODS.find((p) => p.value === market.period)?.label ?? market.period)
 
 /* ---------- 指标显隐（持久化） ---------- */
 const STORAGE_KEY = 'indicator_visibility'
@@ -212,11 +241,48 @@ function toUtcSeconds(ts: string): UTCTimestamp {
   return Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp
 }
 
+const shanghaiDateTime = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+})
+const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+function chartDateParts(time: Time) {
+  const date = typeof time === 'number'
+    ? new Date(time * 1000)
+    : typeof time === 'string'
+      ? new Date(`${time}T00:00:00Z`)
+      : new Date(Date.UTC(time.year, time.month - 1, time.day))
+
+  if (market.period === '15m') {
+    const parts = Object.fromEntries(shanghaiDateTime.formatToParts(date).map((part) => [part.type, part.value]))
+    return { year: parts.year, month: parts.month, day: parts.day, hour: parts.hour, minute: parts.minute }
+  }
+  return {
+    year: String(date.getUTCFullYear()),
+    month: String(date.getUTCMonth() + 1).padStart(2, '0'),
+    day: String(date.getUTCDate()).padStart(2, '0'),
+    hour: '', minute: '',
+  }
+}
+
+function formatAxisMonth(time: Time): string {
+  const { year, month } = chartDateParts(time)
+  return `${year}-${month}`
+}
+
+function formatCrosshairDate(time: Time): string {
+  const { year, month, day, hour, minute } = chartDateParts(time)
+  const weekday = weekdays[new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay()]
+  return `${weekday} ${year}-${month}-${day}${market.period === '15m' ? ` ${hour}:${minute}` : ''}`
+}
+
 /* ---------- 图表初始化 ---------- */
 function initChart() {
-  if (!container.value || chart) return
+  if (!chartHost.value || chart) return
   const c = cssColors()
-  chart = createChart(container.value, {
+  chart = createChart(chartHost.value, {
     autoSize: true,
     layout: {
       background: { type: ColorType.Solid, color: c.bg },
@@ -230,8 +296,10 @@ function initChart() {
       horzLines: { color: c.grid },
     },
     rightPriceScale: { borderColor: c.grid, scaleMargins: { top: 0.06, bottom: 0.06 } },
+    localization: { timeFormatter: formatCrosshairDate },
     timeScale: {
       borderColor: c.grid,
+      tickMarkFormatter: formatAxisMonth,
       timeVisible: true,
       secondsVisible: false,
       rightOffset: 4,
@@ -263,7 +331,8 @@ function initChart() {
   // G32：hover 命中买卖点时显示浮层
   chart.subscribeCrosshairMove(onCrosshairMove)
 
-  container.value.addEventListener('dblclick', onDblClick)
+  chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange)
+  container.value?.addEventListener('dblclick', onDblClick, { capture: true })
 }
 
 function applyTheme() {
@@ -299,7 +368,15 @@ function applyTheme() {
   drawMarkers() // G32：主题切换后按新配色重绘买卖点
 }
 
-function onDblClick() {
+function onVisibleRangeChange(range: { from: number; to: number } | null) {
+  if (!chart || !loadedBars.length) return
+  const x = chart.timeScale().timeToCoordinate(toUtcSeconds(loadedBars[0].ts))
+  historyWidth.value = x == null ? 0 : Math.max(0, Math.min(x, container.value?.clientWidth ?? 0))
+  if (range && range.from < 5 && !initialViewport && !historyBusy && !historyState.value) void loadOlder()
+}
+
+function onDblClick(event: MouseEvent) {
+  event.stopPropagation()
   emit('dblclick')
 }
 
@@ -409,6 +486,13 @@ function drawMarkers() {
 
 /** hover 命中买卖点 → 浮层显示成交价/数量/费用/触发原因 */
 function onCrosshairMove(param: { time?: unknown; point?: { x: number; y: number } }) {
+  const index = param.time == null ? -1 : loadedBars.findIndex((bar) => toUtcSeconds(bar.ts) === param.time)
+  if (index >= 0) {
+    const bar = loadedBars[index]
+    const previousClose = index > 0 ? loadedBars[index - 1].close : null
+    const change = previousClose == null ? null : bar.close - previousClose
+    hoveredCandle.value = { bar, change, percent: previousClose ? (bar.close - previousClose) / previousClose * 100 : null }
+  } else hoveredCandle.value = null
   const list = props.markers ?? []
   if (!list.length || param.time == null || !param.point) {
     hoverTip.value = null
@@ -435,6 +519,125 @@ function toCandleData(bars: KLineBar[]) {
     time: toUtcSeconds(b.ts),
     open: b.open, high: b.high, low: b.low, close: b.close,
   }))
+}
+
+function recentBars(bars: KLineBar[]): KLineBar[] {
+  if (!props.recentMonths || !bars.length) return bars
+  const cutoff = new Date(bars[bars.length - 1].ts)
+  const day = cutoff.getUTCDate()
+  cutoff.setUTCDate(1)
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - props.recentMonths)
+  const lastDay = new Date(Date.UTC(cutoff.getUTCFullYear(), cutoff.getUTCMonth() + 1, 0)).getUTCDate()
+  cutoff.setUTCDate(Math.min(day, lastDay))
+  return bars.filter((bar) => toUtcSeconds(bar.ts) * 1000 >= cutoff.getTime())
+}
+
+function threeMonthsBefore(iso: string): Date {
+  const date = new Date(iso)
+  const day = date.getUTCDate()
+  date.setUTCDate(1)
+  date.setUTCMonth(date.getUTCMonth() - 3)
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate()
+  date.setUTCDate(Math.min(day, lastDay))
+  return date
+}
+
+async function refreshIndicators(version: number, symbolId: number, period: Period) {
+  if (!props.showIndicators || !enabledList.value.length || !loadedBars.length) return
+  try {
+    const rows = await fetchIndicators({
+      symbol: symbolId, period, names: 'macd,kdj,volume,amount',
+      start: loadedBars[0].ts, end: loadedBars[loadedBars.length - 1].ts,
+    })
+    if (version !== loadVersion) return
+    indicatorRows.value = rows
+    setIndicatorData()
+  } catch { /* 指标失败不阻塞 K 线 */ }
+}
+
+async function loadOlder() {
+  if (!chart || !props.symbol || !loadedBars.length || historyBusy) return
+  const version = loadVersion
+  const symbolId = props.symbol.id
+  const period = market.period
+  const end = new Date(new Date(historyCursor || loadedBars[0].ts).getTime() - 1)
+  const start = threeMonthsBefore(end.toISOString())
+  historyBusy = true
+  historyState.value = 'loading'
+  try {
+    const merge = async (older: KLineBar[]) => {
+      if (!chart || !older.length || version !== loadVersion) return
+      const firstTime = toUtcSeconds(loadedBars[0].ts)
+      const range = chart.timeScale().getVisibleLogicalRange()
+      const byTime = new Map([...loadedBars, ...older].map((bar) => [bar.ts, bar]))
+      const merged = [...byTime.values()].sort((a, b) => toUtcSeconds(a.ts) - toUtcSeconds(b.ts))
+      const prepended = merged.filter((bar) => toUtcSeconds(bar.ts) < firstTime).length
+      loadedBars = merged
+      candleSeries?.setData(toCandleData(loadedBars))
+      barRange = { from: toUtcSeconds(loadedBars[0].ts), to: toUtcSeconds(loadedBars[loadedBars.length - 1].ts) }
+      drawMarkers()
+      if (range && prepended) chart.timeScale().setVisibleLogicalRange({ from: range.from + prepended, to: range.to + prepended })
+      await refreshIndicators(version, symbolId, period)
+    }
+    const older = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
+    if (version !== loadVersion) return
+    await merge(older)
+    const retry = retryBackfill
+    retryBackfill = false
+    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry })
+    for (let attempt = 0; attempt < 45; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      if (version !== loadVersion) return
+      const status = await fetchKlineBackfillStatus(task_id)
+      if (status.status === 'failed') throw new Error('历史数据拉取失败')
+      if (status.status === 'done') break
+      if (attempt === 44) throw new Error('历史数据拉取超时')
+    }
+    const refreshed = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
+    if (version !== loadVersion) return
+    await merge(refreshed)
+    historyCursor = start.toISOString()
+    historyState.value = refreshed.length ? '' : 'empty'
+  } catch {
+    if (version === loadVersion) historyState.value = 'failed'
+  } finally {
+    historyBusy = false
+  }
+}
+
+async function loadInitialMissing(version: number, symbolId: number, period: Period) {
+  const end = new Date()
+  const start = threeMonthsBefore(end.toISOString())
+  historyWidth.value = container.value?.clientWidth ?? 0
+  historyState.value = 'loading'
+  try {
+    const retry = retryBackfill
+    retryBackfill = false
+    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry })
+    for (let attempt = 0; attempt < 45; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      if (version !== loadVersion) return
+      const status = await fetchKlineBackfillStatus(task_id)
+      if (status.status === 'failed') throw new Error('历史数据拉取失败')
+      if (status.status === 'done') {
+        if (status.fetched) {
+          historyState.value = ''
+          void loadKline()
+        } else historyState.value = 'empty'
+        return
+      }
+    }
+    throw new Error('历史数据拉取超时')
+  } catch {
+    if (version === loadVersion) historyState.value = 'failed'
+  }
+}
+
+function retryHistory() {
+  historyState.value = ''
+  retryBackfill = true
+  if (loadedBars.length) void loadOlder()
+  else if (props.symbol) void loadInitialMissing(loadVersion, props.symbol.id, market.period)
 }
 
 function setIndicatorData() {
@@ -473,13 +676,34 @@ function setIndicatorData() {
 
 async function loadKline() {
   if (!props.symbol) return
+  const version = ++loadVersion
+  const symbolId = props.symbol.id
+  const period = market.period
   loading.value = true
   error.value = ''
+  quality.value = null
+  hoveredCandle.value = null
   const t0 = performance.now()
   try {
-    const bars = await fetchKLine({ symbol: props.symbol.id, period: market.period })
+    const [loaded, checked] = await Promise.all([
+      fetchKLine({ symbol: symbolId, period, limit: props.recentMonths ? 5000 : undefined }),
+      fetchKlineQuality(symbolId, period).catch(() => null),
+    ])
+    if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
+    const existing = initialViewport ? [] : loadedBars
+    const byTime = new Map([...existing, ...loaded].map((bar) => [bar.ts, bar]))
+    const bars = [...byTime.values()].sort((a, b) => toUtcSeconds(a.ts) - toUtcSeconds(b.ts))
+    quality.value = checked
     if (!chart) initChart()
+    const previousRange = initialViewport ? null : chart?.timeScale().getVisibleLogicalRange()
+    const previousCount = loadedBars.length
+    loadedBars = bars
+    historyCursor = bars[0]?.ts ?? ''
     candleSeries?.setData(toCandleData(bars))
+    if (!bars.length) {
+      void loadInitialMissing(version, symbolId, period)
+      return
+    }
     lastBar = bars.length ? bars[bars.length - 1] : null
     // G32：记录已加载时间范围并重绘买卖点（K 线范围外的时间轴标记无法定位，需裁剪）
     barRange = bars.length
@@ -493,25 +717,25 @@ async function loadKline() {
     }
 
     // 加载指标数据
-    if (props.showIndicators && enabledList.value.length) {
-      try {
-        indicatorRows.value = await fetchIndicators({
-          symbol: props.symbol.id,
-          period: market.period,
-          names: 'macd,kdj,volume,amount',
-        })
-        setIndicatorData()
-      } catch { /* 指标失败不阻塞K线 */ }
+    await refreshIndicators(version, symbolId, period)
+    if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
+    if (initialViewport) {
+      const recent = recentBars(bars)
+      if (recent.length > 1) {
+        chart?.timeScale().setVisibleRange({ from: toUtcSeconds(recent[0].ts), to: toUtcSeconds(recent[recent.length - 1].ts) })
+      } else chart?.timeScale().fitContent()
+      initialViewport = false
+    } else if (previousRange) {
+      const prepended = Math.max(0, bars.length - previousCount)
+      chart?.timeScale().setVisibleLogicalRange({ from: previousRange.from + prepended, to: previousRange.to + prepended })
     }
-
-    chart?.timeScale().fitContent()
     trackTiming('kline_load', performance.now() - t0, {
       symbol: props.symbol.code, period: market.period, bars: bars.length,
     })
   } catch {
-    error.value = 'K 线加载失败'
+    if (version === loadVersion) error.value = 'K 线加载失败'
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
@@ -565,41 +789,17 @@ async function loadSRLines() {
   } catch { /* 静默 */ }
 }
 
-defineExpose({
-  setSRLines: (list: SupportResistanceItem[]) => drawSRLines(list),
-  refreshSRLines: () => loadSRLines(),
-  /** V0.2 阶段二：WS 推送新末根 K 线时调用 */
-  updateLastBar: (bar: KLineBar) => {
-    if (!candleSeries) return
-    lastBar = bar
-    candleSeries.update({
-      time: toUtcSeconds(bar.ts),
-      open: bar.open, high: bar.high, low: bar.low, close: bar.close,
-    })
-  },
-})
-
 /* ---------- 实时行情 ---------- */
-watch(
-  () => (props.symbol ? market.snapshots[props.symbol.id]?.price : undefined),
-  (price) => {
-    if (price == null || !lastBar || !candleSeries) return
-    const next: KLineBar = {
-      ...lastBar, close: price,
-      high: Math.max(lastBar.high, price),
-      low: Math.min(lastBar.low, price),
-    }
-    candleSeries.update({
-      time: toUtcSeconds(next.ts),
-      open: next.open, high: next.high, low: next.low, close: next.close,
-    })
-  }
-)
-
 watch(() => props.markers, () => drawMarkers(), { deep: false })
 
 watch(() => props.symbol, (newSym, oldSym) => {
+  hoveredCandle.value = null
+  initialViewport = true
+  historyState.value = ''
+  loadedBars = []
+  historyCursor = ''
   if (!props.symbol) {
+    loadVersion++
     lastBar = null
     candleSeries?.setData([])
     clearSRLines()
@@ -620,7 +820,14 @@ watch(() => props.symbol, (newSym, oldSym) => {
   loadSRLines()
 })
 
-watch(() => market.period, () => { loadKline() })
+watch(() => market.period, () => {
+  hoveredCandle.value = null
+  initialViewport = true
+  historyState.value = ''
+  loadedBars = []
+  historyCursor = ''
+  loadKline()
+})
 watch(() => theme.mode, () => applyTheme())
 
 onMounted(() => {
@@ -633,6 +840,12 @@ onMounted(() => {
   // V0.2：注册 WS kline 更新回调
   ws.setKlineHandler((symbolId, period, bar) => {
     if (props.symbol?.id === symbolId && market.period === period) {
+      if (!bar) { void loadKline(); return }
+      if (lastBar && toUtcSeconds(bar.ts) < toUtcSeconds(lastBar.ts)) return
+      if (loadedBars.length && toUtcSeconds(loadedBars[loadedBars.length - 1].ts) === toUtcSeconds(bar.ts)) {
+        loadedBars[loadedBars.length - 1] = bar
+      } else loadedBars.push(bar)
+      hoveredCandle.value = null
       lastBar = bar
       candleSeries?.update({
         time: toUtcSeconds(bar.ts),
@@ -643,7 +856,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  container.value?.removeEventListener('dblclick', onDblClick)
+  container.value?.removeEventListener('dblclick', onDblClick, true)
+  chart?.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange)
   window.removeEventListener('wheel', onWheel, true)
   closeSrDialog()
   closeIndicatorPicker()
@@ -725,6 +939,11 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
     <header class="kline-chart__header">
       <div class="kline-chart__header-left">
         <span class="kline-chart__symbol">{{ symbolTitle }}</span>
+        <span v-if="currentPrice != null" class="kline-chart__live-price">现价 {{ currentPrice.toFixed(2) }}</span>
+        <span v-if="hoveredCandle" class="kline-chart__hover-data" :class="{ 'kline-chart__hover-data--up': hoveredCandle.change != null && hoveredCandle.change >= 0, 'kline-chart__hover-data--down': hoveredCandle.change != null && hoveredCandle.change < 0 }">
+          开 {{ hoveredCandle.bar.open.toFixed(2) }} · 高 {{ hoveredCandle.bar.high.toFixed(2) }} · 低 {{ hoveredCandle.bar.low.toFixed(2) }} · 收 {{ hoveredCandle.bar.close.toFixed(2) }}
+          <template v-if="hoveredCandle.change != null && hoveredCandle.percent != null"> · {{ hoveredCandle.change >= 0 ? '+' : '' }}{{ hoveredCandle.change.toFixed(2) }}（{{ hoveredCandle.percent >= 0 ? '+' : '' }}{{ hoveredCandle.percent.toFixed(2) }}%）</template>
+        </span>
         <button v-if="showSrButton" class="sr-btn" title="支撑/压力位设置" @click="openSrDialog">
           <svg class="sr-btn__icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M6 2 L2 8 L6 14" />
@@ -753,7 +972,19 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
       </div>
     </header>
 
-    <div ref="container" class="kline-chart__body" @dblclick.stop="emit('dblclick')">
+    <div v-if="qualityWarning" class="kline-chart__quality" :title="qualityWarning">{{ qualityWarning }}</div>
+
+    <div ref="container" class="kline-chart__body">
+      <div ref="chartHost" class="kline-chart__canvas" />
+      <div v-if="props.symbol" class="kline-chart__watermark" aria-hidden="true">
+        <span>{{ props.symbol.code || props.symbol.name }} · {{ watermarkPeriod }}</span>
+        <span>{{ props.symbol.name }}</span>
+      </div>
+      <div v-if="historyState && historyWidth > 0" class="kline-chart__history" :style="{ width: `${historyWidth}px` }">
+        <span v-if="historyState === 'loading'">数据加载中</span>
+        <button v-else-if="historyState === 'empty'" @click.stop="retryHistory">{{ loadedBars.length ? '该区间无数据，继续向前' : '暂无数据，点击重试' }}</button>
+        <button v-else @click.stop="retryHistory">加载失败，点击重试</button>
+      </div>
       <!-- V0.2：加载中顶部细进度条（无闪烁切换时提示） -->
       <div v-if="loading && props.symbol" class="kline-chart__progress" />
       <!-- G32：hover 买卖点浮层（成交价/数量/费用/触发原因） -->
@@ -775,8 +1006,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
       </div>
     </div>
 
-    <div v-if="loading && !props.symbol" class="kline-chart__state">加载中…</div>
-    <div v-else-if="error" class="kline-chart__state kline-chart__state--error">
+    <div v-if="error" class="kline-chart__state kline-chart__state--error">
       <span>{{ error }}</span>
       <button class="kline-chart__retry" @click="retryLoad">点击重试</button>
     </div>
@@ -879,6 +1109,8 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
 }
 .kline-chart__header-right {
   display: flex;
@@ -891,6 +1123,12 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   font-weight: 600;
   white-space: nowrap;
 }
+.kline-chart__live-price { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+.kline-chart__hover-data { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+.kline-chart__hover-data--up { color: var(--up); }
+.kline-chart__hover-data--down { color: var(--down); }
+.kline-chart__watermark { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; pointer-events: none; z-index: 1; color: var(--text); opacity: var(--chart-watermark-opacity); font-size: clamp(28px, 7vw, 80px); font-weight: 600; line-height: 1.45; white-space: nowrap; }
+.kline-chart__quality { padding: 3px 10px; font-size: 11px; color: #eab308; background: var(--bg-panel); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sr-btn {
   display: inline-flex;
   align-items: center;
@@ -948,6 +1186,21 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   min-height: 0;
   position: relative;
 }
+.kline-chart__canvas { position: absolute; inset: 0; z-index: 0; }
+.kline-chart__history {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-panel) 85%, transparent);
+  pointer-events: none;
+}
+.kline-chart__history button { pointer-events: auto; cursor: pointer; }
 .kline-chart__state {
   position: absolute;
   inset: 0;

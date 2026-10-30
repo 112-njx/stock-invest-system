@@ -10,7 +10,7 @@
  * 纯基础设施，无 UI 依赖。
  */
 
-export type WsMessageType = 'snapshot' | 'kline' | 'ping' | 'pong' | 'error' | 'notification'
+export type WsMessageType = 'snapshot' | 'kline' | 'kline_refresh' | 'ping' | 'pong' | 'error' | 'notification'
 
 export interface WsSnapshotMessage {
   type: 'snapshot'
@@ -22,6 +22,12 @@ export interface WsKlineMessage {
   symbol_id: number
   period: string
   bar: Record<string, unknown>
+}
+
+export interface WsKlineRefreshMessage {
+  type: 'kline_refresh'
+  symbol_id: number
+  period: string
 }
 
 /** G16：服务端推送的站内通知（回测完成 / Agent 完成 / 系统公告） */
@@ -41,6 +47,7 @@ export interface WsNotificationMessage {
 export type WsMessage =
   | WsSnapshotMessage
   | WsKlineMessage
+  | WsKlineRefreshMessage
   | WsNotificationMessage
   | { type: 'ping' }
   | { type: 'pong' }
@@ -200,7 +207,7 @@ class WsClient {
           this.send({ type: 'pong' })
           return
         }
-        if (msg.type === 'snapshot' || msg.type === 'kline') {
+        if (msg.type === 'snapshot' || msg.type === 'kline' || msg.type === 'kline_refresh') {
           // 记录最后消息时间用于断线补拉
           const now = new Date().toISOString()
           this.lastMessageTime = now

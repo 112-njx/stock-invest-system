@@ -17,6 +17,7 @@
   --text: #e5e7eb;
   --text-secondary: #9ca3af;
   --text-muted: #6b7280;
+  --chart-watermark-opacity: 0.12;
   --accent: #3b82f6;
   --accent-soft: rgba(59, 130, 246, 0.14);
   --up: #ef4444;
@@ -44,6 +45,7 @@
   --text: #1f2937;
   --text-secondary: #6b7280;
   --text-muted: #9ca3af;
+  --chart-watermark-opacity: 0.10;
   --accent: #2563eb;
   --accent-soft: rgba(37, 99, 235, 0.1);
   --up: #dc2626;

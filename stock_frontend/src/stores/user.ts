@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { loginApi, registerApi, fetchMe, updateMe, logoutApi } from '@/api/auth'
+import { loginApi, registerApi, fetchMe, updateMe, logoutApi, refreshApi } from '@/api/auth'
 import type { User } from '@/api/types'
 
 /**
@@ -19,6 +19,15 @@ export const useUserStore = defineStore('user', {
     avatarText: (state) => (state.user?.nickname || state.user?.username || 'U').charAt(0).toUpperCase(),
   },
   actions: {
+    async restoreSession() {
+      try {
+        const { token } = await refreshApi()
+        this.token = token
+        this.user = await fetchMe()
+      } catch {
+        this.clearAuth()
+      }
+    },
     async login(username: string, password: string) {
       const data = await loginApi(username, password)
       this.setAuth(data.token, data.user)

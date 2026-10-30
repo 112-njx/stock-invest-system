@@ -1,6 +1,6 @@
 /**
  * 法律文档正文共享排版。
- * 免责声明 / 隐私政策弹窗（LegalModal）与用户协议独立页（LegalPage）共用一套样式，
+ * 法律文档弹窗（LegalModal）共用的正文样式，
  * 避免同一套 h2/h3/ol 规则在两处重复维护。
  */
 .legal-doc-body {

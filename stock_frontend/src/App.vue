@@ -45,7 +45,7 @@ watch(
     <AppFooter />
     <!-- G35：登录/注册弹窗（全局单例，由 authModal store 控制显隐） -->
     <LoginModal />
-    <!-- G03 改造：免责声明 / 隐私政策轻量弹窗（全局单例，由 legalModal store 控制） -->
+    <!-- G03 改造：法律文档轻量弹窗（全局单例，由 legalModal store 控制） -->
     <LegalModal />
   </div>
 </template>

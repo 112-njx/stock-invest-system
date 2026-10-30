@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * G03 改造 · 法律文档轻量弹窗（免责声明 / 隐私政策）。
+ * G03 改造 · 法律文档轻量弹窗（用户协议 / 免责声明 / 隐私政策）。
  *
  * 不再使用独立路由页面：由 legalModal store 控制显隐，暗色遮罩盖住触发时的当前页，
  * 关闭后停留在原页面（不发生路由跳转）。关闭方式：ESC、点击遮罩、右上角 ×、底部按钮。
@@ -12,6 +12,7 @@ import { computed, onBeforeUnmount, onMounted } from 'vue'
 import type { Component } from 'vue'
 import LegalDisclaimerContent from '@/components/legal/LegalDisclaimerContent.vue'
 import LegalPrivacyContent from '@/components/legal/LegalPrivacyContent.vue'
+import LegalTermsContent from '@/components/legal/LegalTermsContent.vue'
 import { useLegalModalStore, type LegalDocKey } from '@/stores/legalModal'
 import '@/components/legal/legal-doc.css'
 
@@ -24,6 +25,7 @@ interface DocMeta {
 }
 
 const DOCS: Record<LegalDocKey, DocMeta> = {
+  terms: { title: '用户协议', updatedAt: '2026-09-17', component: LegalTermsContent },
   disclaimer: { title: '免责声明', updatedAt: '2026-09-17', component: LegalDisclaimerContent },
   privacy: { title: '隐私政策', updatedAt: '2026-09-17', component: LegalPrivacyContent },
 }

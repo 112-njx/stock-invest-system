@@ -24,13 +24,13 @@ const props = withDefaults(
   }>(),
   { initialTab: 'login' }
 )
+const router = useRouter()
 
 const emit = defineEmits<{
   /** 登录/注册成功（父级决定跳转或关闭弹窗并刷新用户态） */
   (e: 'success'): void
 }>()
 
-const router = useRouter()
 const userStore = useUserStore()
 const legalModal = useLegalModalStore()
 
@@ -78,11 +78,6 @@ function validate(): boolean {
 }
 
 function openLegal(name: 'terms' | 'privacy' | 'disclaimer') {
-  // 《用户协议》仍为独立页面，新标签页打开以免打断注册；隐私政策/免责声明走轻量弹窗
-  if (name === 'terms') {
-    window.open(router.resolve({ name: 'terms' }).href, '_blank')
-    return
-  }
   legalModal.show(name)
 }
 

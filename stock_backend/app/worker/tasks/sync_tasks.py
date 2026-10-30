@@ -38,6 +38,31 @@ def kline_init(self, symbol_id: int | None = None, days: int | None = None) -> d
         raise
 
 
+@celery_app.task(name="app.worker.tasks.sync_tasks.kline_backfill")
+def kline_backfill(symbol_id: int, period: str, start_iso: str, end_iso: str) -> dict:
+    """按用户请求的历史窗口补取，结果供前端轮询。"""
+    from datetime import datetime
+
+    from app.data_providers.factory import get_provider
+    from app.models.symbol import Symbol
+    from app.services.sync_service import _provider_params, _write_bars
+
+    db = get_session()
+    try:
+        sym = db.get(Symbol, symbol_id)
+        if sym is None:
+            return {"fetched": 0, "added": 0}
+        symbol_param, asset_type = _provider_params(sym)
+        bars = get_provider().fetch_kline(
+            symbol_param, period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
+        )
+        added = _write_bars(db, period, symbol_id, bars)
+        db.commit()
+        return {"fetched": len(bars), "added": added}
+    finally:
+        db.close()
+
+
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_init_fixed_indices")
 def kline_init_fixed_indices(self) -> dict:
     """固定指数预同步（V0.2 1.1）：49 条固定大盘/行业指数全周期K线，进度写 sync_status。"""
