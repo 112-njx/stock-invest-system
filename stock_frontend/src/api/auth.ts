@@ -54,7 +54,7 @@ export function changeEmailApi(password: string, newEmail: string) {
 
 /** G19：刷新 access token（refresh token 由 Cookie 自动携带） */
 export function refreshApi() {
-  return request<RefreshResult>({ url: '/auth/refresh', method: 'post' })
+  return request<RefreshResult>({ url: '/auth/refresh', method: 'post', _skipRefresh: true, silent: true })
 }
 
 /** G19：登出（后端吊销 access + refresh + 清 Cookie） */
