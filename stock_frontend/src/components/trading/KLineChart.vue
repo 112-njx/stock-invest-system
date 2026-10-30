@@ -1010,7 +1010,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
       </div>
       <div v-if="historyState && historyWidth > 0 && (historyState !== 'empty' || loadedBars.length > 0)" class="kline-chart__history" :style="{ width: `${historyWidth}px` }">
         <span v-if="historyState === 'loading'">数据加载中</span>
-        <button v-else-if="historyState === 'empty'" @click.stop="retryHistory">{{ loadedBars.length ? '该区间无数据，继续向前' : '暂无数据，点击重试' }}</button>
+        <button v-else-if="historyState === 'empty'" @click.stop="retryHistory">该区间无数据，继续向前</button>
         <button v-else @click.stop="retryHistory">加载失败，点击重试</button>
       </div>
       <!-- V0.2：加载中顶部细进度条（无闪烁切换时提示） -->
