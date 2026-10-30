@@ -91,6 +91,7 @@ const theme = useThemeStore()
 const ws = useWsStore()
 
 const container = ref<HTMLDivElement | null>(null)
+const chartHost = ref<HTMLDivElement | null>(null)
 const loading = ref(false)
 const error = ref('')
 const historyState = ref<'loading' | 'empty' | 'failed' | ''>('')
@@ -279,9 +280,9 @@ function formatCrosshairDate(time: Time): string {
 
 /* ---------- 图表初始化 ---------- */
 function initChart() {
-  if (!container.value || chart) return
+  if (!chartHost.value || chart) return
   const c = cssColors()
-  chart = createChart(container.value, {
+  chart = createChart(chartHost.value, {
     autoSize: true,
     layout: {
       background: { type: ColorType.Solid, color: c.bg },
@@ -331,7 +332,7 @@ function initChart() {
   chart.subscribeCrosshairMove(onCrosshairMove)
 
   chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange)
-  container.value.addEventListener('dblclick', onDblClick, { capture: true })
+  container.value?.addEventListener('dblclick', onDblClick, { capture: true })
 }
 
 function applyTheme() {
@@ -974,6 +975,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
     <div v-if="qualityWarning" class="kline-chart__quality" :title="qualityWarning">{{ qualityWarning }}</div>
 
     <div ref="container" class="kline-chart__body">
+      <div ref="chartHost" class="kline-chart__canvas" />
       <div v-if="props.symbol" class="kline-chart__watermark" aria-hidden="true">
         <span>{{ props.symbol.code || props.symbol.name }} · {{ watermarkPeriod }}</span>
         <span>{{ props.symbol.name }}</span>
@@ -1125,7 +1127,8 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 .kline-chart__hover-data { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
 .kline-chart__hover-data--up { color: var(--up); }
 .kline-chart__hover-data--down { color: var(--down); }
-.kline-chart__watermark { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; pointer-events: none; z-index: 1; color: var(--text); opacity: 0.08; font-size: clamp(28px, 7vw, 80px); font-weight: 600; line-height: 1.45; white-space: nowrap; }
+.kline-chart__watermark { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; pointer-events: none; z-index: 1; color: var(--text); opacity: 0.22; font-size: clamp(28px, 7vw, 80px); font-weight: 600; line-height: 1.45; white-space: nowrap; }
+:global([data-theme='light']) .kline-chart__watermark { opacity: 0.18; }
 .kline-chart__quality { padding: 3px 10px; font-size: 11px; color: #eab308; background: var(--bg-panel); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sr-btn {
   display: inline-flex;
@@ -1184,6 +1187,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   min-height: 0;
   position: relative;
 }
+.kline-chart__canvas { position: absolute; inset: 0; z-index: 0; }
 .kline-chart__history {
   position: absolute;
   z-index: 2;
