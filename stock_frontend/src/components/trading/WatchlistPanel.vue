@@ -8,7 +8,7 @@
  * - G35（方案 B）：未登录不发关注接口（避免 401 报错），改为「登录后同步您的关注股票」
  *   引导卡片；登录成功后自动加载关注列表
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   addWatchlist,
   fetchWatchlist,
@@ -46,6 +46,7 @@ const query = ref('')
 const suggestions = ref<SymbolInfo[]>([])
 const searching = ref(false)
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let syncTimer: ReturnType<typeof setInterval> | null = null
 
 /** 关注行合并实时快照（轮询写入 store），无快照回退列表原值 */
 const displayList = computed(() =>
@@ -69,7 +70,7 @@ const groupedSuggestions = computed(() => {
   return { synced, unsynced }
 })
 
-/** V0.2：关注列表失败项重试（重新添加触发 kline_init，幂等） */
+/** 关注列表失败项重试：重新提交该标的的同步请求。 */
 async function retrySync(item: WatchlistItem) {
   if (requireLogin()) return
   try {
@@ -177,7 +178,17 @@ function onInputBlur() {
   }, 150)
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  syncTimer = setInterval(async () => {
+    if (isGuest.value || !market.watchlist.some((item) => item.sync_status === 'pending' || item.sync_status === 'syncing')) return
+    try { market.setWatchlist(await fetchWatchlist()) } catch { /* 下一轮继续 */ }
+  }, 10000)
+})
+onUnmounted(() => {
+  if (syncTimer) clearInterval(syncTimer)
+  if (debounceTimer) clearTimeout(debounceTimer)
+})
 </script>
 
 <template>
@@ -215,7 +226,7 @@ onMounted(load)
           <span class="wl-name">
             {{ item.name }}
             <!-- V0.2：同步状态图标：syncing=旋转loading，failed=黄色感叹号（点击重试），done=无图标 -->
-            <span v-if="item.sync_status === 'syncing'" class="wl-sync wl-sync--syncing" title="同步中…">
+            <span v-if="item.sync_status === 'pending' || item.sync_status === 'syncing'" class="wl-sync wl-sync--syncing" title="同步中…">
               <span class="wl-sync__spinner" />
             </span>
             <span

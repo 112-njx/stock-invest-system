@@ -4,8 +4,12 @@
 """
 
 import logging
+from datetime import UTC, datetime
+
+from sqlalchemy import select
 
 from app.core.request_id import get_request_id
+from app.models.user import UserWatchlist
 from app.services import sync_service
 from app.utils.db import get_session
 from app.worker.celery_app import celery_app
@@ -36,6 +40,39 @@ def kline_init(self, symbol_id: int | None = None, days: int | None = None) -> d
         logger.exception("kline_init failed")
         _log("kline_init", self.request.id, "failed", str(exc))
         raise
+
+
+@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.watchlist_stock_sync")
+def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict:
+    """关注 A 股的首次初始化或日 K 增量与缺口修复。"""
+    from app.repositories import kline_repo, ops_repo, user_repo
+    from app.utils import market_cache
+
+    task_type = "kline_init" if initialize else "kline_incremental"
+    _log(task_type, self.request.id, "running", f"watchlist symbol_id={symbol_id}")
+    db = get_session()
+    try:
+        if initialize:
+            result = sync_service.run_kline_init(symbol_id=symbol_id)
+        else:
+            result = sync_service.run_kline_incremental(symbol_id=symbol_id)
+        if kline_repo.latest_ts(db, "1d", symbol_id) is None:
+            raise RuntimeError("关注股票数据源未返回日 K")
+        user_repo.update_watchlist_sync_status(db, symbol_id, "done")
+        db.commit()
+        _log(task_type, self.request.id, "success", f"watchlist symbol_id={symbol_id}: {result}")
+        return result
+    except Exception as exc:
+        db.rollback()
+        ops_repo.upsert_sync_task(db, task_type, symbol_id, "failed", datetime.now(UTC))
+        user_repo.update_watchlist_sync_status(db, symbol_id, "failed")
+        db.commit()
+        _log(task_type, self.request.id, "failed", str(exc))
+        raise
+    finally:
+        for user_id in db.scalars(select(UserWatchlist.user_id).where(UserWatchlist.symbol_id == symbol_id)):
+            market_cache.invalidate_watchlist_cache(user_id)
+        db.close()
 
 
 @celery_app.task(name="app.worker.tasks.sync_tasks.kline_backfill")

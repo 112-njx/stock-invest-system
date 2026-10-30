@@ -11,6 +11,7 @@ from app.data_providers.base import RealtimeQuote, RealtimeSymbol
 from app.data_providers.factory import get_provider
 from app.models.kline import KLINE_MODELS
 from app.models.symbol import Symbol
+from app.models.user import UserWatchlist
 from app.repositories import kline_repo, ops_repo, snapshot_repo, symbol_repo, user_repo
 from app.utils import market_cache
 from app.utils.db import get_session
@@ -348,6 +349,9 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dic
         start = end - timedelta(days=days)
         ensure_current_partitions(db)
         symbols: list[Symbol] = [db.get(Symbol, symbol_id)] if symbol_id else symbol_repo.list_kline_sync_symbols(db)
+        from sqlalchemy import select
+
+        watched_ids = set(db.scalars(select(UserWatchlist.symbol_id).distinct()))
         results: dict = {}
         for sym in symbols:
             if sym is None:
@@ -365,6 +369,9 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dic
                 added = _write_bars(db, period, sym.id, bars)
                 counts[period] = added
                 logger.info("kline_init %s %s added=%d", sym.name, period, added)
+            from app.services import kline_quality_service
+            if sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym) and kline_repo.latest_ts(db, "1d", sym.id):
+                kline_quality_service.check_and_repair(db, sym, provider)
             ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
             _mark_watchlist_synced(db, sym.id, "done")
             db.commit()
@@ -383,6 +390,9 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
         start = end - timedelta(days=back_days)
         ensure_current_partitions(db)
         symbols: list[Symbol] = [db.get(Symbol, symbol_id)] if symbol_id else symbol_repo.list_kline_sync_symbols(db)
+        from sqlalchemy import select
+
+        watched_ids = set(db.scalars(select(UserWatchlist.symbol_id).distinct()))
         results: dict = {}
         incomplete = 0
         for sym in symbols:
@@ -399,10 +409,12 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
             db.commit()
             from app.services import kline_quality_service
 
-            quality = kline_quality_service.check_and_repair(db, sym, provider)
+            quality = kline_quality_service.check_and_repair(db, sym, provider) if (
+                sym.is_fixed_index or sym.id in watched_ids
+            ) else {"status": "unsupported"}
             ops_repo.upsert_sync_task(db, "kline_incremental", sym.id, "success", datetime.now(UTC))
             db.commit()
-            if quality["status"] in ("partial", "unknown"):
+            if sym.is_fixed_index and quality["status"] in ("partial", "unknown"):
                 incomplete += 1
             results[sym.code or sym.name] = counts
         if symbol_id is None:

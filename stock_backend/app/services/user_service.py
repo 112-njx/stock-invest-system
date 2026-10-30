@@ -1,7 +1,7 @@
 """用户域服务：资料更新、重点关注股票（合并实时价 + 自动同步 + Redis 缓存）、支撑/压力位、账户删除。"""
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ApiError
 from app.models.symbol import Symbol
 from app.models.user import User, UserWatchlist
-from app.repositories import symbol_repo, user_repo
+from app.repositories import kline_repo, ops_repo, symbol_repo, user_repo
 from app.schemas.user import WatchlistOut
-from app.services import market_service
+from app.services import kline_quality_service, market_service
 from app.utils import market_cache
 
 logger = logging.getLogger(__name__)
@@ -238,10 +238,24 @@ def _watchlist_rows(db: Session, entries: list[UserWatchlist]) -> list[dict]:
 
 
 def add_watchlist(db: Session, user_id: int, symbol: str) -> dict:
-    """添加关注：校验标的存在 → 幂等写入 → 无K线标的异步触发 kline_init → 立即返回。"""
+    """添加关注：沪深北 A 股按需安排日 K 检查；其他标的沿用首次初始化。"""
     symbol_id = _resolve_symbol_id(db, symbol)
     existing = user_repo.get_watchlist_entry(db, user_id, symbol_id)
     entry = user_repo.add_watchlist(db, user_id, symbol_id)
+    sym = db.get(Symbol, symbol_id)
+    if sym and kline_quality_service.is_a_share_stock(sym):
+        db.commit()
+        try:
+            _queue_watchlist_stock(db, entry, sym, force=existing is not None and existing.sync_status == "failed")
+        except Exception:
+            db.rollback()
+            entry.sync_status = "failed"
+            db.commit()
+            logger.warning("watchlist K-line enqueue failed: symbol_id=%s", sym.id, exc_info=True)
+        db.refresh(entry)
+        result = _watchlist_rows(db, [entry])[0]
+        market_cache.invalidate_watchlist_cache(user_id)
+        return result
     if existing is None:  # 新增记录才触发/标记同步
         if market_service.has_kline(db, symbol_id):
             entry.sync_status = "done"
@@ -268,14 +282,67 @@ def add_watchlist(db: Session, user_id: int, symbol: str) -> dict:
 
 
 def list_watchlist(db: Session, user_id: int) -> list[dict]:
-    """关注列表：Redis watchlist:{user_id} → PostgreSQL → 回写（TTL 300）。"""
-    cached = market_cache.get_watchlist_cache(user_id)
-    if cached is not None:
-        return cached
+    """读取关注列表，并按需为沪深 A 股安排日 K 检查。"""
     entries = user_repo.list_watchlist(db, user_id)
+    has_a_share = False
+    for entry in entries:
+        sym = db.get(Symbol, entry.symbol_id)
+        if sym and kline_quality_service.is_a_share_stock(sym):
+            has_a_share = True
+            try:
+                _queue_watchlist_stock(db, entry, sym)
+            except Exception:
+                logger.warning("watchlist K-line check enqueue failed: symbol_id=%s", sym.id, exc_info=True)
+    if not has_a_share:
+        cached = market_cache.get_watchlist_cache(user_id)
+        if cached is not None:
+            return cached
     rows = _watchlist_rows(db, entries)
-    market_cache.set_watchlist_cache(user_id, rows)
+    if not has_a_share:
+        market_cache.set_watchlist_cache(user_id, rows)
     return rows
+
+
+def _queue_watchlist_stock(db: Session, entry: UserWatchlist, sym: Symbol, *, force: bool = False) -> None:
+    """请求阶段只入队；每只股票每天最多安排一次外部数据检查。"""
+    from app.models.kline_quality import TradingDay
+    from app.services import kline_quality_service
+    from app.utils.redis_client import get_redis_client
+    from app.worker.tasks.sync_tasks import watchlist_stock_sync
+
+    now = datetime.now(UTC)
+    latest = kline_repo.latest_ts(db, "1d", sym.id)
+    quality = kline_quality_service.get_quality(db, sym.id, "1d")
+    local_now = now.astimezone(kline_quality_service.settings.tz)
+    last_day = db.scalar(select(TradingDay.day).where(TradingDay.day <= local_now.date()).order_by(TradingDay.day.desc()).limit(1))
+    if last_day == local_now.date() and local_now.time() < time(16, 30):
+        last_day = db.scalar(select(TradingDay.day).where(TradingDay.day < local_now.date()).order_by(TradingDay.day.desc()).limit(1))
+    needs_sync = force or latest is None or quality is None or quality.status != "complete" or (
+        last_day is not None and (quality.checked_to is None or quality.checked_to < last_day)
+    )
+    if not needs_sync:
+        return
+    redis = get_redis_client()
+    key = f"provider:watchlist-daily:{sym.id}:{local_now.date()}"
+    if force:
+        redis.delete(key)
+    if not redis.set(key, "1", nx=True, ex=86400):
+        task = ops_repo.latest_sync_task(db, "kline_init" if latest is None else "kline_incremental", sym.id)
+        if task and task.status in {"queued", "running"} and entry.sync_status not in {"pending", "syncing"}:
+            entry.sync_status = "pending"
+            db.commit()
+        return
+    task_type = "kline_init" if latest is None else "kline_incremental"
+    entry.sync_status = "pending"
+    ops_repo.upsert_sync_task(db, task_type, sym.id, "queued", now)
+    db.commit()
+    try:
+        watchlist_stock_sync.delay(symbol_id=sym.id, initialize=latest is None)
+    except Exception:
+        redis.delete(key)
+        entry.sync_status = "failed"
+        db.commit()
+        raise
 
 
 def delete_watchlist(db: Session, user_id: int, watchlist_id: int) -> None:

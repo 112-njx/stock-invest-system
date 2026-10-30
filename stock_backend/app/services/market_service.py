@@ -185,9 +185,13 @@ def get_snapshots(db: Session, symbol_ids: list[int]) -> list[dict]:
             snaps[snap.symbol_id] = d
             market_cache.set_snapshot_cache(snap.symbol_id, d)
 
-    # 固定指数的日 K 若比快照覆盖的交易日更新，响应中以 K 线收盘数据为准。
+    # 固定指数和 A 股股票的日 K 若比快照覆盖的交易日更新，响应中以 K 线收盘数据为准。
     # 一次查询取每个指数最近两根；只改响应，不覆盖原始实时快照及其缓存。
-    fixed_ids = [sid for sid in symbol_ids if sid in symbols and symbols[sid].is_fixed_index]
+    from app.services.kline_quality_service import is_a_share_stock
+
+    fixed_ids = [sid for sid in symbol_ids if sid in symbols and (
+        symbols[sid].is_fixed_index or is_a_share_stock(symbols[sid])
+    )]
     kline_override_ids: set[int] = set()
     if fixed_ids:
         latest_two = select(

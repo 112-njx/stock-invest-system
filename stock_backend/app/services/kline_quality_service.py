@@ -1,4 +1,4 @@
-"""境内固定指数日 K 缺口检测与按交易日区间补拉。"""
+"""境内固定指数及 A 股日 K 缺口检测与按交易日区间补拉。"""
 
 from datetime import UTC, date, datetime, time, timedelta
 
@@ -15,8 +15,22 @@ settings = get_settings()
 MAINLAND_MARKETS = {"SSE", "SZSE", "CSI"}
 
 
+def is_a_share_stock(symbol) -> bool:
+    code = symbol.code or ""
+    return bool(
+        symbol.type == "stock" and (
+            (symbol.market == "SSE" and code.startswith(("60", "68")))
+            or (symbol.market == "SZSE" and code.startswith(("00", "30")))
+            or (symbol.market == "BSE" and code.startswith(("4", "8", "9")))
+        )
+    )
+
+
 def eligible(symbol) -> bool:
-    return bool(symbol.is_fixed_index and symbol.type == "index" and symbol.market in MAINLAND_MARKETS)
+    return bool(
+        (symbol.is_fixed_index and symbol.type == "index" and symbol.market in MAINLAND_MARKETS)
+        or is_a_share_stock(symbol)
+    )
 
 
 def _calendar(db, window_start: date, today: date) -> list[date] | None:
@@ -78,7 +92,7 @@ def _fetch_gap_bars(provider, symbol_param, asset_type, first: date, last: date,
             from app.data_providers.sina import SinaProvider
 
             bars = SinaProvider().fetch_kline(symbol_param, "1d", start, end, asset_type)
-        else:
+        elif asset_type == "industry_index":
             from app.data_providers.ths import THSProvider
 
             bars = THSProvider().fetch_kline(symbol_param, "1d", start, end, asset_type)
@@ -107,7 +121,7 @@ def quality_dict(row: KlineQuality | None) -> dict:
 
 
 def check_and_repair(db, symbol, provider, *, now: datetime | None = None) -> dict:
-    """只处理境内固定指数的日 K；不使用工作日猜测交易日。"""
+    """检查境内固定指数及已关注 A 股日 K；不使用工作日猜测交易日。"""
     if not eligible(symbol):
         return {"status": "unsupported", "added": 0}
     now = now or datetime.now(UTC)

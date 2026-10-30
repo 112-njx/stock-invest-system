@@ -852,7 +852,7 @@ onMounted(() => {
     loadSRLines()
   }
   qualityTimer = setInterval(async () => {
-    if (!props.symbol || !quality.value || quality.value.status !== 'partial') return
+    if (!props.symbol || !quality.value || quality.value.status === 'complete' || quality.value.status === 'unsupported') return
     const symbolId = props.symbol.id
     const period = market.period
     const checked = await fetchKlineQuality(symbolId, period).catch(() => null)

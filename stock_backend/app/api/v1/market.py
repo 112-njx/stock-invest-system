@@ -144,7 +144,7 @@ def get_kline_quality(
     data = kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period))
     tasks = [ops_repo.latest_sync_task(db, kind, sym.id) for kind in ('kline_incremental', 'kline_init')]
     symbol_syncing = any(
-        task is not None and task.status == 'running' and task.last_run_at is not None
+        task is not None and task.status in {'queued', 'running'} and task.last_run_at is not None
         and datetime.now(task.last_run_at.tzinfo) - task.last_run_at < timedelta(hours=2)
         for task in tasks
     )
