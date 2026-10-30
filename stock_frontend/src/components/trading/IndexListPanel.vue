@@ -22,6 +22,9 @@ const emit = defineEmits<{ (e: 'dblclick', symbol: SymbolInfo): void; (e: 'retry
 const market = useMarketStore()
 
 const currentId = computed(() => market.current?.id ?? null)
+const shanghaiDay = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+})
 
 function onSelect(s: SymbolInfo) {
   market.setCurrent(s)
@@ -37,7 +40,7 @@ function priceNote(s: SymbolInfo): string {
   const date = new Date(snapshotTime(snap.updated_at))
   if (Number.isNaN(date.getTime())) return '价格时间未知'
   const time = date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
-  const stale = props.cachedIds?.has(s.id) || Date.now() - date.getTime() > 5 * 60 * 1000
+  const stale = shanghaiDay.format(date) !== shanghaiDay.format(new Date())
   return `${stale ? '旧数据 · ' : ''}更新于 ${time}`
 }
 </script>
@@ -85,7 +88,7 @@ function priceNote(s: SymbolInfo): string {
           </span>
           <span class="col-num col-etf">{{ s.etf_linked || '--' }}</span>
           <span class="col-num col-opp">--</span>
-          <span class="idx-row__time" :class="{ 'is-stale': cachedIds?.has(s.id) }">{{ priceNote(s) }}</span>
+          <span class="idx-row__time" :class="{ 'is-stale': props.cachedIds?.has(s.id) }">{{ priceNote(s) }}</span>
         </div>
       </template>
     </div>
