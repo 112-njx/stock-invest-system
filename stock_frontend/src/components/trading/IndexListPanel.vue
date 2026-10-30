@@ -10,6 +10,7 @@ import { computed } from 'vue'
 import type { SymbolInfo } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
 import { formatPct, formatPrice, trendClass } from '@/utils/color'
+import { snapshotTime } from '@/utils/homeIndexCache'
 
 const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; loading?: boolean; error?: boolean; cachedIds?: Set<number> }>(), {
   loading: false,
@@ -33,7 +34,7 @@ function onDblClick(s: SymbolInfo) {
 function priceNote(s: SymbolInfo): string {
   const snap = market.snapshots[s.id]
   if (!snap?.updated_at) return '暂无价格数据'
-  const date = new Date(snap.updated_at)
+  const date = new Date(snapshotTime(snap.updated_at))
   if (Number.isNaN(date.getTime())) return '价格时间未知'
   const time = date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
   const stale = props.cachedIds?.has(s.id) || Date.now() - date.getTime() > 5 * 60 * 1000

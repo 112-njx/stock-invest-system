@@ -14,7 +14,7 @@ import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
 import { useSnapshotPolling } from '@/composables/useSnapshotPolling'
-import { readHomeIndexCache, writeHomeIndexCache } from '@/utils/homeIndexCache'
+import { readHomeIndexCache, snapshotTime, writeHomeIndexCache } from '@/utils/homeIndexCache'
 import { trackTiming } from '@/utils/monitor'
 import KLineChart from '@/components/trading/KLineChart.vue'
 import WatchlistPanel from '@/components/trading/WatchlistPanel.vue'
@@ -164,7 +164,7 @@ watch(() => market.snapshots, () => {
   cacheTimer = setTimeout(() => {
     cachedIds.value = new Set([...cachedIds.value].filter((id) => {
       const updated = market.snapshots[id]?.updated_at
-      return !updated || Date.now() - new Date(updated).getTime() > 5 * 60 * 1000
+      return !updated || Date.now() - snapshotTime(updated) > 5 * 60 * 1000
     }))
     if (market.fixedIndices.length) writeHomeIndexCache(
       market.fixedIndices.map((row) => ({ ...row, snapshot: market.snapshots[row.id] ?? null })),

@@ -3,6 +3,11 @@ import type { HomeIndex, Snapshot } from '@/api/market'
 const KEY = 'stock_home_indices_v1'
 const VERSION = 1
 
+/** 后端历史快照可能是无时区的 ISO 字符串；数据库约定它代表 UTC。 */
+export function snapshotTime(value: string): number {
+  return new Date(/[zZ]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`).getTime()
+}
+
 export function readHomeIndexCache(): HomeIndex[] {
   try {
     const value = JSON.parse(localStorage.getItem(KEY) || 'null')
