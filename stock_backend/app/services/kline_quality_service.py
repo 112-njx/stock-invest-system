@@ -146,6 +146,7 @@ def check_and_repair(db, symbol, provider, *, now: datetime | None = None) -> di
 
             market_cache.invalidate_kline_cache(symbol.id, "1d")
             invalidate_indicator_cache(symbol.id, "1d")
+            invalidate_indicator_cache(symbol.id, "1w")
             publish_kline_refresh(symbol.id, "1d")
     status = "unknown" if not calendar or not last_day else "partial" if missing else "complete"
     quality = get_quality(db, symbol.id, "1d")

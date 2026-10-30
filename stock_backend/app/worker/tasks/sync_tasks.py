@@ -53,10 +53,11 @@ def kline_backfill(symbol_id: int, period: str, start_iso: str, end_iso: str) ->
         if sym is None:
             return {"fetched": 0, "added": 0}
         symbol_param, asset_type = _provider_params(sym)
+        source_period = "1d" if period == "1w" else period
         bars = get_provider().fetch_kline(
-            symbol_param, period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
+            symbol_param, source_period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
         )
-        added = _write_bars(db, period, symbol_id, bars)
+        added = _write_bars(db, source_period, symbol_id, bars)
         db.commit()
         return {"fetched": len(bars), "added": added}
     finally:

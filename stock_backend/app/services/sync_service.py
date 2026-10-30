@@ -18,7 +18,7 @@ from app.utils.kline_partition import ensure_current_partitions
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-ALL_PERIODS = tuple(KLINE_MODELS.keys())
+ALL_PERIODS = tuple(period for period in KLINE_MODELS if period != "1w")  # 周 K 从本地日 K 聚合
 
 
 def is_market_open(now: datetime | None = None) -> bool:
@@ -51,6 +51,8 @@ def _write_bars(db, period: str, symbol_id: int, bars) -> int:
         from app.services.indicator_service import invalidate_indicator_cache
 
         invalidate_indicator_cache(symbol_id, period)
+        if period == "1d":
+            invalidate_indicator_cache(symbol_id, "1w")
         newest = max(bars, key=lambda b: b.ts)
         if previous_latest is None or market_cache.as_utc(newest.ts) > market_cache.as_utc(previous_latest):
             from app.ws import publisher

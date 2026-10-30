@@ -522,6 +522,7 @@ function toCandleData(bars: KLineBar[]) {
 }
 
 function recentBars(bars: KLineBar[]): KLineBar[] {
+  if (market.period === '1w') return bars.slice(-60)
   if (!props.recentMonths || !bars.length) return bars
   const cutoff = new Date(bars[bars.length - 1].ts)
   const day = cutoff.getUTCDate()
@@ -532,11 +533,11 @@ function recentBars(bars: KLineBar[]): KLineBar[] {
   return bars.filter((bar) => toUtcSeconds(bar.ts) * 1000 >= cutoff.getTime())
 }
 
-function threeMonthsBefore(iso: string): Date {
+function threeMonthsBefore(iso: string, months = 3): Date {
   const date = new Date(iso)
   const day = date.getUTCDate()
   date.setUTCDate(1)
-  date.setUTCMonth(date.getUTCMonth() - 3)
+  date.setUTCMonth(date.getUTCMonth() - months)
   const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate()
   date.setUTCDate(Math.min(day, lastDay))
   return date
@@ -560,7 +561,10 @@ async function loadOlder() {
   const version = loadVersion
   const symbolId = props.symbol.id
   const period = market.period
-  const end = new Date(new Date(historyCursor || loadedBars[0].ts).getTime() - 1)
+  const earliest = new Date(historyCursor || loadedBars[0].ts)
+  const end = market.period === '1w'
+    ? new Date(Date.UTC(earliest.getUTCFullYear(), earliest.getUTCMonth(), earliest.getUTCDate() - ((earliest.getUTCDay() + 6) % 7)) - 1)
+    : new Date(earliest.getTime() - 1)
   const start = threeMonthsBefore(end.toISOString())
   historyBusy = true
   historyState.value = 'loading'
@@ -582,6 +586,11 @@ async function loadOlder() {
     const older = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
     if (version !== loadVersion) return
     await merge(older)
+    if (period === '1w' && older.length) {
+      historyCursor = loadedBars[0].ts
+      historyState.value = ''
+      return
+    }
     const retry = retryBackfill
     retryBackfill = false
     const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry })
@@ -596,7 +605,7 @@ async function loadOlder() {
     const refreshed = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
     if (version !== loadVersion) return
     await merge(refreshed)
-    historyCursor = start.toISOString()
+    historyCursor = period === '1w' && refreshed.length ? loadedBars[0].ts : start.toISOString()
     historyState.value = refreshed.length ? '' : 'empty'
   } catch {
     if (version === loadVersion) historyState.value = 'failed'
@@ -607,7 +616,7 @@ async function loadOlder() {
 
 async function loadInitialMissing(version: number, symbolId: number, period: Period) {
   const end = new Date()
-  const start = threeMonthsBefore(end.toISOString())
+  const start = threeMonthsBefore(end.toISOString(), period === '1w' ? 15 : 3)
   historyWidth.value = container.value?.clientWidth ?? 0
   historyState.value = 'loading'
   try {
@@ -686,17 +695,19 @@ async function loadKline() {
   const t0 = performance.now()
   try {
     const [loaded, checked] = await Promise.all([
-      fetchKLine({ symbol: symbolId, period, limit: props.recentMonths ? 5000 : undefined }),
+      fetchKLine({ symbol: symbolId, period, limit: period === '1w' ? Math.max(60, loadedBars.length + 1) : props.recentMonths ? 5000 : undefined }),
       fetchKlineQuality(symbolId, period).catch(() => null),
     ])
     if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
-    const existing = initialViewport ? [] : loadedBars
+    // 周 K 的时间戳是本周最后一个交易日，周内更新会改变时间戳；重读时不能保留旧周柱。
+    const existing = initialViewport || period === '1w' ? [] : loadedBars
     const byTime = new Map([...existing, ...loaded].map((bar) => [bar.ts, bar]))
     const bars = [...byTime.values()].sort((a, b) => toUtcSeconds(a.ts) - toUtcSeconds(b.ts))
     quality.value = checked
     if (!chart) initChart()
     const previousRange = initialViewport ? null : chart?.timeScale().getVisibleLogicalRange()
     const previousCount = loadedBars.length
+    const previousFirstTs = loadedBars[0]?.ts
     loadedBars = bars
     historyCursor = bars[0]?.ts ?? ''
     candleSeries?.setData(toCandleData(bars))
@@ -726,7 +737,9 @@ async function loadKline() {
       } else chart?.timeScale().fitContent()
       initialViewport = false
     } else if (previousRange) {
-      const prepended = Math.max(0, bars.length - previousCount)
+      const prepended = period === '1w' && previousFirstTs
+        ? bars.filter((bar) => toUtcSeconds(bar.ts) < toUtcSeconds(previousFirstTs)).length
+        : Math.max(0, bars.length - previousCount)
       chart?.timeScale().setVisibleLogicalRange({ from: previousRange.from + prepended, to: previousRange.to + prepended })
     }
     trackTiming('kline_load', performance.now() - t0, {
@@ -839,6 +852,10 @@ onMounted(() => {
   }
   // V0.2：注册 WS kline 更新回调
   ws.setKlineHandler((symbolId, period, bar) => {
+    if (props.symbol?.id === symbolId && market.period === '1w' && (period === '1d' || period === '1w')) {
+      void loadKline()
+      return
+    }
     if (props.symbol?.id === symbolId && market.period === period) {
       if (!bar) { void loadKline(); return }
       if (lastBar && toUtcSeconds(bar.ts) < toUtcSeconds(lastBar.ts)) return

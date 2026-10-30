@@ -33,8 +33,9 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
     """只接受单个历史窗口；重复请求复用同一 Celery 任务。"""
     if payload.period not in ("15m", "1d", "1w", "1mon") or payload.start.tzinfo is None or payload.end.tzinfo is None:
         raise ApiError(status_code=400, msg="无效的周期或时区")
-    if not timedelta(0) < payload.end - payload.start <= timedelta(days=100) or payload.end > datetime.now(payload.end.tzinfo):
-        raise ApiError(status_code=400, msg="历史区间须在过去且不超过100天")
+    max_days = 500 if payload.period == "1w" else 100
+    if not timedelta(0) < payload.end - payload.start <= timedelta(days=max_days) or payload.end > datetime.now(payload.end.tzinfo):
+        raise ApiError(status_code=400, msg=f"历史区间须在过去且不超过{max_days}天")
     if db.get(Symbol, payload.symbol_id) is None:
         raise ApiError(status_code=404, msg="标的不存在")
     from app.utils.redis_client import get_redis_client

@@ -127,6 +127,11 @@ def get_kline(
     symbol_id = resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
+    if period == "1w":
+        from app.services.weekly_kline import get_weekly_bars
+
+        bars = get_weekly_bars(db, symbol_id, start, end, limit, offset)
+        return [market_cache.kline_bar_to_dict(bar) for bar in bars]
     use_cache = start is None and end is None and offset == 0
     if use_cache:
         cached = market_cache.get_kline_cache(symbol_id, period, limit)

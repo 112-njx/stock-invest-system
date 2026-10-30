@@ -56,7 +56,13 @@ def compute_indicators(
     if start is None:
         start = end - timedelta(days=_DEFAULT_BACK_DAYS)
 
-    if explicit_range:
+    if period == "1w":
+        from app.services.weekly_kline import get_weekly_bars
+
+        bars = get_weekly_bars(db, symbol_id, None, end, limit=100000) if explicit_range else get_weekly_bars(
+            db, symbol_id, None, None, limit=limit
+        )
+    elif explicit_range:
         # 从库中最早的 K 线起算递推指标，返回时再裁到请求区间，避免补页交界处数值跳变。
         bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end, limit=100000)
     else:
