@@ -60,6 +60,29 @@ def get_quality(db, symbol_id: int, period: str) -> KlineQuality | None:
     return db.get(KlineQuality, (symbol_id, period))
 
 
+def _fetch_gap_bars(provider, symbol_param, asset_type, first: date, last: date, required: set[date]):
+    """短区间优先选轻量来源；失败再按项目既有优先级链降级。"""
+    start = datetime.combine(first - timedelta(days=1), time(), UTC)
+    end = datetime.combine(last + timedelta(days=1), time(), UTC)
+    bars = []
+    try:
+        if asset_type == "index":
+            from app.data_providers.sina import SinaProvider
+
+            bars = SinaProvider().fetch_kline(symbol_param, "1d", start, end, asset_type)
+        else:
+            from app.data_providers.ths import THSProvider
+
+            bars = THSProvider().fetch_kline(symbol_param, "1d", start, end, asset_type)
+    except Exception:
+        pass
+    found = {market_cache.as_utc(bar.ts).date(): bar for bar in bars if market_cache.as_utc(bar.ts).date() in required}
+    if required - found.keys():
+        fallback = provider.fetch_kline(symbol_param, "1d", start, end, asset_type)
+        found.update({market_cache.as_utc(bar.ts).date(): bar for bar in fallback if market_cache.as_utc(bar.ts).date() in required})
+    return list(found.values())
+
+
 def quality_dict(row: KlineQuality | None) -> dict:
     if row is None:
         return {"status": "unchecked", "missing_count": 0, "missing_ranges": [], "checked_at": None}
@@ -97,10 +120,8 @@ def check_and_repair(db, symbol, provider, *, now: datetime | None = None) -> di
         for first, last in _ranges(missing, expected):
             # 含两端缓冲，兼容提供器日期边界及周末。
             try:
-                bars = provider.fetch_kline(
-                    symbol_param, "1d", datetime.combine(first - timedelta(days=1), time(), UTC),
-                    datetime.combine(last + timedelta(days=1), time(), UTC), asset_type,
-                )
+                required = {day for day in missing if first <= day <= last}
+                bars = _fetch_gap_bars(provider, symbol_param, asset_type, first, last, required)
                 added += kline_repo.upsert_bars(db, "1d", symbol.id, bars)
             except Exception:
                 db.rollback()

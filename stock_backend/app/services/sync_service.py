@@ -183,6 +183,7 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
             from app.services import kline_quality_service
 
             quality = kline_quality_service.check_and_repair(db, sym, provider)
+            written_total += quality.get("added", 0)
             if quality["status"] in ("partial", "unknown"):
                 incomplete += 1
             # 预同步内直接生成快照（K线推导兜底），避免"预同步完成但快照仍空"
