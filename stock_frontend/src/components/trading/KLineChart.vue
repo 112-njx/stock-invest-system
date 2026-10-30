@@ -1127,8 +1127,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 .kline-chart__hover-data { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
 .kline-chart__hover-data--up { color: var(--up); }
 .kline-chart__hover-data--down { color: var(--down); }
-.kline-chart__watermark { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; pointer-events: none; z-index: 1; color: var(--text); opacity: 0.22; font-size: clamp(28px, 7vw, 80px); font-weight: 600; line-height: 1.45; white-space: nowrap; }
-:global([data-theme='light']) .kline-chart__watermark { opacity: 0.18; }
+.kline-chart__watermark { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; pointer-events: none; z-index: 1; color: var(--text); opacity: var(--chart-watermark-opacity); font-size: clamp(28px, 7vw, 80px); font-weight: 600; line-height: 1.45; white-space: nowrap; }
 .kline-chart__quality { padding: 3px 10px; font-size: 11px; color: #eab308; background: var(--bg-panel); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sr-btn {
   display: inline-flex;
