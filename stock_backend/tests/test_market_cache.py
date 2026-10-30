@@ -1,6 +1,7 @@
 """V0.2 阶段一测试：K线缓存+击穿锁、快照缓存增强、指标缓存键、预同步/预热/sync_status。"""
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -216,12 +217,24 @@ def test_maybe_presync_triggers_when_stale():
 
 def test_maybe_presync_skips_when_fresh():
     sym = _make_symbol(type_="index", code="000001", name="测试上证指数", is_fixed=True)
-    _add_klines(sym.id, n=2)  # 有最近K线 → 不触发
+    _add_klines(sym.id, n=2)
     with patch("app.services.sync_service.symbol_repo.list_fixed_indices", return_value=[sym]):
-        with patch("app.worker.tasks.sync_tasks.kline_init_fixed_indices") as mock_task:
-            result = sync_service.maybe_presync_fixed_indices()
+        with patch("app.services.kline_quality_service.get_quality", return_value=SimpleNamespace(status="complete")):
+            with patch("app.worker.tasks.sync_tasks.kline_init_fixed_indices") as mock_task:
+                result = sync_service.maybe_presync_fixed_indices()
     assert result["triggered"] is False
     assert not mock_task.delay.called
+
+
+def test_maybe_presync_checks_fresh_but_unverified_klines():
+    sym = _make_symbol(type_="index", code="000001", name="测试上证指数", is_fixed=True)
+    _add_klines(sym.id, n=2)
+    with patch("app.services.sync_service.symbol_repo.list_fixed_indices", return_value=[sym]):
+        with patch("app.services.kline_quality_service.get_quality", return_value=None):
+            with patch("app.worker.tasks.sync_tasks.kline_init_fixed_indices") as mock_task:
+                result = sync_service.maybe_presync_fixed_indices()
+    assert result["triggered"] is True and result["stale"] == 0
+    assert mock_task.delay.called
 
 
 def test_warmup_fixed_indices_cache():
