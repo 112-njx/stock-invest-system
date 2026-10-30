@@ -142,6 +142,16 @@ export function fetchKLine(params: {
   return request<KLineBar[]>({ url: '/kline', params })
 }
 
+export function requestKlineBackfill(params: { symbol_id: number; period: Period; start: string; end: string; retry?: boolean }) {
+  return request<{ task_id: string }>({ url: '/kline/backfill', method: 'post', data: params, silent: true })
+}
+
+export function fetchKlineBackfillStatus(taskId: string) {
+  return request<{ status: 'loading' | 'done' | 'failed'; fetched?: number }>({
+    url: `/kline/backfill/${encodeURIComponent(taskId)}`, silent: true,
+  })
+}
+
 /** 批量实时快照（symbols 为 symbol_id 或代码逗号分隔；silent 供轮询使用，失败不 toast） */
 export function fetchSnapshot(symbols: Array<string | number>, silent = false) {
   return request<Snapshot[]>({ url: '/snapshot', params: { symbols: symbols.join(',') }, silent })
@@ -168,6 +178,8 @@ export function fetchIndicators(params: {
   period: Period
   names?: string
   limit?: number
+  start?: string
+  end?: string
 }) {
   return request<IndicatorRow[]>({ url: '/indicators', params })
 }
