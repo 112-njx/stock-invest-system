@@ -3,7 +3,7 @@
  * - 维护订阅集合（当前标的 + 关注列表 + 固定指数，去重）
  * - 连接建立后发 subscribe，切换标的/增删关注时自动更新
  * - 收到 snapshot 直接更新 marketStore.snapshots
- * - 收到 kline 调用注册的回调（KLineChart.updateLastBar）
+ * - 收到 kline 调用 KLineChart 注册的更新回调
  * - 断线时标记 disconnected，由 useSnapshotPolling 降级为 HTTP 轮询
  * 纯状态管理，无 UI 依赖。
  */

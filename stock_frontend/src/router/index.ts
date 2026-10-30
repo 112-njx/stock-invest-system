@@ -60,15 +60,8 @@ const router = createRouter({
       component: () => import('@/views/VerifyEmailView.vue'),
       meta: { bare: true },
     },
-    // G03：法律页面
-    // 《用户协议》保留独立页面；免责声明 / 隐私政策改为全局轻量弹窗（LegalModal），
-    // 不再配置专属 URL。旧链接（书签、邮件等）重定向回首页，避免落到空白页。
-    {
-      path: '/terms',
-      name: 'terms',
-      component: () => import('@/views/legal/TermsView.vue'),
-      meta: { bare: true },
-    },
+    // G03：法律文档统一使用全局弹窗；兼容旧链接并回到首页。
+    { path: '/terms', redirect: '/' },
     { path: '/privacy', redirect: '/' },
     { path: '/disclaimer', redirect: '/' },
   ],

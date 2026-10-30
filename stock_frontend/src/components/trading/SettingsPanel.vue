@@ -469,10 +469,10 @@ const menuStyle = computed(() => ({
           <span class="security-row__text">关于本产品</span>
           <span class="security-row__arrow">›</span>
         </button>
-        <RouterLink to="/terms" class="security-row">
+        <button class="security-row" @click="legalModal.show('terms')">
           <span class="security-row__text">用户协议</span>
           <span class="security-row__arrow">›</span>
-        </RouterLink>
+        </button>
         <button class="security-row" @click="legalModal.show('privacy')">
           <span class="security-row__text">隐私政策</span>
           <span class="security-row__arrow">›</span>

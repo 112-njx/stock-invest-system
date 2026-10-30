@@ -643,20 +643,6 @@ async function loadSRLines() {
   } catch { /* 静默 */ }
 }
 
-defineExpose({
-  setSRLines: (list: SupportResistanceItem[]) => drawSRLines(list),
-  refreshSRLines: () => loadSRLines(),
-  /** V0.2 阶段二：WS 推送新末根 K 线时调用 */
-  updateLastBar: (bar: KLineBar) => {
-    if (!candleSeries) return
-    lastBar = bar
-    candleSeries.update({
-      time: toUtcSeconds(bar.ts),
-      open: bar.open, high: bar.high, low: bar.low, close: bar.close,
-    })
-  },
-})
-
 /* ---------- 实时行情 ---------- */
 watch(() => props.markers, () => drawMarkers(), { deep: false })
 
