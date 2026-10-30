@@ -837,6 +837,10 @@ onMounted(() => {
     if (props.symbol?.id === symbolId && market.period === period) {
       if (!bar) { void loadKline(); return }
       if (lastBar && toUtcSeconds(bar.ts) < toUtcSeconds(lastBar.ts)) return
+      if (loadedBars.length && toUtcSeconds(loadedBars[loadedBars.length - 1].ts) === toUtcSeconds(bar.ts)) {
+        loadedBars[loadedBars.length - 1] = bar
+      } else loadedBars.push(bar)
+      hoveredCandle.value = null
       lastBar = bar
       candleSeries?.update({
         time: toUtcSeconds(bar.ts),
@@ -996,8 +1000,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
       </div>
     </div>
 
-    <div v-if="loading && !props.symbol" class="kline-chart__state">加载中…</div>
-    <div v-else-if="error" class="kline-chart__state kline-chart__state--error">
+    <div v-if="error" class="kline-chart__state kline-chart__state--error">
       <span>{{ error }}</span>
       <button class="kline-chart__retry" @click="retryLoad">点击重试</button>
     </div>
