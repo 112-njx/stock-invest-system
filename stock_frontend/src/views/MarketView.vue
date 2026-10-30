@@ -197,7 +197,7 @@ onUnmounted(() => {
       </div>
 
       <div class="grid-f">
-        <KLineChart :symbol="market.current" @dblclick="goDetail" />
+        <KLineChart :symbol="market.current" :recent-months="4" @dblclick="goDetail" />
         <!-- V0.2：固定指数预同步进度条（absolute覆盖层，不改变布局） -->
         <div v-if="syncProgress !== null" class="sync-overlay">
           <div class="sync-overlay__bar"><div class="sync-overlay__fill" :style="{ width: syncProgress + '%' }" /></div>

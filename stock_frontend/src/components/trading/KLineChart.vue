@@ -68,6 +68,8 @@ const props = withDefaults(
     symbol: SymbolInfo | null
     showSrButton?: boolean
     showIndicators?: boolean
+    /** 首页仅展示最近 N 个自然月的 K 线 */
+    recentMonths?: number
     /** G32：回测买卖点标记（空数组/不传则不渲染） */
     markers?: BacktestTrade[]
   }>(),
@@ -476,6 +478,17 @@ function toCandleData(bars: KLineBar[]) {
   }))
 }
 
+function recentBars(bars: KLineBar[]): KLineBar[] {
+  if (!props.recentMonths || !bars.length) return bars
+  const cutoff = new Date(bars[bars.length - 1].ts)
+  const day = cutoff.getUTCDate()
+  cutoff.setUTCDate(1)
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - props.recentMonths)
+  const lastDay = new Date(Date.UTC(cutoff.getUTCFullYear(), cutoff.getUTCMonth() + 1, 0)).getUTCDate()
+  cutoff.setUTCDate(Math.min(day, lastDay))
+  return bars.filter((bar) => toUtcSeconds(bar.ts) * 1000 >= cutoff.getTime())
+}
+
 function setIndicatorData() {
   if (!indicatorRows.value.length) return
   const c = cssColors()
@@ -516,7 +529,12 @@ async function loadKline() {
   error.value = ''
   const t0 = performance.now()
   try {
-    const bars = await fetchKLine({ symbol: props.symbol.id, period: market.period })
+    const loaded = await fetchKLine({
+      symbol: props.symbol.id,
+      period: market.period,
+      limit: props.recentMonths ? 5000 : undefined,
+    })
+    const bars = recentBars(loaded)
     if (!chart) initChart()
     candleSeries?.setData(toCandleData(bars))
     lastBar = bars.length ? bars[bars.length - 1] : null
