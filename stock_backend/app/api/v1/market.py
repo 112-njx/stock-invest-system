@@ -188,7 +188,7 @@ def get_sync_status(
 
 @router.post("/fetch-all")
 def fetch_all(current: User = Depends(get_current_admin)) -> dict:
-    """一次性全量同步（免鉴权，本地测试/运维用）：固定指数K线+快照 + 全量实时快照，同步执行不依赖 Celery/beat。
+    """管理员专用一次性全量同步：固定指数K线+快照 + 全量实时快照，同步执行不依赖 Celery/beat。
 
     用于本地无法触发定时任务时一次性补齐大盘/行业指数数据，返回固定指数同步结果与实时轮询结果。
     """

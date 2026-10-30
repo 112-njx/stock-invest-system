@@ -2,7 +2,7 @@
 
 调度时刻（见 app/worker/beat.py）刻意选在业务空闲窗口：02:00 全量、02:30 异地同步、
 周日 03:30 恢复演练 —— worker 当前为 ``--pool=solo --concurrency=1``，备份执行期间会独占
-worker，放凌晨可避免阻塞 15s 实时轮询（realtime_poll 在非交易时段本就空转返回）。
+worker，放凌晨可避免阻塞行情轮询（realtime_poll 在非交易时段本就空转返回）。
 
 实现说明：任务直接调用 ``backup_service``（与 ``scripts/backup_pg.sh`` 同一实现），
 不通过 shell 转发 —— worker 在 Windows 宿主与 Linux 容器均需可跑，依赖 bash 会引入平台差异。

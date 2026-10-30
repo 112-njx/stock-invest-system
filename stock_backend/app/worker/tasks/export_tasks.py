@@ -1,7 +1,7 @@
 """导出队列任务（G17）：用户数据导出 + 过期文件清理。
 
 队列说明：复用 ai 队列（worker 启动命令 `-Q backtest,sync,ai` 未含独立 export 队列，
-新增队列需同步改 docker-compose；放 sync 会阻塞 15s 实时轮询）。详见 Agent_code.md 待确认项。
+新增队列需同步改 docker-compose；放 sync 会阻塞行情轮询）。详见 Agent_code.md 待确认项。
 """
 
 import logging
