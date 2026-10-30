@@ -564,35 +564,39 @@ async function loadOlder() {
   historyBusy = true
   historyState.value = 'loading'
   try {
-    let older = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
-    if (version !== loadVersion) return
-    if (!older.length) {
-      const retry = retryBackfill
-      retryBackfill = false
-      const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry })
-      for (let attempt = 0; attempt < 45; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 2000))
-        if (version !== loadVersion) return
-        const status = await fetchKlineBackfillStatus(task_id)
-        if (status.status === 'failed') throw new Error('历史数据拉取失败')
-        if (status.status === 'done') break
-        if (attempt === 44) throw new Error('历史数据拉取超时')
-      }
-      older = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
+    const merge = async (older: KLineBar[]) => {
+      if (!chart || !older.length || version !== loadVersion) return
+      const firstTime = toUtcSeconds(loadedBars[0].ts)
+      const range = chart.timeScale().getVisibleLogicalRange()
+      const byTime = new Map([...loadedBars, ...older].map((bar) => [bar.ts, bar]))
+      const merged = [...byTime.values()].sort((a, b) => toUtcSeconds(a.ts) - toUtcSeconds(b.ts))
+      const prepended = merged.filter((bar) => toUtcSeconds(bar.ts) < firstTime).length
+      loadedBars = merged
+      candleSeries?.setData(toCandleData(loadedBars))
+      barRange = { from: toUtcSeconds(loadedBars[0].ts), to: toUtcSeconds(loadedBars[loadedBars.length - 1].ts) }
+      drawMarkers()
+      if (range && prepended) chart.timeScale().setVisibleLogicalRange({ from: range.from + prepended, to: range.to + prepended })
+      await refreshIndicators(version, symbolId, period)
     }
+    const older = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
     if (version !== loadVersion) return
+    await merge(older)
+    const retry = retryBackfill
+    retryBackfill = false
+    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry })
+    for (let attempt = 0; attempt < 45; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      if (version !== loadVersion) return
+      const status = await fetchKlineBackfillStatus(task_id)
+      if (status.status === 'failed') throw new Error('历史数据拉取失败')
+      if (status.status === 'done') break
+      if (attempt === 44) throw new Error('历史数据拉取超时')
+    }
+    const refreshed = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
+    if (version !== loadVersion) return
+    await merge(refreshed)
     historyCursor = start.toISOString()
-    if (!older.length) { historyState.value = 'empty'; return }
-    const existing = new Set(loadedBars.map((bar) => bar.ts))
-    const added = older.filter((bar) => !existing.has(bar.ts))
-    const range = chart.timeScale().getVisibleLogicalRange()
-    loadedBars = [...added, ...loadedBars]
-    candleSeries?.setData(toCandleData(loadedBars))
-    barRange = { from: toUtcSeconds(loadedBars[0].ts), to: toUtcSeconds(loadedBars[loadedBars.length - 1].ts) }
-    drawMarkers()
-    if (range && added.length) chart.timeScale().setVisibleLogicalRange({ from: range.from + added.length, to: range.to + added.length })
-    await refreshIndicators(version, symbolId, period)
-    historyState.value = ''
+    historyState.value = refreshed.length ? '' : 'empty'
   } catch {
     if (version === loadVersion) historyState.value = 'failed'
   } finally {
