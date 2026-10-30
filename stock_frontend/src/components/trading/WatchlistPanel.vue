@@ -28,6 +28,7 @@ withDefaults(defineProps<{ readonly?: boolean }>(), { readonly: false })
 
 const emit = defineEmits<{
   (e: 'dblclick', item: WatchlistItem): void
+  (e: 'loaded'): void
   /** G35：未登录时用户点击「登录 / 注册」或搜索添加 → 由父级打开登录弹窗 */
   (e: 'require-login'): void
 }>()
@@ -83,6 +84,7 @@ async function load() {
     market.setWatchlist([])
     loading.value = false
     loadError.value = false
+    emit('loaded')
     return
   }
   loading.value = true
@@ -93,6 +95,7 @@ async function load() {
     loadError.value = true
   } finally {
     loading.value = false
+    emit('loaded')
   }
 }
 

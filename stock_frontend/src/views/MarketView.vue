@@ -7,14 +7,15 @@
  * - I 通用设置与开发者信息（SettingsPanel）
  * 首屏并行加载：固定指数列表 + 关注列表 + 默认标的 K 线；轮询刷新全部快照。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchSymbols, fetchSyncStatus } from '@/api/market'
+import { fetchHomeIndices, fetchSyncStatus, type HomeIndex } from '@/api/market'
 import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
-import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
 import { useSnapshotPolling } from '@/composables/useSnapshotPolling'
+import { readHomeIndexCache, writeHomeIndexCache } from '@/utils/homeIndexCache'
+import { trackTiming } from '@/utils/monitor'
 import KLineChart from '@/components/trading/KLineChart.vue'
 import WatchlistPanel from '@/components/trading/WatchlistPanel.vue'
 import IndexListPanel from '@/components/trading/IndexListPanel.vue'
@@ -26,56 +27,112 @@ const ws = useWsStore()
 const authModal = useAuthModalStore()
 
 const indicesLoading = ref(false)
+const indicesError = ref(false)
+const cachedIds = ref(new Set<number>())
 const { start } = useSnapshotPolling(4000)
-
-/** 同步超时阈值（毫秒）：running 持续超过该值即降级用库中已有数据渲染，不阻塞页面 */
-const SYNC_TIMEOUT_MS = 30000
 
 /** V0.2：固定指数预同步进度（0-100），null=未在同步 */
 const syncProgress = ref<number | null>(null)
 const syncLabel = ref('')
 let syncTimer: ReturnType<typeof setInterval> | null = null
 /** 本轮进入 running 的时间戳（用于超时降级判断） */
-let syncStartedAt = 0
-/** 是否已超时降级（降级后同步完成仍要刷新最新数据） */
-let syncDegraded = false
+let wasSyncing = false
+let statusInFlight = false
+let indicesInFlight: Promise<void> | null = null
+let refreshAfterCurrent = false
+let watchlistReady = false
+let mounted = false
+let cacheTimer: ReturnType<typeof setTimeout> | null = null
+const pageStartedAt = performance.now()
+let namesTracked = false
+let pricesTracked = false
+
+async function recordVisible(source: string) {
+  await nextTick()
+  if (!namesTracked && market.fixedIndices.length) {
+    namesTracked = true
+    trackTiming('home_index_names_visible', performance.now() - pageStartedAt, { source })
+  }
+  if (!pricesTracked && market.fixedIndices.some((i) => market.snapshots[i.id]?.price != null)) {
+    pricesTracked = true
+    trackTiming('home_index_prices_visible', performance.now() - pageStartedAt, { source })
+  }
+}
+
+function chooseDefaultSymbol() {
+  if (market.current || !watchlistReady) return
+  const first = market.watchlist[0]
+  if (first) market.setCurrent({ id: first.symbol_id, code: first.code, name: first.name, type: first.type })
+  else if (market.fixedIndices.length) market.setCurrent(market.fixedIndices[0])
+}
+
+function onWatchlistLoaded() {
+  watchlistReady = true
+  chooseDefaultSymbol()
+}
+
+function applyIndices(rows: HomeIndex[], source: string) {
+  market.setFixedIndices(rows)
+  market.mergeSnapshots(rows.flatMap((row) => row.snapshot?.price != null ? [row.snapshot] : []))
+  cachedIds.value = new Set(rows
+    .filter((row) => source === 'cache' || (row.snapshot?.price == null && market.snapshots[row.id]?.price != null))
+    .map((row) => row.id))
+  chooseDefaultSymbol()
+  void recordVisible(source)
+}
+
+function loadHomeIndices(): Promise<void> {
+  if (indicesInFlight) {
+    refreshAfterCurrent = true
+    return indicesInFlight
+  }
+  indicesLoading.value = !market.fixedIndices.length
+  indicesError.value = false
+  indicesInFlight = (async () => {
+    try {
+      const rows = await fetchHomeIndices()
+      if (!mounted) return
+      applyIndices(rows, 'server')
+      writeHomeIndexCache(rows, market.snapshots)
+    } catch {
+      if (mounted) indicesError.value = !market.fixedIndices.length
+    } finally {
+      indicesLoading.value = false
+      indicesInFlight = null
+      if (refreshAfterCurrent && mounted) {
+        refreshAfterCurrent = false
+        void loadHomeIndices()
+      }
+    }
+  })()
+  return indicesInFlight
+}
 
 async function checkSyncStatus() {
+  if (statusInFlight || !mounted) return
+  statusInFlight = true
   try {
     const s = await fetchSyncStatus('fixed_indices')
     market.setSyncStatus(s)
     const running = ['pending', 'running', 'queued'].includes(s.status)
     if (running) {
-      if (!syncStartedAt) syncStartedAt = Date.now()
       syncProgress.value = s.total ? Math.round((s.progress / s.total) * 100) : 0
       syncLabel.value = `数据同步中（${s.progress}/${s.total}）`
-      indicesLoading.value = true
+      wasSyncing = true
       if (!syncTimer) syncTimer = setInterval(checkSyncStatus, 3000)
-      // 超时降级：running 超过阈值仍未完成 → 先用库中已有快照渲染，同步完成后自动刷新
-      if (!syncDegraded && Date.now() - syncStartedAt > SYNC_TIMEOUT_MS) {
-        syncDegraded = true
-        indicesLoading.value = false
-        await loadFixedIndices()
-        await ensureDefaultSymbol()
-        start()
-      }
     } else {
+      const shouldRefresh = wasSyncing
+      wasSyncing = false
       syncProgress.value = null
       syncLabel.value = ''
-      syncStartedAt = 0
-      syncDegraded = false
       if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
-      // 同步完成/失败后加载数据（超时降级后仍须刷新为最新结果）
-      if (indicesLoading.value || syncDegraded) {
-        indicesLoading.value = false
-        await loadFixedIndices()
-        await ensureDefaultSymbol()
-        start()
-      }
+      if (shouldRefresh) void loadHomeIndices()
     }
   } catch {
     // 静默重试
     if (!syncTimer) syncTimer = setInterval(checkSyncStatus, 3000)
+  } finally {
+    statusInFlight = false
   }
 }
 
@@ -83,31 +140,17 @@ async function checkSyncStatus() {
 const marketIndices = computed(() => market.fixedIndices.filter((i) => (i.sort_order ?? 99) <= 14))
 const industryIndices = computed(() => market.fixedIndices.filter((i) => (i.sort_order ?? 99) > 14))
 
-async function loadFixedIndices() {
-  indicesLoading.value = true
-  try {
-    market.setFixedIndices(await fetchSymbols({ type: 'index', is_fixed: 1 }))
-  } catch {
-    /* 错误已 toast；留空态由面板兜底 */
-  } finally {
-    indicesLoading.value = false
-  }
-}
-
 function goDetail() {
   router.push('/market/detail')
 }
 
-onMounted(async () => {
-  // V0.2：先查固定指数预同步状态，同步中显示进度条+骨架屏，done后加载数据
-  await checkSyncStatus()
-  // 无同步进行（已完成/无记录），直接加载
-  if (syncProgress.value === null) {
-    await loadFixedIndices()
-    await ensureDefaultSymbol()
-    start()
-  }
-  // V0.2：初始化 WS 实时行情连接
+onMounted(() => {
+  mounted = true
+  const cached = readHomeIndexCache()
+  if (cached.length) applyIndices(cached, 'cache')
+  void loadHomeIndices()
+  void checkSyncStatus()
+  void start()
   ws.init()
   ws.syncSubscriptions()
 })
@@ -116,14 +159,29 @@ onMounted(async () => {
 watch(() => market.current?.id, () => ws.syncSubscriptions())
 watch(() => market.watchlist.length, () => ws.syncSubscriptions())
 watch(() => market.fixedIndices.length, () => ws.syncSubscriptions())
+watch(() => market.snapshots, () => {
+  if (cacheTimer) clearTimeout(cacheTimer)
+  cacheTimer = setTimeout(() => {
+    cachedIds.value = new Set([...cachedIds.value].filter((id) => {
+      const updated = market.snapshots[id]?.updated_at
+      return !updated || Date.now() - new Date(updated).getTime() > 5 * 60 * 1000
+    }))
+    if (market.fixedIndices.length) writeHomeIndexCache(
+      market.fixedIndices.map((row) => ({ ...row, snapshot: market.snapshots[row.id] ?? null })),
+      market.snapshots,
+    )
+  }, 500)
+  void recordVisible('update')
+}, { deep: true })
 
 // V0.2：卸载时清理 sync-status 轮询并重置同步状态，避免切页后后台持续请求、
 // 以及 AI 页等其它页面读到残留的"同步中"状态（快照轮询由 useSnapshotPolling 内部 onBeforeUnmount 停止；
 // WS 为全局多标签页单例，切页不断开）
 onUnmounted(() => {
+  mounted = false
   if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
-  syncStartedAt = 0
-  syncDegraded = false
+  if (cacheTimer) { clearTimeout(cacheTimer); cacheTimer = null }
+  wasSyncing = false
   syncProgress.value = null
   syncLabel.value = ''
   market.setSyncStatus(null)
@@ -135,7 +193,7 @@ onUnmounted(() => {
     <div class="market-grid">
       <div class="grid-e">
         <!-- G35：未登录时面板内展示引导卡片，点击登录入口打开全局登录弹窗 -->
-        <WatchlistPanel readonly @dblclick="goDetail" @require-login="authModal.show('login')" />
+        <WatchlistPanel readonly @dblclick="goDetail" @loaded="onWatchlistLoaded" @require-login="authModal.show('login')" />
       </div>
 
       <div class="grid-f">
@@ -148,11 +206,11 @@ onUnmounted(() => {
       </div>
 
       <div class="grid-g">
-        <IndexListPanel title="大盘指数" :list="marketIndices" :loading="indicesLoading" @dblclick="goDetail" />
+        <IndexListPanel title="大盘指数" :list="marketIndices" :loading="indicesLoading" :error="indicesError" :cached-ids="cachedIds" @retry="loadHomeIndices" @dblclick="goDetail" />
       </div>
 
       <div class="grid-h">
-        <IndexListPanel title="行业指数" :list="industryIndices" :loading="indicesLoading" @dblclick="goDetail" />
+        <IndexListPanel title="行业指数" :list="industryIndices" :loading="indicesLoading" :error="indicesError" :cached-ids="cachedIds" @retry="loadHomeIndices" @dblclick="goDetail" />
       </div>
 
       <div class="grid-i">

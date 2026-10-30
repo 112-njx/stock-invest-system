@@ -41,6 +41,21 @@ def search_symbols(
     return ok(data=[SymbolSearchOut(**s).model_dump(mode="json") for s in symbols])
 
 
+@router.get("/market/home-indices")
+def home_indices(db: Session = Depends(get_read_db)) -> dict:
+    """首页固定指数：一次返回排序信息和已有快照，不触发外部行情同步。"""
+    symbols = market_service.list_symbols(db, type_="index", fixed_only=True)
+    snapshots = {s["symbol_id"]: s for s in market_service.get_snapshots(db, [s.id for s in symbols])}
+    return ok(data=[
+        {
+            **SymbolOut.model_validate(symbol).model_dump(),
+            "snapshot": SnapshotOut(**snapshots[symbol.id]).model_dump(mode="json")
+            if symbol.id in snapshots else None,
+        }
+        for symbol in symbols
+    ])
+
+
 @router.get("/kline")
 def get_kline(
     symbol: str = Query(..., description="标的代码（或 symbol_id）"),

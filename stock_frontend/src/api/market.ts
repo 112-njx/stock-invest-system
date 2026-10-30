@@ -19,6 +19,15 @@ export interface SymbolInfo {
   has_kline?: boolean
 }
 
+export interface HomeIndex extends SymbolInfo {
+  snapshot: Snapshot | null
+}
+
+/** 首页固定指数名单与已有价格，一次返回；不触发外部行情抓取。 */
+export function fetchHomeIndices() {
+  return request<HomeIndex[]>({ url: '/market/home-indices', silent: true })
+}
+
 export interface KLineBar {
   ts: string
   open: number
