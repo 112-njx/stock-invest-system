@@ -158,8 +158,32 @@ function onWheel(e: WheelEvent) {
 interface IndicatorPaneRef {
   pane: IPaneApi<any>
   series: ISeriesApi<any>[]
+  markers?: ISeriesMarkersPluginApi<Time>
+  referenceLines?: IPriceLine[]
 }
 const indicatorPanes = new Map<IndicatorKey, IndicatorPaneRef>()
+const indicatorTops = ref<Partial<Record<IndicatorKey, number>>>({})
+const hoveredIndicatorTime = ref<number | null>(null)
+let paneLayoutFrame = 0
+let chartResizeObserver: ResizeObserver | null = null
+
+function updateIndicatorTops() {
+  if (!chart) return
+  const tops: Partial<Record<IndicatorKey, number>> = {}
+  let top = 0
+  for (const pane of chart.panes()) {
+    for (const [key, entry] of indicatorPanes) {
+      if (entry.pane === pane) tops[key] = top
+    }
+    top += pane.getHeight() + 2 // pane separator
+  }
+  indicatorTops.value = tops
+}
+
+function scheduleIndicatorTops() {
+  cancelAnimationFrame(paneLayoutFrame)
+  paneLayoutFrame = requestAnimationFrame(updateIndicatorTops)
+}
 
 const PERIODS: { label: string; value: Period }[] = [
   { label: '日K', value: '1d' },
@@ -234,6 +258,8 @@ function cssColors() {
     indJ: get('--ind-j') || '#a855f7',
     indDif: get('--ind-dif') || '#3b82f6',
     indDea: get('--ind-dea') || '#f59e0b',
+    indMa5: get('--ind-k') || '#eab308',
+    indMa10: get('--up') || '#ef4444',
   }
 }
 
@@ -331,6 +357,8 @@ function initChart() {
 
   // G32：hover 命中买卖点时显示浮层
   chart.subscribeCrosshairMove(onCrosshairMove)
+  chartResizeObserver = new ResizeObserver(scheduleIndicatorTops)
+  chartResizeObserver.observe(chartHost.value)
 
   chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange)
   container.value?.addEventListener('dblclick', onDblClick, { capture: true })
@@ -354,7 +382,10 @@ function applyTheme() {
   for (const [key, ref] of indicatorPanes) {
     const c2 = cssColors()
     if (key === 'volume' || key === 'amount') {
-      // 柱状图颜色在数据中设置，series 本身不需要改
+      if (key === 'volume') {
+        ref.series[1]?.applyOptions({ color: c2.indMa5 })
+        ref.series[2]?.applyOptions({ color: c2.indMa10 })
+      }
     } else if (key === 'macd') {
       // ref.series: [hist, dif, dea]
       if (ref.series[1]) ref.series[1].applyOptions({ color: c2.indDif })
@@ -363,10 +394,12 @@ function applyTheme() {
       if (ref.series[0]) ref.series[0].applyOptions({ color: c2.indK })
       if (ref.series[1]) ref.series[1].applyOptions({ color: c2.indD })
       if (ref.series[2]) ref.series[2].applyOptions({ color: c2.indJ })
+      ref.referenceLines?.forEach((line) => line.applyOptions({ color: c2.text }))
     }
   }
   redrawSRLines()
   drawMarkers() // G32：主题切换后按新配色重绘买卖点
+  setIndicatorData() // 柱状图颜色来自数据，主题变化后也要更新
 }
 
 function onVisibleRangeChange(range: { from: number; to: number } | null) {
@@ -390,6 +423,7 @@ function removeAllIndicatorPanes() {
     chart.removePane(i)
   }
   indicatorPanes.clear()
+  indicatorTops.value = {}
 }
 
 function rebuildIndicatorPanes() {
@@ -401,12 +435,21 @@ function rebuildIndicatorPanes() {
     const pane = chart.addPane()
     pane.setStretchFactor(1)
     const series: ISeriesApi<any>[] = []
+    const referenceLines: IPriceLine[] = []
 
     if (meta.key === 'volume') {
       const s = pane.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
       })
-      series.push(s)
+      const ma5 = pane.addSeries(LineSeries, {
+        color: c.indMa5, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: 'volume' },
+      })
+      const ma10 = pane.addSeries(LineSeries, {
+        color: c.indMa10, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+        priceFormat: { type: 'volume' },
+      })
+      series.push(s, ma5, ma10)
     } else if (meta.key === 'amount') {
       const s = pane.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
@@ -434,13 +477,21 @@ function rebuildIndicatorPanes() {
         color: c.indJ, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
       })
       series.push(k, d, j)
+      for (const level of [20, 80]) {
+        referenceLines.push(k.createPriceLine({ price: level, color: c.text, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false }))
+      }
     }
 
-    indicatorPanes.set(meta.key, { pane, series })
+    indicatorPanes.set(meta.key, {
+      pane, series,
+      referenceLines,
+      ...(meta.key === 'macd' ? { markers: createSeriesMarkers(series[1], []) } : {}),
+    })
   }
 
   // 重新设置主图 stretch factor
   chart.panes()[0]?.setStretchFactor(2)
+  scheduleIndicatorTops()
 }
 
 /* ---------- G32：回测买卖点标记 ---------- */
@@ -487,6 +538,7 @@ function drawMarkers() {
 
 /** hover 命中买卖点 → 浮层显示成交价/数量/费用/触发原因 */
 function onCrosshairMove(param: { time?: unknown; point?: { x: number; y: number } }) {
+  hoveredIndicatorTime.value = typeof param.time === 'number' ? param.time : null
   const index = param.time == null ? -1 : loadedBars.findIndex((bar) => toUtcSeconds(bar.ts) === param.time)
   if (index >= 0) {
     const bar = loadedBars[index]
@@ -514,6 +566,48 @@ function reasonText(t: BacktestTrade): string {
 
 /* ---------- 数据 ---------- */
 const indicatorRows = ref<IndicatorRow[]>([])
+const selectedIndicatorIndex = computed(() => {
+  const rows = indicatorRows.value
+  if (!rows.length) return -1
+  if (hoveredIndicatorTime.value == null) return rows.length - 1
+  return rows.findIndex((row) => toUtcSeconds(row.ts) === hoveredIndicatorTime.value)
+})
+const selectedIndicator = computed(() => indicatorRows.value[selectedIndicatorIndex.value] ?? null)
+
+function movingAverage(rows: IndicatorRow[], index: number, count: number): number | null {
+  if (index < count - 1) return null
+  return rows.slice(index - count + 1, index + 1).reduce((sum, row) => sum + row.volume, 0) / count
+}
+
+const selectedVolumeAverages = computed(() => ({
+  ma5: movingAverage(indicatorRows.value, selectedIndicatorIndex.value, 5),
+  ma10: movingAverage(indicatorRows.value, selectedIndicatorIndex.value, 10),
+}))
+
+const selectedMacdCrosses = computed(() => {
+  let golden = 0
+  let death = 0
+  const rows = indicatorRows.value
+  for (let i = 1; i <= selectedIndicatorIndex.value; i++) {
+    const previous = rows[i - 1]
+    const current = rows[i]
+    if (previous.macd_dif == null || previous.macd_dea == null || current.macd_dif == null || current.macd_dea == null) continue
+    if (previous.macd_dif <= previous.macd_dea && current.macd_dif > current.macd_dea) golden++
+    if (previous.macd_dif >= previous.macd_dea && current.macd_dif < current.macd_dea) death++
+  }
+  return { golden, death }
+})
+
+function indicatorNumber(value: number | null | undefined, digits = 2): string {
+  return value == null || !Number.isFinite(value) ? '—' : value.toFixed(digits)
+}
+
+function indicatorQuantity(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  if (Math.abs(value) >= 1e8) return `${(value / 1e8).toFixed(2)}亿`
+  if (Math.abs(value) >= 1e4) return `${(value / 1e4).toFixed(2)}万`
+  return value.toFixed(0)
+}
 
 function toCandleData(bars: KLineBar[]) {
   return bars.map((b) => ({
@@ -662,6 +756,12 @@ function setIndicatorData() {
         value: r.volume,
         color: r.close >= r.open ? c.up : c.down,
       })))
+      for (const [seriesIndex, count] of [[1, 5], [2, 10]]) {
+        ref.series[seriesIndex].setData(rows.map((r, i) => {
+          const value = movingAverage(rows, i, count)
+          return value == null ? { time: toUtcSeconds(r.ts) } : { time: toUtcSeconds(r.ts), value }
+        }))
+      }
     } else if (key === 'amount') {
       ref.series[0].setData(rows.map((r) => ({
         time: toUtcSeconds(r.ts),
@@ -671,15 +771,27 @@ function setIndicatorData() {
     } else if (key === 'macd') {
       ref.series[0].setData(rows.map((r) => ({
         time: toUtcSeconds(r.ts),
-        value: r.macd_hist ?? 0,
+        ...(r.macd_hist == null ? {} : { value: r.macd_hist }),
         color: (r.macd_hist ?? 0) >= 0 ? c.up : c.down,
       })))
-      ref.series[1].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), value: r.macd_dif ?? 0 })))
-      ref.series[2].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), value: r.macd_dea ?? 0 })))
+      ref.series[1].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.macd_dif == null ? {} : { value: r.macd_dif }) })))
+      ref.series[2].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.macd_dea == null ? {} : { value: r.macd_dea }) })))
+      const crosses: SeriesMarker<Time>[] = []
+      for (let i = 1; i < rows.length; i++) {
+        const previous = rows[i - 1]
+        const current = rows[i]
+        if (previous.macd_dif == null || previous.macd_dea == null || current.macd_dif == null || current.macd_dea == null) continue
+        if (previous.macd_dif <= previous.macd_dea && current.macd_dif > current.macd_dea) {
+          crosses.push({ time: toUtcSeconds(current.ts), position: 'belowBar', shape: 'circle', color: c.down })
+        } else if (previous.macd_dif >= previous.macd_dea && current.macd_dif < current.macd_dea) {
+          crosses.push({ time: toUtcSeconds(current.ts), position: 'aboveBar', shape: 'circle', color: c.up })
+        }
+      }
+      ref.markers?.setMarkers(crosses)
     } else if (key === 'kdj') {
-      ref.series[0].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), value: r.kdj_k ?? 0 })))
-      ref.series[1].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), value: r.kdj_d ?? 0 })))
-      ref.series[2].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), value: r.kdj_j ?? 0 })))
+      ref.series[0].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.kdj_k == null ? {} : { value: r.kdj_k }) })))
+      ref.series[1].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.kdj_d == null ? {} : { value: r.kdj_d }) })))
+      ref.series[2].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.kdj_j == null ? {} : { value: r.kdj_j }) })))
     }
   }
 }
@@ -808,6 +920,7 @@ watch(() => props.markers, () => drawMarkers(), { deep: false })
 
 watch(() => props.symbol, (newSym, oldSym) => {
   hoveredCandle.value = null
+  hoveredIndicatorTime.value = null
   initialViewport = true
   historyState.value = ''
   loadedBars = []
@@ -836,6 +949,8 @@ watch(() => props.symbol, (newSym, oldSym) => {
 
 watch(() => market.period, () => {
   hoveredCandle.value = null
+  hoveredIndicatorTime.value = null
+  indicatorRows.value = []
   initialViewport = true
   historyState.value = ''
   loadedBars = []
@@ -883,6 +998,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  cancelAnimationFrame(paneLayoutFrame)
+  chartResizeObserver?.disconnect()
   if (qualityTimer) clearInterval(qualityTimer)
   container.value?.removeEventListener('dblclick', onDblClick, true)
   chart?.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange)
@@ -1004,6 +1121,38 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
     <div ref="container" class="kline-chart__body">
       <div ref="chartHost" class="kline-chart__canvas" />
+      <div
+        v-for="indicator in showIndicators ? enabledList : []"
+        :key="indicator.key"
+        class="kline-chart__indicator-legend"
+        :style="{ top: `${indicatorTops[indicator.key] ?? 0}px`, visibility: indicatorTops[indicator.key] == null ? 'hidden' : 'visible' }"
+        aria-live="off"
+      >
+        <template v-if="indicator.key === 'volume'">
+          <span>成交量(5,10)</span>
+          <span>VOL:{{ indicatorQuantity(selectedIndicator?.volume) }}</span>
+          <span class="legend-ma5">MA5:{{ indicatorQuantity(selectedVolumeAverages.ma5) }}</span>
+          <span class="legend-ma10">MA10:{{ indicatorQuantity(selectedVolumeAverages.ma10) }}</span>
+        </template>
+        <template v-else-if="indicator.key === 'macd'">
+          <span>MACD(12,26,9)</span>
+          <span :class="(selectedIndicator?.macd_hist ?? 0) >= 0 ? 'legend-up' : 'legend-down'">柱:{{ indicatorNumber(selectedIndicator?.macd_hist) }}</span>
+          <span class="legend-dif">DIF:{{ indicatorNumber(selectedIndicator?.macd_dif) }}</span>
+          <span class="legend-dea">DEA:{{ indicatorNumber(selectedIndicator?.macd_dea) }}</span>
+          <span class="legend-down" title="从当前已加载区间起累计">金叉:{{ selectedIndicator ? selectedMacdCrosses.golden : '—' }}</span>
+          <span class="legend-up" title="从当前已加载区间起累计">死叉:{{ selectedIndicator ? selectedMacdCrosses.death : '—' }}</span>
+        </template>
+        <template v-else-if="indicator.key === 'kdj'">
+          <span>KDJ(9,3,3,20,80)</span>
+          <span class="legend-k">K:{{ indicatorNumber(selectedIndicator?.kdj_k) }}</span>
+          <span class="legend-d">D:{{ indicatorNumber(selectedIndicator?.kdj_d) }}</span>
+          <span class="legend-j">J:{{ indicatorNumber(selectedIndicator?.kdj_j) }}</span>
+        </template>
+        <template v-else>
+          <span>成交额</span>
+          <span>{{ indicatorQuantity(selectedIndicator?.amount) }}</span>
+        </template>
+      </div>
       <div v-if="props.symbol" class="kline-chart__watermark" aria-hidden="true">
         <span>{{ props.symbol.code || props.symbol.name }} · {{ watermarkPeriod }}</span>
         <span>{{ props.symbol.name }}</span>
@@ -1215,6 +1364,29 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   position: relative;
 }
 .kline-chart__canvas { position: absolute; inset: 0; z-index: 0; }
+.kline-chart__indicator-legend {
+  position: absolute;
+  left: 8px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  padding: 3px 4px;
+  width: fit-content;
+  max-width: calc(100% - 66px);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-panel) 78%, transparent);
+  pointer-events: none;
+}
+.legend-up { color: var(--up); }
+.legend-down { color: var(--down); }
+.legend-ma5, .legend-k { color: var(--ind-k); }
+.legend-ma10 { color: var(--up); }
+.legend-d, .legend-dif { color: var(--ind-d); }
+.legend-j { color: var(--ind-j); }
+.legend-dea { color: var(--ind-dea); }
 .kline-chart__history {
   position: absolute;
   z-index: 2;
