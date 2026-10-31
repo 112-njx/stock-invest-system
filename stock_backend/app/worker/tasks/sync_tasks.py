@@ -81,6 +81,9 @@ def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict
         quality = kline_quality_service.get_quality(db, symbol_id, "1d")
         if quality is None or quality.status != "complete":
             raise RuntimeError(f"关注股票历史日 K 仍有缺口：{quality.missing_count if quality else '未核验'}")
+        db.refresh(row)
+        if row.celery_task_id != self.request.id:
+            return {"skipped": "superseded delivery"}
         user_repo.update_watchlist_sync_status(db, symbol_id, "done")
         row.status = "success"
         row.publish_status = "completed"

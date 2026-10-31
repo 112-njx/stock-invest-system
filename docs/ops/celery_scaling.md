@@ -39,7 +39,8 @@ docker compose --env-file .env.docker -f deploy/docker-compose.yml up -d \
 关注股、固定指数、历史补拉任务启用完成后 ACK 和 worker 子进程丢失重投；三个 worker
 使用 prefork，任务软/硬时限分别为 60/65、100/105、15/20 分钟。Redis 可见性超时为
 120 分钟，大于最长任务时限。强杀整个 worker 容器后，未确认消息可能等到可见性超时
-才重新投递；关注股另有数据库协调器定时恢复，固定指数和历史补拉依赖 Broker 重投。
+才重新投递；关注股数据库协调器在 worker 恢复且确认任务已不在执行列表约 2 分钟后
+重新投递，固定指数和历史补拉仍依赖 Broker 重投。
 K 线写入使用 upsert；关注股通过任务 ID 和 PostgreSQL 标的锁避免并发重复执行，固定
 指数逐标的质量检查，补拉复用区间去重键。
 

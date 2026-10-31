@@ -17,6 +17,7 @@ from app.utils.db import get_session
 RETRY_SECONDS = 60
 PUBLISH_STALE = timedelta(minutes=30)
 RUNNING_STALE = timedelta(hours=2)
+ORPHAN_RUNNING = timedelta(minutes=2)
 
 
 def queue_watchlist_sync(db: Session, symbol_id: int, *, initialize: bool, force: bool = False,
@@ -58,7 +59,10 @@ def dispatch_watchlist_sync() -> dict:
     try:
         now = datetime.now(UTC)
         from app.services.kline_quality_service import last_completed_mainland_day
+        from app.worker.celery_app import celery_app
 
+        active = celery_app.control.inspect(timeout=1).active() or {}
+        active_ids = {task["id"] for tasks in active.values() for task in tasks}
         expected_day = last_completed_mainland_day(db, now)
         watched = list(db.scalars(select(UserWatchlist.symbol_id).distinct()))
         for symbol_id in watched:
@@ -80,7 +84,13 @@ def dispatch_watchlist_sync() -> dict:
                     db.commit()
                 continue
             initialize = kline_repo.latest_ts(db, "1d", symbol_id) is None
-            queue_watchlist_sync(db, symbol_id, initialize=initialize, now=now)
+            kind = "kline_init" if initialize else "kline_incremental"
+            row = db.scalar(select(SyncTask).where(SyncTask.task_type == kind,
+                                                  SyncTask.symbol_id == symbol_id))
+            orphaned = bool(active and row and row.status == "running" and row.last_run_at
+                            and now - as_utc(row.last_run_at) >= ORPHAN_RUNNING
+                            and row.celery_task_id not in active_ids)
+            queue_watchlist_sync(db, symbol_id, initialize=initialize, force=orphaned, now=now)
         rows = list(db.scalars(select(SyncTask).where(
             SyncTask.symbol_id.in_(select(UserWatchlist.symbol_id)),
             SyncTask.task_type.in_(("kline_init", "kline_incremental")),
