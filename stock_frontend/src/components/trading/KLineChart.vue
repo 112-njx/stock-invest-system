@@ -616,8 +616,14 @@ function toCandleData(bars: KLineBar[]) {
   }))
 }
 
+function initialWeeklyCount(): number {
+  if (!props.showIndicators) return 60
+  // 详情页较宽时增加可见周数，避免固定 60 根被拉得过散。
+  return Math.max(60, Math.min(180, Math.ceil((chartHost.value?.clientWidth ?? 0) / 14)))
+}
+
 function recentBars(bars: KLineBar[]): KLineBar[] {
-  if (market.period === '1w') return bars.slice(-60)
+  if (market.period === '1w') return bars.slice(-initialWeeklyCount())
   if (!props.recentMonths || !bars.length) return bars
   const cutoff = new Date(bars[bars.length - 1].ts)
   const day = cutoff.getUTCDate()
@@ -812,7 +818,7 @@ async function loadKline() {
   const t0 = performance.now()
   try {
     const [loaded, checked] = await Promise.all([
-      fetchKLine({ symbol: symbolId, period, limit: period === '1w' ? Math.max(60, loadedBars.length + 1) : props.recentMonths ? 5000 : undefined }),
+      fetchKLine({ symbol: symbolId, period, limit: period === '1w' ? Math.max(initialWeeklyCount(), loadedBars.length + 1) : props.recentMonths ? 5000 : undefined }),
       fetchKlineQuality(symbolId, period).catch(() => null),
     ])
     if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
