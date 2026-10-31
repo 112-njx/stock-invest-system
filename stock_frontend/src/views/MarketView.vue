@@ -9,7 +9,7 @@
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchHomeIndices, fetchSyncStatus, type HomeIndex } from '@/api/market'
+import { fetchHomeIndices, type HomeIndex } from '@/api/market'
 import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
@@ -31,13 +31,6 @@ const indicesError = ref(false)
 const cachedIds = ref(new Set<number>())
 const { start } = useSnapshotPolling(4000)
 
-/** V0.2：固定指数预同步进度（0-100），null=未在同步 */
-const syncProgress = ref<number | null>(null)
-const syncLabel = ref('')
-let syncTimer: ReturnType<typeof setInterval> | null = null
-/** 本轮进入 running 的时间戳（用于超时降级判断） */
-let wasSyncing = false
-let statusInFlight = false
 let indicesInFlight: Promise<void> | null = null
 let refreshAfterCurrent = false
 let watchlistReady = false
@@ -73,7 +66,8 @@ function onWatchlistLoaded() {
 
 function applyIndices(rows: HomeIndex[], source: string) {
   market.setFixedIndices(rows)
-  market.mergeSnapshots(rows.flatMap((row) => row.snapshot?.price != null ? [row.snapshot] : []))
+  // 本地缓存只用于立即显示名称；价格须经服务端比较快照与日 K 后再展示。
+  if (source === 'server') market.mergeSnapshots(rows.flatMap((row) => row.snapshot?.price != null ? [row.snapshot] : []))
   cachedIds.value = new Set(rows
     .filter((row) => source === 'cache' || (row.snapshot?.price == null && market.snapshots[row.id]?.price != null))
     .map((row) => row.id))
@@ -108,34 +102,6 @@ function loadHomeIndices(): Promise<void> {
   return indicesInFlight
 }
 
-async function checkSyncStatus() {
-  if (statusInFlight || !mounted) return
-  statusInFlight = true
-  try {
-    const s = await fetchSyncStatus('fixed_indices')
-    market.setSyncStatus(s)
-    const running = ['pending', 'running', 'queued'].includes(s.status)
-    if (running) {
-      syncProgress.value = s.total ? Math.round((s.progress / s.total) * 100) : 0
-      syncLabel.value = `数据同步中（${s.progress}/${s.total}）`
-      wasSyncing = true
-      if (!syncTimer) syncTimer = setInterval(checkSyncStatus, 3000)
-    } else {
-      const shouldRefresh = wasSyncing
-      wasSyncing = false
-      syncProgress.value = null
-      syncLabel.value = ''
-      if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
-      if (shouldRefresh) void loadHomeIndices()
-    }
-  } catch {
-    // 静默重试
-    if (!syncTimer) syncTimer = setInterval(checkSyncStatus, 3000)
-  } finally {
-    statusInFlight = false
-  }
-}
-
 /** G/H 固定指数按 sort_order 分组：1~14 大盘（G），15+ 行业（H） */
 const marketIndices = computed(() => market.fixedIndices.filter((i) => (i.sort_order ?? 99) <= 14))
 const industryIndices = computed(() => market.fixedIndices.filter((i) => (i.sort_order ?? 99) > 14))
@@ -147,9 +113,11 @@ function goDetail() {
 onMounted(() => {
   mounted = true
   const cached = readHomeIndexCache()
-  if (cached.length) applyIndices(cached, 'cache')
+  if (cached.length) {
+    for (const row of cached) delete market.snapshots[row.id]
+    applyIndices(cached, 'cache')
+  }
   void loadHomeIndices()
-  void checkSyncStatus()
   void start()
   ws.init()
   ws.syncSubscriptions()
@@ -174,17 +142,10 @@ watch(() => market.snapshots, () => {
   void recordVisible('update')
 }, { deep: true })
 
-// V0.2：卸载时清理 sync-status 轮询并重置同步状态，避免切页后后台持续请求、
-// 以及 AI 页等其它页面读到残留的"同步中"状态（快照轮询由 useSnapshotPolling 内部 onBeforeUnmount 停止；
-// WS 为全局多标签页单例，切页不断开）
+// 快照轮询由 useSnapshotPolling 内部 onBeforeUnmount 停止；WS 为全局单例。
 onUnmounted(() => {
   mounted = false
-  if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
   if (cacheTimer) { clearTimeout(cacheTimer); cacheTimer = null }
-  wasSyncing = false
-  syncProgress.value = null
-  syncLabel.value = ''
-  market.setSyncStatus(null)
 })
 </script>
 
@@ -198,11 +159,6 @@ onUnmounted(() => {
 
       <div class="grid-f">
         <KLineChart :symbol="market.current" :recent-months="4" @dblclick="goDetail" />
-        <!-- V0.2：固定指数预同步进度条（absolute覆盖层，不改变布局） -->
-        <div v-if="syncProgress !== null" class="sync-overlay">
-          <div class="sync-overlay__bar"><div class="sync-overlay__fill" :style="{ width: syncProgress + '%' }" /></div>
-          <span class="sync-overlay__label">{{ syncLabel }}</span>
-        </div>
       </div>
 
       <div class="grid-g">
@@ -246,39 +202,6 @@ onUnmounted(() => {
   grid-row: 1;
   min-height: 0;
   position: relative;
-}
-/* V0.2：同步进度条覆盖层（absolute，不改变布局） */
-.sync-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 12px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-.sync-overlay__bar {
-  flex: none;
-  width: 120px;
-  height: 3px;
-  background: var(--bg-panel-2);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.sync-overlay__fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 2px;
-  transition: width 0.4s ease;
-}
-.sync-overlay__label {
-  white-space: nowrap;
 }
 .grid-g {
   grid-column: 1;

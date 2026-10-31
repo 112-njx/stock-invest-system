@@ -81,6 +81,7 @@ export const useWsStore = defineStore('ws', {
           // merge：保留 code/name/type/extra，更新价格字段
           const updated: Snapshot = {
             ...existing,
+            source: 'snapshot',
             price: (data.price as number) ?? existing.price,
             change: (data.change as number) ?? existing.change,
             change_pct: (data.change_pct as number) ?? existing.change_pct,
@@ -95,7 +96,7 @@ export const useWsStore = defineStore('ws', {
             updated_at: (data.updated_at as string) ?? existing.updated_at,
             data_age_seconds: 0,
           }
-          market.snapshots[sid] = updated
+          market.mergeSnapshots([updated])
         }
       }
     },

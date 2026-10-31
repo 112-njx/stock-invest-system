@@ -1,4 +1,4 @@
-"""境内固定指数日 K 缺口检测与按交易日区间补拉。"""
+"""境内固定指数及 A 股日 K 缺口检测与按交易日区间补拉。"""
 
 from datetime import UTC, date, datetime, time, timedelta
 
@@ -15,8 +15,22 @@ settings = get_settings()
 MAINLAND_MARKETS = {"SSE", "SZSE", "CSI"}
 
 
+def is_a_share_stock(symbol) -> bool:
+    code = symbol.code or ""
+    return bool(
+        symbol.type == "stock" and (
+            (symbol.market == "SSE" and code.startswith(("60", "68")))
+            or (symbol.market == "SZSE" and code.startswith(("00", "30")))
+            or (symbol.market == "BSE" and code.startswith(("4", "8", "9")))
+        )
+    )
+
+
 def eligible(symbol) -> bool:
-    return bool(symbol.is_fixed_index and symbol.type == "index" and symbol.market in MAINLAND_MARKETS)
+    return bool(
+        (symbol.is_fixed_index and symbol.type == "index" and symbol.market in MAINLAND_MARKETS)
+        or is_a_share_stock(symbol)
+    )
 
 
 def _calendar(db, window_start: date, today: date) -> list[date] | None:
@@ -45,6 +59,14 @@ def _last_completed(days: list[date], now: datetime) -> date | None:
     return candidates[-1] if candidates else None
 
 
+def last_completed_mainland_day(db, now: datetime | None = None) -> date | None:
+    """固定指数启动检查使用与缺口检测相同的交易日边界。"""
+    now = now or datetime.now(UTC)
+    today = now.astimezone(settings.tz).date()
+    days = _calendar(db, today - timedelta(days=30), today)
+    return _last_completed(days, now) if days else None
+
+
 def _ranges(days: list[date], all_days: list[date]) -> list[tuple[date, date]]:
     positions = {day: i for i, day in enumerate(all_days)}
     result: list[tuple[date, date]] = []
@@ -70,7 +92,7 @@ def _fetch_gap_bars(provider, symbol_param, asset_type, first: date, last: date,
             from app.data_providers.sina import SinaProvider
 
             bars = SinaProvider().fetch_kline(symbol_param, "1d", start, end, asset_type)
-        else:
+        elif asset_type == "industry_index":
             from app.data_providers.ths import THSProvider
 
             bars = THSProvider().fetch_kline(symbol_param, "1d", start, end, asset_type)
@@ -99,7 +121,7 @@ def quality_dict(row: KlineQuality | None) -> dict:
 
 
 def check_and_repair(db, symbol, provider, *, now: datetime | None = None) -> dict:
-    """只处理境内固定指数的日 K；不使用工作日猜测交易日。"""
+    """检查境内固定指数及已关注 A 股日 K；不使用工作日猜测交易日。"""
     if not eligible(symbol):
         return {"status": "unsupported", "added": 0}
     now = now or datetime.now(UTC)
@@ -119,10 +141,18 @@ def check_and_repair(db, symbol, provider, *, now: datetime | None = None) -> di
         symbol_param, asset_type = _provider_params(symbol)
         for first, last in _ranges(missing, expected):
             # 含两端缓冲，兼容提供器日期边界及周末。
+            from app.utils.redis_client import get_redis_client
+
+            redis = get_redis_client()
+            cooldown_key = f'provider:gap-cooldown:{symbol.id}:{first}:{last}'
+            if not redis.set(cooldown_key, '1', nx=True, ex=86400):
+                continue
             try:
                 required = {day for day in missing if first <= day <= last}
                 bars = _fetch_gap_bars(provider, symbol_param, asset_type, first, last, required)
                 added += kline_repo.upsert_bars(db, "1d", symbol.id, bars)
+                if {market_cache.as_utc(bar.ts).date() for bar in bars} >= required:
+                    redis.delete(cooldown_key)
             except Exception:
                 db.rollback()
                 added = 0
@@ -138,6 +168,7 @@ def check_and_repair(db, symbol, provider, *, now: datetime | None = None) -> di
 
             market_cache.invalidate_kline_cache(symbol.id, "1d")
             invalidate_indicator_cache(symbol.id, "1d")
+            invalidate_indicator_cache(symbol.id, "1w")
             publish_kline_refresh(symbol.id, "1d")
     status = "unknown" if not calendar or not last_day else "partial" if missing else "complete"
     quality = get_quality(db, symbol.id, "1d")

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import type { Snapshot, SymbolInfo, SyncStatus, WatchlistItem } from '@/api/market'
+import { snapshotTime } from '@/utils/homeIndexCache'
 
 export type Period = '15m' | '1d' | '1w' | '1mon'
 
@@ -27,7 +28,19 @@ export const useMarketStore = defineStore('market', {
     },
     /** 合并批量快照到缓存 */
     mergeSnapshots(list: Snapshot[]) {
-      for (const s of list) this.snapshots[s.symbol_id] = s
+      for (const s of list) {
+        const existing = this.snapshots[s.symbol_id]
+        const incomingTime = s.updated_at ? snapshotTime(s.updated_at) : 0
+        const existingTime = existing?.updated_at ? snapshotTime(existing.updated_at) : 0
+        if (existing && incomingTime && existingTime) {
+          const incomingDay = new Date(incomingTime).toISOString().slice(0, 10)
+          const existingDay = new Date(existingTime).toISOString().slice(0, 10)
+          if (incomingDay < existingDay) continue
+          if (incomingDay === existingDay && existing.source === 'kline' && s.source !== 'kline') continue
+          if (incomingDay === existingDay && s.source !== 'kline' && existing.source !== 'kline' && incomingTime < existingTime) continue
+        }
+        this.snapshots[s.symbol_id] = s
+      }
     },
     setWatchlist(list: WatchlistItem[]) {
       this.watchlist = list

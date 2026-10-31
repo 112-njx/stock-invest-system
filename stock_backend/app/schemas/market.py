@@ -41,6 +41,7 @@ class SnapshotOut(BaseModel):
     """实时快照（合并特殊字段）。特殊字段按类型注入 extra。"""
 
     symbol_id: int
+    source: str = "snapshot"
     code: str
     name: str
     type: str

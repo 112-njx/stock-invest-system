@@ -4,7 +4,31 @@ from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.services.kline_quality_service import _fetch_gap_bars, _last_completed, _ranges
+from app.services.kline_quality_service import _fetch_gap_bars, _last_completed, _ranges, eligible
+
+
+def test_quality_only_accepts_mainland_a_share_stocks():
+    def stock(code, market):
+        return SimpleNamespace(type="stock", code=code, market=market, is_fixed_index=False)
+
+    assert eligible(stock("600519", "SSE"))
+    assert eligible(stock("300750", "SZSE"))
+    assert eligible(stock("835185", "BSE"))
+    assert not eligible(stock("900901", "SSE"))
+    assert not eligible(stock("00700", "HK"))
+
+
+def test_stock_gap_uses_stock_provider_chain_without_industry_source():
+    bar = SimpleNamespace(ts=datetime(2026, 10, 8, tzinfo=UTC))
+
+    class Provider:
+        def fetch_kline(self, symbol, period, start, end, asset_type):
+            assert (symbol, period, asset_type) == ("600519", "1d", "stock")
+            return [bar]
+
+    with patch("app.data_providers.ths.THSProvider.fetch_kline") as ths:
+        assert _fetch_gap_bars(Provider(), "600519", "stock", date(2026, 10, 8), date(2026, 10, 8), {date(2026, 10, 8)}) == [bar]
+        ths.assert_not_called()
 
 
 def test_gap_ranges_use_trading_sessions_not_calendar_days():

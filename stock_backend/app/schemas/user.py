@@ -49,6 +49,7 @@ class UserOut(BaseModel):
 
     id: int
     username: str
+    is_admin: bool = False
     email: str | None = None
     email_verified: bool = False
     nickname: str | None = None
@@ -66,6 +67,7 @@ class UserOut(BaseModel):
         return cls(
             id=user.id,
             username=user.username,
+            is_admin=bool(user.is_admin),
             email=user.email,
             email_verified=bool(user.email_verified),
             nickname=user.nickname,

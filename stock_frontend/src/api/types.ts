@@ -8,6 +8,7 @@ export interface ApiResponse<T> {
 export interface User {
   id: number
   username: string
+  is_admin?: boolean
   email?: string | null
   /** G23：邮箱是否已验证 */
   email_verified?: boolean

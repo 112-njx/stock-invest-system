@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user_optional, get_read_db
+from app.api.deps import get_current_admin, get_current_user_optional, get_read_db
 from app.core.exceptions import ApiError
 from app.core.response import ok
 from app.models.symbol import Symbol
@@ -33,8 +33,9 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
     """只接受单个历史窗口；重复请求复用同一 Celery 任务。"""
     if payload.period not in ("15m", "1d", "1w", "1mon") or payload.start.tzinfo is None or payload.end.tzinfo is None:
         raise ApiError(status_code=400, msg="无效的周期或时区")
-    if not timedelta(0) < payload.end - payload.start <= timedelta(days=100) or payload.end > datetime.now(payload.end.tzinfo):
-        raise ApiError(status_code=400, msg="历史区间须在过去且不超过100天")
+    max_days = 500 if payload.period == "1w" else 100
+    if not timedelta(0) < payload.end - payload.start <= timedelta(days=max_days) or payload.end > datetime.now(payload.end.tzinfo):
+        raise ApiError(status_code=400, msg=f"历史区间须在过去且不超过{max_days}天")
     if db.get(Symbol, payload.symbol_id) is None:
         raise ApiError(status_code=404, msg="标的不存在")
     from app.utils.redis_client import get_redis_client
@@ -42,15 +43,9 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
 
     key = f"kline-backfill:{payload.symbol_id}:{payload.period}:{payload.start.isoformat()}:{payload.end.isoformat()}"
     redis = get_redis_client()
-    if payload.retry:
-        existing = redis.get(key)
-        if existing:
-            from app.worker.celery_app import celery_app
-
-            if celery_app.AsyncResult(existing).ready():
-                redis.delete(key)
+    # 同一历史窗口一小时内复用任务结果；主动 retry 也不绕过冷却期。
     task_id = str(uuid4())
-    if not redis.set(key, task_id, ex=300, nx=True):
+    if not redis.set(key, task_id, ex=3600, nx=True):
         return ok(data={"task_id": redis.get(key)})
     try:
         kline_backfill.apply_async(
@@ -146,7 +141,20 @@ def get_kline_quality(
         raise ApiError(status_code=404, msg="标的不存在")
     if period != "1d" or not kline_quality_service.eligible(sym):
         return ok(data={"status": "unsupported", "missing_count": 0, "missing_ranges": [], "checked_at": None})
-    return ok(data=kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period)))
+    data = kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period))
+    tasks = [ops_repo.latest_sync_task(db, kind, sym.id) for kind in ('kline_incremental', 'kline_init')]
+    symbol_syncing = any(
+        task is not None and task.status in {'queued', 'running'} and task.last_run_at is not None
+        and datetime.now(task.last_run_at.tzinfo) - task.last_run_at < timedelta(hours=2)
+        for task in tasks
+    )
+    # Fixed-index pre-sync is queued as one batch. Until the worker reaches a
+    # symbol, its per-symbol SyncTask is not running yet, so the batch status
+    # must also be considered to avoid displaying “暂未同步” for queued symbols.
+    batch = ops_repo.get_latest_sync_status(db, "fixed_indices") if sym.is_fixed_index else None
+    batch_syncing = batch is not None and batch.status in {"queued", "running"}
+    data['sync_status'] = 'syncing' if symbol_syncing or batch_syncing else 'idle'
+    return ok(data=data)
 
 
 @router.get("/snapshot")
@@ -193,11 +201,16 @@ def get_sync_status(
 
 
 @router.post("/fetch-all")
-def fetch_all() -> dict:
-    """一次性全量同步（免鉴权，本地测试/运维用）：固定指数K线+快照 + 全量实时快照，同步执行不依赖 Celery/beat。
+def fetch_all(current: User = Depends(get_current_admin)) -> dict:
+    """管理员专用一次性全量同步：固定指数K线+快照 + 全量实时快照，同步执行不依赖 Celery/beat。
 
     用于本地无法触发定时任务时一次性补齐大盘/行业指数数据，返回固定指数同步结果与实时轮询结果。
     """
+    from app.utils.redis_client import get_redis_client
+
+    redis = get_redis_client()
+    if not redis.set('provider:fetch-all:cooldown', '1', nx=True, ex=86400):
+        raise ApiError(status_code=429, msg='全量刷新每天最多触发一次')
     fixed = sync_service.run_fixed_indices_sync(skip_existing=False)
     realtime = sync_service.run_realtime_poll()
     return ok(data={"fixed_indices": fixed, "realtime": realtime}, msg="全量同步完成")

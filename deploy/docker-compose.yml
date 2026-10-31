@@ -135,7 +135,7 @@ services:
 
   # ---- G12（P1-2c）按队列拆分 worker：每个队列独立扩缩容，互不阻塞 ----
   # 为什么拆分：合成一个 worker 时，`--pool=solo` 下任何长任务（回测 / 导出 / 备份）
-  # 都会把 15s 的实时轮询堵在队列里；拆开后 sync 队列的延迟不受 backtest/ai 影响。
+  # 都会把行情轮询堵在队列里；拆开后 sync 队列的延迟不受 backtest/ai 影响。
   # 扩容：`docker compose up -d --scale worker-sync=2 --scale worker-backtest=2 --scale worker-ai=2`
   # （三个服务都不映射宿主端口、无 container_name，可安全多实例）
   # 任务分发：Celery 从 Redis 队列取任务（竞争消费），N 个实例自动分摊，无需额外配置。

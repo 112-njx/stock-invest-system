@@ -105,6 +105,9 @@ class BaseDataProvider(ABC):
         last_exc = None
         for attempt in range(retries):
             try:
+                from app.data_providers.traffic import acquire
+
+                acquire(self.name)
                 return fn(**kwargs)
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc

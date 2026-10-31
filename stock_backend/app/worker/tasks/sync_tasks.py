@@ -4,8 +4,12 @@
 """
 
 import logging
+from datetime import UTC, datetime
+
+from sqlalchemy import select
 
 from app.core.request_id import get_request_id
+from app.models.user import UserWatchlist
 from app.services import sync_service
 from app.utils.db import get_session
 from app.worker.celery_app import celery_app
@@ -38,6 +42,39 @@ def kline_init(self, symbol_id: int | None = None, days: int | None = None) -> d
         raise
 
 
+@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.watchlist_stock_sync")
+def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict:
+    """关注 A 股的首次初始化或日 K 增量与缺口修复。"""
+    from app.repositories import kline_repo, ops_repo, user_repo
+    from app.utils import market_cache
+
+    task_type = "kline_init" if initialize else "kline_incremental"
+    _log(task_type, self.request.id, "running", f"watchlist symbol_id={symbol_id}")
+    db = get_session()
+    try:
+        if initialize:
+            result = sync_service.run_kline_init(symbol_id=symbol_id)
+        else:
+            result = sync_service.run_kline_incremental(symbol_id=symbol_id)
+        if kline_repo.latest_ts(db, "1d", symbol_id) is None:
+            raise RuntimeError("关注股票数据源未返回日 K")
+        user_repo.update_watchlist_sync_status(db, symbol_id, "done")
+        db.commit()
+        _log(task_type, self.request.id, "success", f"watchlist symbol_id={symbol_id}: {result}")
+        return result
+    except Exception as exc:
+        db.rollback()
+        ops_repo.upsert_sync_task(db, task_type, symbol_id, "failed", datetime.now(UTC))
+        user_repo.update_watchlist_sync_status(db, symbol_id, "failed")
+        db.commit()
+        _log(task_type, self.request.id, "failed", str(exc))
+        raise
+    finally:
+        for user_id in db.scalars(select(UserWatchlist.user_id).where(UserWatchlist.symbol_id == symbol_id)):
+            market_cache.invalidate_watchlist_cache(user_id)
+        db.close()
+
+
 @celery_app.task(name="app.worker.tasks.sync_tasks.kline_backfill")
 def kline_backfill(symbol_id: int, period: str, start_iso: str, end_iso: str) -> dict:
     """按用户请求的历史窗口补取，结果供前端轮询。"""
@@ -53,10 +90,11 @@ def kline_backfill(symbol_id: int, period: str, start_iso: str, end_iso: str) ->
         if sym is None:
             return {"fetched": 0, "added": 0}
         symbol_param, asset_type = _provider_params(sym)
+        source_period = "1d" if period == "1w" else period
         bars = get_provider().fetch_kline(
-            symbol_param, period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
+            symbol_param, source_period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
         )
-        added = _write_bars(db, period, symbol_id, bars)
+        added = _write_bars(db, source_period, symbol_id, bars)
         db.commit()
         return {"fetched": len(bars), "added": added}
     finally:
@@ -65,7 +103,13 @@ def kline_backfill(symbol_id: int, period: str, start_iso: str, end_iso: str) ->
 
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_init_fixed_indices")
 def kline_init_fixed_indices(self) -> dict:
-    """固定指数预同步（V0.2 1.1）：49 条固定大盘/行业指数全周期K线，进度写 sync_status。"""
+    """固定指数预同步：同步当前固定大盘/行业指数，进度写 sync_status。"""
+    from app.utils.redis_client import get_redis_client
+
+    redis = get_redis_client()
+    lock = redis.lock('provider:presync:running', timeout=7200)
+    if not lock.acquire(blocking=False):
+        return {'skipped': 'fixed indices sync already running'}
     _log("kline_init", self.request.id, "running", "fixed indices presync start")
     try:
         result = sync_service.run_fixed_indices_sync()
@@ -75,6 +119,9 @@ def kline_init_fixed_indices(self) -> dict:
         logger.exception("kline_init_fixed_indices failed")
         _log("kline_init", self.request.id, "failed", str(exc))
         raise
+    finally:
+        redis.delete('provider:presync:queued')
+        lock.release()
 
 
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_incremental")
@@ -116,6 +163,11 @@ def realtime_poll(self, symbol_id: int | None = None, force: bool = False) -> di
 )
 def catalog_sync(self) -> dict:
     """全量标的目录同步（每日凌晨 + 启动/手动触发）。外部源异常自动重试 3 次（3s/9s/27s）。"""
+    from app.utils.redis_client import get_redis_client
+
+    lock = get_redis_client().lock('provider:catalog:running', timeout=3600)
+    if not lock.acquire(blocking=False):
+        return {'skipped': 'catalog sync already running'}
     _log("catalog_sync", self.request.id, "running", "start")
     try:
         result = sync_service.run_catalog_sync()
@@ -128,6 +180,8 @@ def catalog_sync(self) -> dict:
         logger.exception("catalog_sync failed")
         _log("catalog_sync", self.request.id, "failed", str(exc))
         raise
+    finally:
+        lock.release()
 
 
 @celery_app.task(name="app.worker.tasks.sync_tasks.provider_probe")
