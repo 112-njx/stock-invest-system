@@ -672,6 +672,22 @@ function recentBars(bars: KLineBar[]): KLineBar[] {
   return bars.filter((bar) => toUtcSeconds(bar.ts) * 1000 >= cutoff.getTime())
 }
 
+function selectPeriod(period: Period) {
+  if (market.period !== period) {
+    market.setPeriod(period)
+    return
+  }
+  if (period === '1w' && chart && loadedBars.length) {
+    const recent = recentBars(loadedBars)
+    if (recent.length > 1) {
+      chart.timeScale().setVisibleRange({
+        from: toUtcSeconds(recent[0].ts),
+        to: toUtcSeconds(recent[recent.length - 1].ts),
+      })
+    }
+  }
+}
+
 function threeMonthsBefore(iso: string, months = 3): Date {
   const date = new Date(iso)
   const day = date.getUTCDate()
@@ -884,7 +900,6 @@ async function loadKline() {
       const recent = recentBars(bars)
       if (recent.length > 1) {
         chart?.timeScale().setVisibleRange({ from: toUtcSeconds(recent[0].ts), to: toUtcSeconds(recent[recent.length - 1].ts) })
-        if (period === '1w' && props.showIndicators) chart?.timeScale().applyOptions({ barSpacing: 14 })
       } else chart?.timeScale().fitContent()
       initialViewport = false
     } else if (previousRange) {
@@ -1149,7 +1164,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
             :key="p.value"
             class="period-tab"
             :class="{ active: market.period === p.value }"
-            @click="market.setPeriod(p.value)"
+            @click="selectPeriod(p.value)"
           >
             {{ p.label }}
           </button>
