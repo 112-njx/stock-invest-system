@@ -226,15 +226,15 @@ onUnmounted(() => {
           <span class="wl-name">
             {{ item.name }}
             <!-- V0.2：同步状态图标：syncing=旋转loading，failed=黄色感叹号（点击重试），done=无图标 -->
-            <span v-if="item.sync_status === 'pending' || item.sync_status === 'syncing'" class="wl-sync wl-sync--syncing" title="同步中…">
-              <span class="wl-sync__spinner" />
+            <span v-if="item.sync_status === 'pending' || item.sync_status === 'syncing'" class="wl-sync wl-sync--syncing" title="更新中">
+              <span class="wl-sync__spinner" /> 更新中
             </span>
             <span
               v-else-if="item.sync_status === 'failed'"
               class="wl-sync wl-sync--failed"
-              title="同步失败，点击重试"
+              title="暂未同步，点击重试"
               @click.stop="retrySync(item)"
-            >!</span>
+            >暂未同步</span>
           </span>
           <span class="wl-price" :class="trendClass(item.change_pct)">
             {{ formatPrice(item.price) }}
@@ -551,12 +551,6 @@ onUnmounted(() => {
   color: #eab308;
   cursor: pointer;
   font-weight: 700;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 1px solid #eab308;
-  justify-content: center;
-  line-height: 1;
 }
 .wl-sync--failed:hover {
   background: rgba(234, 179, 8, 0.12);

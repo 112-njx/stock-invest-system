@@ -46,6 +46,7 @@ def kline_init(self, symbol_id: int | None = None, days: int | None = None) -> d
 def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict:
     """关注 A 股的首次初始化或日 K 增量与缺口修复。"""
     from app.repositories import kline_repo, ops_repo, user_repo
+    from app.services import kline_quality_service
     from app.utils import market_cache
 
     task_type = "kline_init" if initialize else "kline_incremental"
@@ -56,8 +57,10 @@ def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict
             result = sync_service.run_kline_init(symbol_id=symbol_id)
         else:
             result = sync_service.run_kline_incremental(symbol_id=symbol_id)
-        if kline_repo.latest_ts(db, "1d", symbol_id) is None:
-            raise RuntimeError("关注股票数据源未返回日 K")
+        latest = kline_repo.latest_ts(db, "1d", symbol_id)
+        expected = kline_quality_service.last_completed_mainland_day(db)
+        if latest is None or expected is None or latest.astimezone(kline_quality_service.settings.tz).date() < expected:
+            raise RuntimeError(f"关注股票最新日 K 未更新到已完成交易日 {expected}")
         user_repo.update_watchlist_sync_status(db, symbol_id, "done")
         db.commit()
         _log(task_type, self.request.id, "success", f"watchlist symbol_id={symbol_id}: {result}")
@@ -91,12 +94,12 @@ def kline_backfill(symbol_id: int, period: str, start_iso: str, end_iso: str) ->
             return {"fetched": 0, "added": 0}
         symbol_param, asset_type = _provider_params(sym)
         source_period = "1d" if period == "1w" else period
-        bars = get_provider().fetch_kline(
+        bars, confirmed_empty = get_provider().fetch_kline_checked(
             symbol_param, source_period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
         )
         added = _write_bars(db, source_period, symbol_id, bars)
         db.commit()
-        return {"fetched": len(bars), "added": added}
+        return {"fetched": len(bars), "added": added, "confirmed_empty": confirmed_empty if not bars else False}
     finally:
         db.close()
 

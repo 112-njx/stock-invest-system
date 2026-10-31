@@ -109,7 +109,7 @@ let retryBackfill = false
 const qualityWarning = computed(() => {
   if (quality.value?.status === 'partial') {
     const ranges = quality.value.missing_ranges.slice(0, 2).map((r) => r.join('～')).join('、')
-    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${quality.value.sync_status === 'syncing' ? '同步中' : '暂未同步'}`
+    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${quality.value.sync_status === 'syncing' ? '更新中' : '暂未同步'}`
   }
   if (quality.value?.status === 'unknown') return '交易日历不可用，历史数据未能核验'
   if (quality.value?.status === 'unchecked') return '历史数据尚未核验'
@@ -689,19 +689,23 @@ async function loadOlder() {
     const retry = retryBackfill
     retryBackfill = false
     const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry })
+    let confirmedEmpty = false
     for (let attempt = 0; attempt < 45; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
       if (version !== loadVersion) return
       const status = await fetchKlineBackfillStatus(task_id)
       if (status.status === 'failed') throw new Error('历史数据拉取失败')
-      if (status.status === 'done') break
+      if (status.status === 'done') {
+        confirmedEmpty = status.confirmed_empty === true
+        break
+      }
       if (attempt === 44) throw new Error('历史数据拉取超时')
     }
     const refreshed = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
     if (version !== loadVersion) return
     await merge(refreshed)
     historyCursor = period === '1w' && refreshed.length ? loadedBars[0].ts : start.toISOString()
-    historyState.value = refreshed.length ? '' : 'empty'
+    historyState.value = refreshed.length ? '' : confirmedEmpty ? 'empty' : 'failed'
   } catch {
     if (version === loadVersion) historyState.value = 'failed'
   } finally {
@@ -727,7 +731,7 @@ async function loadInitialMissing(version: number, symbolId: number, period: Per
         if (status.fetched) {
           historyState.value = ''
           void loadKline()
-        } else historyState.value = 'empty'
+        } else historyState.value = status.confirmed_empty ? 'empty' : 'failed'
         return
       }
     }

@@ -343,6 +343,7 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dic
     """首次全量历史K线：全标的多周期拉取并幂等入库；行业指数同步回填 code。"""
     db = get_session()
     try:
+        from app.services import kline_quality_service
         provider = get_provider()
         days = days or settings.KLINE_INIT_DAYS
         end = datetime.now(UTC)
@@ -365,7 +366,9 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dic
             counts: dict = {}
             for period in ALL_PERIODS:
                 symbol_param, asset_type = _provider_params(sym)
-                bars = provider.fetch_kline(symbol_param, period, start, end, asset_type)
+                bars = (provider.fetch_kline_all(symbol_param, period, start, end, asset_type)
+                        if sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym) and period == "1d"
+                        else provider.fetch_kline(symbol_param, period, start, end, asset_type))
                 added = _write_bars(db, period, sym.id, bars)
                 counts[period] = added
                 logger.info("kline_init %s %s added=%d", sym.name, period, added)
@@ -385,6 +388,7 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
     """每日收盘后增量：近 back_days 天多周期K线拉取并幂等入库。"""
     db = get_session()
     try:
+        from app.services import kline_quality_service
         provider = get_provider()
         end = datetime.now(UTC)
         start = end - timedelta(days=back_days)
@@ -403,7 +407,9 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
             counts: dict = {}
             for period in ALL_PERIODS:
                 symbol_param, asset_type = _provider_params(sym)
-                bars = provider.fetch_kline(symbol_param, period, start, end, asset_type)
+                bars = (provider.fetch_kline_all(symbol_param, period, start, end, asset_type)
+                        if sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym) and period == "1d"
+                        else provider.fetch_kline(symbol_param, period, start, end, asset_type))
                 added = _write_bars(db, period, sym.id, bars)
                 counts[period] = added
             db.commit()

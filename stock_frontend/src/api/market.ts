@@ -149,7 +149,7 @@ export function requestKlineBackfill(params: { symbol_id: number; period: Period
 }
 
 export function fetchKlineBackfillStatus(taskId: string) {
-  return request<{ status: 'loading' | 'done' | 'failed'; fetched?: number }>({
+  return request<{ status: 'loading' | 'done' | 'failed'; fetched?: number; confirmed_empty?: boolean }>({
     url: `/kline/backfill/${encodeURIComponent(taskId)}`, silent: true,
   })
 }

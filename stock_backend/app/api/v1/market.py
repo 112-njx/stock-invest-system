@@ -66,7 +66,9 @@ def kline_backfill_status(task_id: str) -> dict:
     if result.failed():
         return ok(data={"status": "failed"})
     if result.ready():
-        return ok(data={"status": "done", "fetched": (result.result or {}).get("fetched", 0)})
+        payload = result.result or {}
+        return ok(data={"status": "done", "fetched": payload.get("fetched", 0),
+                        "confirmed_empty": payload.get("confirmed_empty", False)})
     return ok(data={"status": "loading"})
 
 
