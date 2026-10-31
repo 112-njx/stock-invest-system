@@ -1,6 +1,6 @@
 """行情查询 API：标的列表/搜索、K线、批量实时快照。"""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
@@ -147,7 +147,7 @@ def get_kline_quality(
     tasks = [ops_repo.latest_sync_task(db, kind, sym.id) for kind in ('kline_incremental', 'kline_init')]
     symbol_syncing = any(
         task is not None and task.status in {'queued', 'running'} and task.last_run_at is not None
-        and datetime.now(task.last_run_at.tzinfo) - task.last_run_at < timedelta(hours=2)
+        and datetime.now(UTC) - market_cache.as_utc(task.last_run_at) < timedelta(hours=2)
         for task in tasks
     )
     # Fixed-index pre-sync is queued as one batch. Until the worker reaches a
@@ -163,7 +163,7 @@ def get_kline_quality(
     elif kline_quality_service.is_a_share_stock(sym):
         next_times = [task.next_run_at for task in tasks if task and task.status in {'queued', 'failed'}
                       and task.next_run_at is not None]
-        data['retry_after_seconds'] = max(0, int((min(next_times) - datetime.now(next_times[0].tzinfo)).total_seconds())) if next_times else 0
+        data['retry_after_seconds'] = max(0, int((min(map(market_cache.as_utc, next_times)) - datetime.now(UTC)).total_seconds())) if next_times else 0
     return ok(data=data)
 
 
