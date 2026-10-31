@@ -22,6 +22,24 @@ groups:
           summary: "回测队列积压"
           description: "backtest 队列积压 {{ $value }} 个任务，持续 5 分钟，可能 worker 未启动或执行缓慢。"
 
+      - alert: KlineWorkerUnavailable
+        expr: celery_worker_up{role=~"watchlist|fixed|backfill|control"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "K 线 worker 未响应"
+          description: "{{ $labels.role }} worker 连续 2 分钟未响应，检查容器健康状态与任务恢复。"
+
+      - alert: WatchlistQueueBacklog
+        expr: celery_queue_depth{queue="watchlist"} > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "关注股同步队列积压"
+          description: "关注股队列已有 {{ $value }} 个待消费任务。"
+
       - alert: MarketDataStale
         expr: market_data_freshness_seconds > 300
         for: 10m

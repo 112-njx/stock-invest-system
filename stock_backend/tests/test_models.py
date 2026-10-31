@@ -11,7 +11,6 @@ EXPECTED_TABLES = {
     "symbols",
     "kline_15m",
     "kline_1d",
-    "kline_1w",
     "kline_1mon",
     "snapshot_realtime",
     "stock_fundamentals",
@@ -37,4 +36,4 @@ def test_all_tables_registered_in_metadata():
 
 
 def test_kline_partition_table_names():
-    assert KLINE_TABLES == ("kline_15m", "kline_1d", "kline_1w", "kline_1mon")
+    assert KLINE_TABLES == ("kline_15m", "kline_1d", "kline_1mon")

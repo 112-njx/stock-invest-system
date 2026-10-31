@@ -173,6 +173,13 @@ def test_fetch_kline_15m_converts_tz_to_utc():
     assert bars[0].ts.tzinfo is not None  # 已转 UTC
 
 
+def test_direct_weekly_fetch_is_disabled():
+    p = _provider()
+    assert p.can_fetch_kline("index", "1w") is False
+    assert p.fetch_kline("000001", "1w", datetime(2026, 7, 1, tzinfo=UTC),
+                         datetime(2026, 8, 1, tzinfo=UTC), asset_type="index") == []
+
+
 def test_fetch_realtime_stock_batch():
     p = _provider()
     symbols = [

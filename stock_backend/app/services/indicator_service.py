@@ -38,7 +38,7 @@ def compute_indicators(
     limit: int = 1000,
 ) -> list[dict]:
     """返回指标序列：每行含 K 线基础字段 + 指标列（ts 升序，NaN 已置 None）。"""
-    if period not in KLINE_MODELS:
+    if period not in (*KLINE_MODELS.keys(), "1w"):
         raise ValueError(f"unsupported period: {period}")
     names = list(dict.fromkeys(n.strip().lower() for n in names if n.strip()))
     if not names:
@@ -56,11 +56,11 @@ def compute_indicators(
     if start is None:
         start = end - timedelta(days=_DEFAULT_BACK_DAYS)
 
-    if period == "1w":
-        from app.services.weekly_kline import get_weekly_bars
+    if period in ("1w", "1mon"):
+        from app.services.weekly_kline import get_period_bars
 
-        bars = get_weekly_bars(db, symbol_id, None, end, limit=100000) if explicit_range else get_weekly_bars(
-            db, symbol_id, None, None, limit=limit
+        bars = get_period_bars(db, symbol_id, period, None, end, limit=100000) if explicit_range else get_period_bars(
+            db, symbol_id, period, None, None, limit=limit
         )
     elif explicit_range:
         # 从库中最早的 K 线起算递推指标，返回时再裁到请求区间，避免补页交界处数值跳变。

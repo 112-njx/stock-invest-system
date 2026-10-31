@@ -9,11 +9,13 @@
 import logging
 import threading
 import time
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 
 from app.core.config import get_settings
 
 from .base import BaseDataProvider, RealtimeQuote, RealtimeSymbol, unavailable_quote
+from .request_activity import kline_scope, realtime_scope
 from .eastmoney import EastMoneyProvider
 from .sina import SinaProvider
 from .ths import THSProvider
@@ -90,7 +92,9 @@ class DataProviderFactory:
                 logger.info("[provider] %s open (cooldown %ds), skip", p.name, int(circuit.cooldown_until - now))
                 continue
             try:
-                result = getattr(p, method)(*args, **kwargs)
+                scope_context = kline_scope(*args) if method == "fetch_kline" else nullcontext()
+                with scope_context:
+                    result = getattr(p, method)(*args, **kwargs)
                 if result:
                     with self._lock:
                         circuit.record_success(now)
@@ -123,6 +127,65 @@ class DataProviderFactory:
             scope=lambda p: p.can_fetch_kline(asset_type, period),
         )
         return result or []
+
+    def fetch_kline_checked(self, symbol: str, period: str, start, end, asset_type: str = "stock") -> tuple[list, bool]:
+        """历史补拉专用：返回 K 线及空区间是否已由全部可用来源确认。"""
+        confirmed = True
+        attempted = False
+        for p in self._providers:
+            if not p.can_fetch_kline(asset_type, period):
+                continue
+            circuit = self._circuits[p.name]
+            now = time.time()
+            with self._lock:
+                allowed = circuit.allow(now)
+            if not allowed:
+                confirmed = False
+                continue
+            attempted = True
+            try:
+                with kline_scope(symbol, period, start, end, asset_type):
+                    bars = p.fetch_kline(symbol, period, start, end, asset_type)
+                if bars:
+                    with self._lock:
+                        circuit.record_success(now)
+                    return bars, True
+            except Exception as exc:  # noqa: BLE001
+                confirmed = False
+                with self._lock:
+                    circuit.record_failure(now)
+                logger.warning("[provider] %s historical fetch failed: %s", p.name, str(exc)[:120])
+        return [], confirmed and attempted
+
+    def fetch_kline_all(self, symbol: str, period: str, start, end, asset_type: str = "stock") -> list:
+        """关注股日 K：股票仅请求首个适用来源；其他资产合并可用来源。"""
+        merged = {}
+        for p in self._providers:
+            if not p.can_fetch_kline(asset_type, period):
+                continue
+            circuit = self._circuits[p.name]
+            now = time.time()
+            with self._lock:
+                allowed = circuit.allow(now)
+            if not allowed:
+                if asset_type == "stock":
+                    break
+                continue
+            try:
+                with kline_scope(symbol, period, start, end, asset_type):
+                    bars = p.fetch_kline(symbol, period, start, end, asset_type)
+                if bars:
+                    with self._lock:
+                        circuit.record_success(now)
+                    for bar in bars:
+                        merged.setdefault(bar.ts, bar)
+            except Exception as exc:  # noqa: BLE001
+                with self._lock:
+                    circuit.record_failure(now)
+                logger.warning("[provider] %s watchlist fetch failed: %s", p.name, str(exc)[:120])
+            if asset_type == "stock":
+                break
+        return [merged[ts] for ts in sorted(merged)]
 
     def fetch_realtime(self, symbols) -> list:
         """实时快照：按资产类型分组逐类型走优先级链（首个含 available 结果的 Provider 覆盖该类型）。
@@ -163,7 +226,8 @@ class DataProviderFactory:
                 )
                 continue
             try:
-                result = p.fetch_realtime(items)
+                with realtime_scope(items, atype):
+                    result = p.fetch_realtime(items)
                 if result and any(getattr(q, "available", False) for q in result):
                     with self._lock:
                         circuit.record_success(now)
@@ -256,7 +320,8 @@ class DataProviderFactory:
             try:
                 end = datetime.now(UTC)
                 start = end - timedelta(days=5)
-                bars = p.fetch_kline(p.probe_symbol, "1d", start, end, p.probe_asset_type)
+                with kline_scope(p.probe_symbol, "1d", start, end, p.probe_asset_type):
+                    bars = p.fetch_kline(p.probe_symbol, "1d", start, end, p.probe_asset_type)
                 recovered = bool(bars)
             except Exception:  # noqa: BLE001
                 recovered = False

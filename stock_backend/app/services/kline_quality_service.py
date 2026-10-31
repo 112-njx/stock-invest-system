@@ -120,7 +120,7 @@ def quality_dict(row: KlineQuality | None) -> dict:
     }
 
 
-def check_and_repair(db, symbol, provider, *, now: datetime | None = None) -> dict:
+def check_and_repair(db, symbol, provider, *, now: datetime | None = None, full_watchlist_repair: bool = False) -> dict:
     """检查境内固定指数及已关注 A 股日 K；不使用工作日猜测交易日。"""
     if not eligible(symbol):
         return {"status": "unsupported", "added": 0}
@@ -145,13 +145,19 @@ def check_and_repair(db, symbol, provider, *, now: datetime | None = None) -> di
 
             redis = get_redis_client()
             cooldown_key = f'provider:gap-cooldown:{symbol.id}:{first}:{last}'
-            if not redis.set(cooldown_key, '1', nx=True, ex=86400):
+            if not full_watchlist_repair and not redis.set(cooldown_key, '1', nx=True, ex=86400):
                 continue
             try:
                 required = {day for day in missing if first <= day <= last}
-                bars = _fetch_gap_bars(provider, symbol_param, asset_type, first, last, required)
+                if full_watchlist_repair:
+                    start = datetime.combine(first - timedelta(days=1), time(), UTC)
+                    end = datetime.combine(last + timedelta(days=1), time(), UTC)
+                    bars = [bar for bar in provider.fetch_kline_all(symbol_param, "1d", start, end, asset_type)
+                            if market_cache.as_utc(bar.ts).date() in required]
+                else:
+                    bars = _fetch_gap_bars(provider, symbol_param, asset_type, first, last, required)
                 added += kline_repo.upsert_bars(db, "1d", symbol.id, bars)
-                if {market_cache.as_utc(bar.ts).date() for bar in bars} >= required:
+                if not full_watchlist_repair and {market_cache.as_utc(bar.ts).date() for bar in bars} >= required:
                     redis.delete(cooldown_key)
             except Exception:
                 db.rollback()
@@ -169,6 +175,7 @@ def check_and_repair(db, symbol, provider, *, now: datetime | None = None) -> di
             market_cache.invalidate_kline_cache(symbol.id, "1d")
             invalidate_indicator_cache(symbol.id, "1d")
             invalidate_indicator_cache(symbol.id, "1w")
+            invalidate_indicator_cache(symbol.id, "1mon")
             publish_kline_refresh(symbol.id, "1d")
     status = "unknown" if not calendar or not last_day else "partial" if missing else "complete"
     quality = get_quality(db, symbol.id, "1d")

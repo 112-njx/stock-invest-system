@@ -41,6 +41,7 @@ export interface KLineBar {
 export interface KlineQuality {
   status: 'unchecked' | 'unknown' | 'partial' | 'complete' | 'unsupported'
   sync_status?: 'syncing' | 'idle'
+  retry_after_seconds?: number
   missing_count: number
   missing_ranges: string[][]
   checked_at?: string | null
@@ -149,7 +150,7 @@ export function requestKlineBackfill(params: { symbol_id: number; period: Period
 }
 
 export function fetchKlineBackfillStatus(taskId: string) {
-  return request<{ status: 'loading' | 'done' | 'failed'; fetched?: number }>({
+  return request<{ status: 'loading' | 'done' | 'failed'; fetched?: number; confirmed_empty?: boolean }>({
     url: `/kline/backfill/${encodeURIComponent(taskId)}`, silent: true,
   })
 }

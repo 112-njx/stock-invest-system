@@ -25,6 +25,10 @@ celery_app.conf.update(
     task_default_exchange="sync",
     task_default_routing_key="sync",
     task_routes={
+        "app.worker.tasks.sync_tasks.watchlist_stock_sync": {"queue": "watchlist"},
+        "app.worker.tasks.sync_tasks.watchlist_delivery_reconcile": {"queue": "control"},
+        "app.worker.tasks.sync_tasks.kline_init_fixed_indices": {"queue": "fixed_indices"},
+        "app.worker.tasks.sync_tasks.kline_backfill": {"queue": "backfill"},
         "app.worker.tasks.sync_tasks.*": {"queue": "sync"},
         "app.worker.tasks.backtest_tasks.*": {"queue": "backtest"},
         "app.worker.tasks.ai_tasks.*": {"queue": "ai"},
@@ -37,6 +41,11 @@ celery_app.conf.update(
         "app.worker.tasks.backup_tasks.*": {"queue": "backup"},
     },
     beat_schedule=build_beat_schedule(),
+    broker_transport_options={"visibility_timeout": 7200},
+    result_backend_transport_options={"visibility_timeout": 7200},
+    visibility_timeout=7200,
+    worker_prefetch_multiplier=1,
+    task_track_started=True,
 )
 
 # 显式注册任务模块：worker 侧加载，API 侧 .delay() 使用同一注册表

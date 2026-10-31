@@ -304,11 +304,10 @@ def list_watchlist(db: Session, user_id: int) -> list[dict]:
 
 
 def _queue_watchlist_stock(db: Session, entry: UserWatchlist, sym: Symbol, *, force: bool = False) -> None:
-    """请求阶段只入队；每只股票每天最多安排一次外部数据检查。"""
+    """按数据质量建立持久待发布任务；调度器负责实际投递。"""
     from app.models.kline_quality import TradingDay
     from app.services import kline_quality_service
-    from app.utils.redis_client import get_redis_client
-    from app.worker.tasks.sync_tasks import watchlist_stock_sync
+    from app.services.watchlist_delivery import queue_watchlist_sync
 
     now = datetime.now(UTC)
     latest = kline_repo.latest_ts(db, "1d", sym.id)
@@ -322,27 +321,8 @@ def _queue_watchlist_stock(db: Session, entry: UserWatchlist, sym: Symbol, *, fo
     )
     if not needs_sync:
         return
-    redis = get_redis_client()
-    key = f"provider:watchlist-daily:{sym.id}:{local_now.date()}"
-    if force:
-        redis.delete(key)
-    if not redis.set(key, "1", nx=True, ex=86400):
-        task = ops_repo.latest_sync_task(db, "kline_init" if latest is None else "kline_incremental", sym.id)
-        if task and task.status in {"queued", "running"} and entry.sync_status not in {"pending", "syncing"}:
-            entry.sync_status = "pending"
-            db.commit()
-        return
-    task_type = "kline_init" if latest is None else "kline_incremental"
-    entry.sync_status = "pending"
-    ops_repo.upsert_sync_task(db, task_type, sym.id, "queued", now)
-    db.commit()
-    try:
-        watchlist_stock_sync.delay(symbol_id=sym.id, initialize=latest is None)
-    except Exception:
-        redis.delete(key)
-        entry.sync_status = "failed"
-        db.commit()
-        raise
+    queue_watchlist_sync(db, sym.id, initialize=latest is None, force=force, now=now)
+    db.refresh(entry)
 
 
 def delete_watchlist(db: Session, user_id: int, watchlist_id: int) -> None:

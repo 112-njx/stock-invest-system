@@ -98,6 +98,8 @@ const historyState = ref<'loading' | 'empty' | 'failed' | ''>('')
 const historyWidth = ref(0)
 const quality = ref<KlineQuality | null>(null)
 let qualityTimer: ReturnType<typeof setInterval> | null = null
+let retryTimer: ReturnType<typeof setInterval> | null = null
+const retryRemaining = ref(0)
 const hoveredCandle = ref<{ bar: KLineBar; change: number | null; percent: number | null } | null>(null)
 let loadVersion = 0
 let loadedBars: KLineBar[] = []
@@ -109,7 +111,7 @@ let retryBackfill = false
 const qualityWarning = computed(() => {
   if (quality.value?.status === 'partial') {
     const ranges = quality.value.missing_ranges.slice(0, 2).map((r) => r.join('～')).join('、')
-    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${quality.value.sync_status === 'syncing' ? '同步中' : '暂未同步'}`
+    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${retryRemaining.value > 0 ? `${retryRemaining.value} 秒后同步` : quality.value.sync_status === 'syncing' ? '更新中' : '暂未同步'}`
   }
   if (quality.value?.status === 'unknown') return '交易日历不可用，历史数据未能核验'
   if (quality.value?.status === 'unchecked') return '历史数据尚未核验'
@@ -158,11 +160,11 @@ function onWheel(e: WheelEvent) {
 interface IndicatorPaneRef {
   pane: IPaneApi<any>
   series: ISeriesApi<any>[]
-  markers?: ISeriesMarkersPluginApi<Time>
   referenceLines?: IPriceLine[]
 }
 const indicatorPanes = new Map<IndicatorKey, IndicatorPaneRef>()
 const indicatorTops = ref<Partial<Record<IndicatorKey, number>>>({})
+const macdCrossPoints = ref<{ x: number; y: number; golden: boolean }[]>([])
 const hoveredIndicatorTime = ref<number | null>(null)
 let paneLayoutFrame = 0
 let chartResizeObserver: ResizeObserver | null = null
@@ -177,12 +179,45 @@ function updateIndicatorTops() {
     }
     top += pane.getHeight() + 2 // pane separator
   }
-  indicatorTops.value = tops
+  if (Object.keys(tops).some((key) => tops[key as IndicatorKey] !== indicatorTops.value[key as IndicatorKey]) ||
+      Object.keys(tops).length !== Object.keys(indicatorTops.value).length) indicatorTops.value = tops
+  updateMacdCrossPoints()
+}
+
+function updateMacdCrossPoints() {
+  const macd = indicatorPanes.get('macd')
+  const top = indicatorTops.value.macd
+  if (!chart || !macd || top == null || !chartHost.value) { macdCrossPoints.value = []; return }
+  const rows = indicatorRows.value
+  const points: { x: number; y: number; golden: boolean }[] = []
+  for (let i = 1; i < rows.length; i++) {
+    const previous = rows[i - 1]
+    const current = rows[i]
+    if (previous.macd_dif == null || previous.macd_dea == null || current.macd_dif == null || current.macd_dea == null) continue
+    const before = previous.macd_dif - previous.macd_dea
+    const after = current.macd_dif - current.macd_dea
+    if (!((before <= 0 && after > 0) || (before >= 0 && after < 0))) continue
+    const x0 = chart.timeScale().timeToCoordinate(toUtcSeconds(previous.ts))
+    const x1 = chart.timeScale().timeToCoordinate(toUtcSeconds(current.ts))
+    if (x0 == null || x1 == null) continue
+    const fraction = before / (before - after)
+    const price = previous.macd_dif + fraction * (current.macd_dif - previous.macd_dif)
+    const y = macd.series[1].priceToCoordinate(price)
+    const x = x0 + fraction * (x1 - x0)
+    if (y != null && x >= -5 && x <= chartHost.value.clientWidth + 5) {
+      points.push({ x, y: top + y, golden: after > 0 })
+    }
+  }
+  macdCrossPoints.value = points
 }
 
 function scheduleIndicatorTops() {
   cancelAnimationFrame(paneLayoutFrame)
   paneLayoutFrame = requestAnimationFrame(updateIndicatorTops)
+}
+
+function onIndicatorDrag(event: MouseEvent) {
+  if (event.buttons) scheduleIndicatorTops()
 }
 
 const PERIODS: { label: string; value: Period }[] = [
@@ -359,6 +394,10 @@ function initChart() {
   chart.subscribeCrosshairMove(onCrosshairMove)
   chartResizeObserver = new ResizeObserver(scheduleIndicatorTops)
   chartResizeObserver.observe(chartHost.value)
+  if (props.showIndicators) {
+    window.addEventListener('mousemove', onIndicatorDrag, true)
+    window.addEventListener('mouseup', scheduleIndicatorTops, true)
+  }
 
   chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange)
   container.value?.addEventListener('dblclick', onDblClick, { capture: true })
@@ -403,10 +442,12 @@ function applyTheme() {
 }
 
 function onVisibleRangeChange(range: { from: number; to: number } | null) {
+  scheduleIndicatorTops()
   if (!chart || !loadedBars.length) return
   const x = chart.timeScale().timeToCoordinate(toUtcSeconds(loadedBars[0].ts))
   historyWidth.value = x == null ? 0 : Math.max(0, Math.min(x, container.value?.clientWidth ?? 0))
-  if (range && range.from < 5 && !initialViewport && !historyBusy && !historyState.value) void loadOlder()
+  const threshold = market.period === '1w' || market.period === '1mon' ? -5 : 5
+  if (range && range.from < threshold && !initialViewport && !historyBusy && !historyState.value) void loadOlder()
 }
 
 function onDblClick(event: MouseEvent) {
@@ -424,6 +465,7 @@ function removeAllIndicatorPanes() {
   }
   indicatorPanes.clear()
   indicatorTops.value = {}
+  macdCrossPoints.value = []
 }
 
 function rebuildIndicatorPanes() {
@@ -485,7 +527,6 @@ function rebuildIndicatorPanes() {
     indicatorPanes.set(meta.key, {
       pane, series,
       referenceLines,
-      ...(meta.key === 'macd' ? { markers: createSeriesMarkers(series[1], []) } : {}),
     })
   }
 
@@ -616,8 +657,22 @@ function toCandleData(bars: KLineBar[]) {
   }))
 }
 
+function initialWeeklyCount(): number {
+  return props.showIndicators ? 30 : 60
+}
+
+function initialPeriodCount(period: Period): number {
+  return period === '1w' ? initialWeeklyCount() : 24
+}
+
+function showInitialPeriodRange(period: Period, count: number) {
+  if (!chart || count < 1) return
+  const slots = initialPeriodCount(period)
+  chart.timeScale().setVisibleLogicalRange({ from: count - slots - 0.5, to: count - 0.5 + 4 })
+}
+
 function recentBars(bars: KLineBar[]): KLineBar[] {
-  if (market.period === '1w') return bars.slice(-60)
+  if (market.period === '1w' || market.period === '1mon') return bars.slice(-initialPeriodCount(market.period))
   if (!props.recentMonths || !bars.length) return bars
   const cutoff = new Date(bars[bars.length - 1].ts)
   const day = cutoff.getUTCDate()
@@ -628,6 +683,14 @@ function recentBars(bars: KLineBar[]): KLineBar[] {
   return bars.filter((bar) => toUtcSeconds(bar.ts) * 1000 >= cutoff.getTime())
 }
 
+function selectPeriod(period: Period) {
+  if (market.period !== period) {
+    market.setPeriod(period)
+    return
+  }
+  if ((period === '1w' || period === '1mon') && loadedBars.length) showInitialPeriodRange(period, loadedBars.length)
+}
+
 function threeMonthsBefore(iso: string, months = 3): Date {
   const date = new Date(iso)
   const day = date.getUTCDate()
@@ -636,6 +699,13 @@ function threeMonthsBefore(iso: string, months = 3): Date {
   const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate()
   date.setUTCDate(Math.min(day, lastDay))
   return date
+}
+
+function beforePeriod(ts: string, period: Period): Date {
+  const date = new Date(ts)
+  if (period === '1w') date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7))
+  else if (period === '1mon') date.setUTCDate(1)
+  return new Date(date.getTime() - 1)
 }
 
 async function refreshIndicators(version: number, symbolId: number, period: Period) {
@@ -657,9 +727,8 @@ async function loadOlder() {
   const symbolId = props.symbol.id
   const period = market.period
   const earliest = new Date(historyCursor || loadedBars[0].ts)
-  const end = market.period === '1w'
-    ? new Date(Date.UTC(earliest.getUTCFullYear(), earliest.getUTCMonth(), earliest.getUTCDate() - ((earliest.getUTCDay() + 6) % 7)) - 1)
-    : new Date(earliest.getTime() - 1)
+  const end = period === '1w' || period === '1mon'
+    ? beforePeriod(earliest.toISOString(), period) : new Date(earliest.getTime() - 1)
   const start = threeMonthsBefore(end.toISOString())
   historyBusy = true
   historyState.value = 'loading'
@@ -681,7 +750,7 @@ async function loadOlder() {
     const older = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
     if (version !== loadVersion) return
     await merge(older)
-    if (period === '1w' && older.length) {
+    if ((period === '1w' || period === '1mon') && older.length) {
       historyCursor = loadedBars[0].ts
       historyState.value = ''
       return
@@ -689,19 +758,23 @@ async function loadOlder() {
     const retry = retryBackfill
     retryBackfill = false
     const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry })
+    let confirmedEmpty = false
     for (let attempt = 0; attempt < 45; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
       if (version !== loadVersion) return
       const status = await fetchKlineBackfillStatus(task_id)
       if (status.status === 'failed') throw new Error('历史数据拉取失败')
-      if (status.status === 'done') break
+      if (status.status === 'done') {
+        confirmedEmpty = status.confirmed_empty === true
+        break
+      }
       if (attempt === 44) throw new Error('历史数据拉取超时')
     }
     const refreshed = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
     if (version !== loadVersion) return
     await merge(refreshed)
-    historyCursor = period === '1w' && refreshed.length ? loadedBars[0].ts : start.toISOString()
-    historyState.value = refreshed.length ? '' : 'empty'
+    historyCursor = (period === '1w' || period === '1mon') && refreshed.length ? loadedBars[0].ts : start.toISOString()
+    historyState.value = refreshed.length ? '' : confirmedEmpty ? 'empty' : 'failed'
   } catch {
     if (version === loadVersion) historyState.value = 'failed'
   } finally {
@@ -710,6 +783,10 @@ async function loadOlder() {
 }
 
 async function loadInitialMissing(version: number, symbolId: number, period: Period) {
+  if (props.showIndicators && (period === '1w' || period === '1mon')) {
+    await fillInitialPeriod(version, symbolId, period)
+    return
+  }
   const end = new Date()
   const start = threeMonthsBefore(end.toISOString(), period === '1w' ? 15 : 3)
   historyWidth.value = container.value?.clientWidth ?? 0
@@ -727,7 +804,7 @@ async function loadInitialMissing(version: number, symbolId: number, period: Per
         if (status.fetched) {
           historyState.value = ''
           void loadKline()
-        } else historyState.value = 'empty'
+        } else historyState.value = status.confirmed_empty ? 'empty' : 'failed'
         return
       }
     }
@@ -737,9 +814,54 @@ async function loadInitialMissing(version: number, symbolId: number, period: Per
   }
 }
 
+async function fillInitialPeriod(version: number, symbolId: number, period: '1w' | '1mon') {
+  const target = initialPeriodCount(period)
+  let end = loadedBars.length ? beforePeriod(loadedBars[0].ts, period) : new Date(Date.now() - 1000)
+  if (!loadedBars.length) historyWidth.value = container.value?.clientWidth ?? 0
+  historyState.value = 'loading'
+  for (let attempt = 0; attempt < 12 && loadedBars.length < target; attempt++) {
+    const start = new Date(end.getTime() - 90 * 86400_000)
+    try {
+      const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString() })
+      let status: Awaited<ReturnType<typeof fetchKlineBackfillStatus>> | null = null
+      for (let poll = 0; poll < 45; poll++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
+        status = await fetchKlineBackfillStatus(task_id)
+        if (status.status === 'failed') throw new Error('历史数据拉取失败')
+        if (status.status === 'done') break
+      }
+      if (status?.status !== 'done') throw new Error('历史数据拉取超时')
+      const bars = await fetchKLine({ symbol: symbolId, period, limit: target })
+      if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
+      if (bars.length) {
+        loadedBars = bars
+        historyCursor = bars[0].ts
+        candleSeries?.setData(toCandleData(bars))
+        lastBar = bars[bars.length - 1]
+        barRange = { from: toUtcSeconds(bars[0].ts), to: toUtcSeconds(lastBar.ts) }
+        drawMarkers()
+        await refreshIndicators(version, symbolId, period)
+        if (version !== loadVersion) return
+        showInitialPeriodRange(period, bars.length)
+        initialViewport = false
+      }
+      end = new Date(start.getTime() - 1)
+    } catch {
+      if (version === loadVersion) historyState.value = 'failed'
+      return
+    }
+  }
+  if (version === loadVersion) historyState.value = loadedBars.length >= target ? '' : 'empty'
+}
+
 function retryHistory() {
   historyState.value = ''
   retryBackfill = true
+  if (props.showIndicators && (market.period === '1w' || market.period === '1mon') && loadedBars.length < initialPeriodCount(market.period) && props.symbol) {
+    void fillInitialPeriod(loadVersion, props.symbol.id, market.period)
+    return
+  }
   if (loadedBars.length) void loadOlder()
   else if (props.symbol) void loadInitialMissing(loadVersion, props.symbol.id, market.period)
 }
@@ -776,24 +898,13 @@ function setIndicatorData() {
       })))
       ref.series[1].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.macd_dif == null ? {} : { value: r.macd_dif }) })))
       ref.series[2].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.macd_dea == null ? {} : { value: r.macd_dea }) })))
-      const crosses: SeriesMarker<Time>[] = []
-      for (let i = 1; i < rows.length; i++) {
-        const previous = rows[i - 1]
-        const current = rows[i]
-        if (previous.macd_dif == null || previous.macd_dea == null || current.macd_dif == null || current.macd_dea == null) continue
-        if (previous.macd_dif <= previous.macd_dea && current.macd_dif > current.macd_dea) {
-          crosses.push({ time: toUtcSeconds(current.ts), position: 'belowBar', shape: 'circle', color: c.down })
-        } else if (previous.macd_dif >= previous.macd_dea && current.macd_dif < current.macd_dea) {
-          crosses.push({ time: toUtcSeconds(current.ts), position: 'aboveBar', shape: 'circle', color: c.up })
-        }
-      }
-      ref.markers?.setMarkers(crosses)
     } else if (key === 'kdj') {
       ref.series[0].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.kdj_k == null ? {} : { value: r.kdj_k }) })))
       ref.series[1].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.kdj_d == null ? {} : { value: r.kdj_d }) })))
       ref.series[2].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.kdj_j == null ? {} : { value: r.kdj_j }) })))
     }
   }
+  scheduleIndicatorTops()
 }
 
 async function loadKline() {
@@ -808,15 +919,16 @@ async function loadKline() {
   const t0 = performance.now()
   try {
     const [loaded, checked] = await Promise.all([
-      fetchKLine({ symbol: symbolId, period, limit: period === '1w' ? Math.max(60, loadedBars.length + 1) : props.recentMonths ? 5000 : undefined }),
+      fetchKLine({ symbol: symbolId, period, limit: period === '1w' || period === '1mon' ? Math.max(initialPeriodCount(period), loadedBars.length + 1) : props.recentMonths ? 5000 : undefined }),
       fetchKlineQuality(symbolId, period).catch(() => null),
     ])
     if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
-    // 周 K 的时间戳是本周最后一个交易日，周内更新会改变时间戳；重读时不能保留旧周柱。
-    const existing = initialViewport || period === '1w' ? [] : loadedBars
+    // 周/月 K 的时间戳是本周期最后一个交易日，周期内更新会改变时间戳。
+    const existing = initialViewport || period === '1w' || period === '1mon' ? [] : loadedBars
     const byTime = new Map([...existing, ...loaded].map((bar) => [bar.ts, bar]))
     const bars = [...byTime.values()].sort((a, b) => toUtcSeconds(a.ts) - toUtcSeconds(b.ts))
     quality.value = checked
+    retryRemaining.value = checked?.retry_after_seconds ?? 0
     if (!chart) initChart()
     const previousRange = initialViewport ? null : chart?.timeScale().getVisibleLogicalRange()
     const previousCount = loadedBars.length
@@ -825,6 +937,7 @@ async function loadKline() {
     historyCursor = bars[0]?.ts ?? ''
     candleSeries?.setData(toCandleData(bars))
     if (!bars.length) {
+      if (period === '1w' || period === '1mon') showInitialPeriodRange(period, 1)
       void loadInitialMissing(version, symbolId, period)
       return
     }
@@ -844,16 +957,22 @@ async function loadKline() {
     await refreshIndicators(version, symbolId, period)
     if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
     if (initialViewport) {
-      const recent = recentBars(bars)
-      if (recent.length > 1) {
-        chart?.timeScale().setVisibleRange({ from: toUtcSeconds(recent[0].ts), to: toUtcSeconds(recent[recent.length - 1].ts) })
-      } else chart?.timeScale().fitContent()
+      if (period === '1w' || period === '1mon') showInitialPeriodRange(period, bars.length)
+      else {
+        const recent = recentBars(bars)
+        if (recent.length > 1) {
+          chart?.timeScale().setVisibleRange({ from: toUtcSeconds(recent[0].ts), to: toUtcSeconds(recent[recent.length - 1].ts) })
+        } else chart?.timeScale().fitContent()
+      }
       initialViewport = false
     } else if (previousRange) {
-      const prepended = period === '1w' && previousFirstTs
+      const prepended = (period === '1w' || period === '1mon') && previousFirstTs
         ? bars.filter((bar) => toUtcSeconds(bar.ts) < toUtcSeconds(previousFirstTs)).length
         : Math.max(0, bars.length - previousCount)
       chart?.timeScale().setVisibleLogicalRange({ from: previousRange.from + prepended, to: previousRange.to + prepended })
+    }
+    if ((period === '1w' || period === '1mon') && props.showIndicators && bars.length < initialPeriodCount(period)) {
+      void fillInitialPeriod(version, symbolId, period)
     }
     trackTiming('kline_load', performance.now() - t0, {
       symbol: props.symbol.code, period: market.period, bars: bars.length,
@@ -974,10 +1093,12 @@ onMounted(() => {
     if (!checked || props.symbol?.id !== symbolId || market.period !== period) return
     if (checked.status === 'complete') { void loadKline(); return }
     quality.value = checked
+    retryRemaining.value = checked.retry_after_seconds ?? 0
   }, 10000)
+  retryTimer = setInterval(() => { if (retryRemaining.value > 0) retryRemaining.value-- }, 1000)
   // V0.2：注册 WS kline 更新回调
   ws.setKlineHandler((symbolId, period, bar) => {
-    if (props.symbol?.id === symbolId && market.period === '1w' && (period === '1d' || period === '1w')) {
+    if (props.symbol?.id === symbolId && (market.period === '1w' || market.period === '1mon') && period === '1d') {
       void loadKline()
       return
     }
@@ -1000,7 +1121,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   cancelAnimationFrame(paneLayoutFrame)
   chartResizeObserver?.disconnect()
+  window.removeEventListener('mousemove', onIndicatorDrag, true)
+  window.removeEventListener('mouseup', scheduleIndicatorTops, true)
   if (qualityTimer) clearInterval(qualityTimer)
+  if (retryTimer) clearInterval(retryTimer)
   container.value?.removeEventListener('dblclick', onDblClick, true)
   chart?.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange)
   window.removeEventListener('wheel', onWheel, true)
@@ -1109,7 +1233,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
             :key="p.value"
             class="period-tab"
             :class="{ active: market.period === p.value }"
-            @click="market.setPeriod(p.value)"
+            @click="selectPeriod(p.value)"
           >
             {{ p.label }}
           </button>
@@ -1121,6 +1245,18 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
     <div ref="container" class="kline-chart__body">
       <div ref="chartHost" class="kline-chart__canvas" />
+      <svg v-if="showIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
+        <circle
+          v-for="(point, index) in macdCrossPoints"
+          :key="index"
+          :cx="point.x"
+          :cy="point.y"
+          r="4"
+          :fill="point.golden ? 'var(--down)' : 'var(--up)'"
+          stroke="var(--bg-panel)"
+          stroke-width="1.5"
+        />
+      </svg>
       <div
         v-for="indicator in showIndicators ? enabledList : []"
         :key="indicator.key"
@@ -1364,6 +1500,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   position: relative;
 }
 .kline-chart__canvas { position: absolute; inset: 0; z-index: 0; }
+.kline-chart__crosses { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; overflow: hidden; pointer-events: none; }
 .kline-chart__indicator-legend {
   position: absolute;
   left: 8px;

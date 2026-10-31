@@ -1,6 +1,6 @@
 """行情查询 API：标的列表/搜索、K线、批量实时快照。"""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
@@ -25,7 +25,6 @@ class KlineBackfillRequest(BaseModel):
     period: str
     start: datetime
     end: datetime
-    retry: bool = False
 
 
 @router.post("/kline/backfill")
@@ -43,7 +42,7 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
 
     key = f"kline-backfill:{payload.symbol_id}:{payload.period}:{payload.start.isoformat()}:{payload.end.isoformat()}"
     redis = get_redis_client()
-    # 同一历史窗口一小时内复用任务结果；主动 retry 也不绕过冷却期。
+    # 同一历史窗口复用任务；失败时 worker 清理该键，允许重新请求。
     task_id = str(uuid4())
     if not redis.set(key, task_id, ex=3600, nx=True):
         return ok(data={"task_id": redis.get(key)})
@@ -66,7 +65,9 @@ def kline_backfill_status(task_id: str) -> dict:
     if result.failed():
         return ok(data={"status": "failed"})
     if result.ready():
-        return ok(data={"status": "done", "fetched": (result.result or {}).get("fetched", 0)})
+        payload = result.result or {}
+        return ok(data={"status": "done", "fetched": payload.get("fetched", 0),
+                        "confirmed_empty": payload.get("confirmed_empty", False)})
     return ok(data={"status": "loading"})
 
 
@@ -145,7 +146,7 @@ def get_kline_quality(
     tasks = [ops_repo.latest_sync_task(db, kind, sym.id) for kind in ('kline_incremental', 'kline_init')]
     symbol_syncing = any(
         task is not None and task.status in {'queued', 'running'} and task.last_run_at is not None
-        and datetime.now(task.last_run_at.tzinfo) - task.last_run_at < timedelta(hours=2)
+        and datetime.now(UTC) - market_cache.as_utc(task.last_run_at) < timedelta(hours=2)
         for task in tasks
     )
     # Fixed-index pre-sync is queued as one batch. Until the worker reaches a
@@ -154,6 +155,14 @@ def get_kline_quality(
     batch = ops_repo.get_latest_sync_status(db, "fixed_indices") if sym.is_fixed_index else None
     batch_syncing = batch is not None and batch.status in {"queued", "running"}
     data['sync_status'] = 'syncing' if symbol_syncing or batch_syncing else 'idle'
+    if sym.is_fixed_index:
+        from app.utils.redis_client import get_redis_client
+
+        data['retry_after_seconds'] = max(0, get_redis_client().ttl('provider:fixed-indices-retry'))
+    elif kline_quality_service.is_a_share_stock(sym):
+        next_times = [task.next_run_at for task in tasks if task and task.status in {'queued', 'failed'}
+                      and task.next_run_at is not None]
+        data['retry_after_seconds'] = max(0, int((min(map(market_cache.as_utc, next_times)) - datetime.now(UTC)).total_seconds())) if next_times else 0
     return ok(data=data)
 
 
