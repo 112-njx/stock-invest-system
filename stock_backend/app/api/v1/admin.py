@@ -1,5 +1,7 @@
 """管理员 API：行情 Provider、队列与 worker 状态。"""
 
+import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
@@ -18,6 +20,7 @@ from app.worker.celery_app import celery_app
 from app.worker.tasks.sync_tasks import catalog_sync
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+logger = logging.getLogger(__name__)
 QUEUE_NAMES = ("watchlist", "fixed_indices", "backfill", "control", "sync", "backtest", "ai", "backup")
 
 
@@ -41,14 +44,21 @@ def _queue_name(task: dict) -> str:
 def _task_queue_state(db: Session, redis) -> tuple[dict, dict]:
     queues = {name: {"ready": redis.llen(name), "active": 0, "delayed": 0,
                      "reserved": 0, "abnormal": 0} for name in QUEUE_NAMES}
-    inspect = celery_app.control.inspect(timeout=1)
-    pings = inspect.ping() or {}
-    active_queues = inspect.active_queues() or {}
+
+    def inspect_one(name: str) -> dict:
+        try:
+            return getattr(celery_app.control.inspect(timeout=1), name)() or {}
+        except Exception as exc:
+            logger.warning("Celery inspect %s failed: %s", name, exc)
+            return {}
+
+    names = ("ping", "active_queues", "active", "scheduled", "reserved")
+    with ThreadPoolExecutor(max_workers=len(names)) as pool:
+        pings, active_queues, active, scheduled, reserved = pool.map(inspect_one, names)
     workers = {queue: any(node in pings and any(item.get("name") == queue for item in subscriptions)
                           for node, subscriptions in active_queues.items()) for queue in QUEUE_NAMES}
-    for method, field in ((inspect.active, "active"), (inspect.scheduled, "delayed"),
-                          (inspect.reserved, "reserved")):
-        for tasks in (method() or {}).values():
+    for snapshot, field in ((active, "active"), (scheduled, "delayed"), (reserved, "reserved")):
+        for tasks in snapshot.values():
             for item in tasks:
                 task = item.get("request", item)
                 queues[_queue_name(task)][field] += 1
@@ -92,12 +102,19 @@ def traffic_status(current: User = Depends(get_current_admin), db: Session = Dep
     data['probe_interval_seconds'] = get_settings().PROVIDER_PROBE_INTERVAL
     redis = get_redis_client()
     data['retry_interval_seconds'] = int(redis.get('provider:retry:interval') or get_settings().SYNC_RETRY_BACKOFF)
-    data['queues'], data['workers'] = _task_queue_state(db, redis)
     data['sync_status'] = {}
     for scope in ('fixed_indices', 'catalog'):
         row = ops_repo.get_latest_sync_status(db, scope)
         data['sync_status'][scope] = {'status': row.status, 'message': row.message} if row else None
     return ok(data=data)
+
+
+@router.get('/task-queues')
+def task_queues(current: User = Depends(get_current_admin), db: Session = Depends(get_read_db)) -> dict:
+    from app.utils.redis_client import get_redis_client
+
+    queues, workers = _task_queue_state(db, get_redis_client())
+    return ok(data={"queues": queues, "workers": workers})
 
 
 @router.put('/traffic/limits')
