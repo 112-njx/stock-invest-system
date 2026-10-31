@@ -69,14 +69,16 @@ def _mock_provider() -> MagicMock:
     return p
 
 
-def test_kline_init_upserts_all_periods_and_backfills_code():
+def test_kline_init_fetches_only_daily_and_15m():
     sym = _make_symbol()
-    with patch("app.services.sync_service.get_provider", return_value=_mock_provider()):
+    provider = _mock_provider()
+    with patch("app.services.sync_service.get_provider", return_value=provider):
         result = sync_service.run_kline_init(symbol_id=sym.id, days=10)
     db = get_session()
     assert db.query(Kline1d).filter_by(symbol_id=sym.id).count() == 2
-    assert db.query(Kline1mon).filter_by(symbol_id=sym.id).count() == 2
+    assert db.query(Kline1mon).filter_by(symbol_id=sym.id).count() == 0
     assert result["600519"]["1d"] == 2
+    assert {call.args[1] for call in provider.fetch_kline.call_args_list} == {"1d", "15m"}
     db.close()
 
 

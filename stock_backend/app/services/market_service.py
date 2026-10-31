@@ -124,15 +124,15 @@ def get_kline(
     显式指定 start/end/offset 时直查 PG（保证范围正确性，不参与缓存）。
     返回统一 dict 列表（ts 为 ISO 字符串），供 API/前端渲染。
     """
-    if period not in (*KLINE_MODELS.keys(), "1w"):
+    if period not in (*KLINE_MODELS.keys(), "1w", "1mon"):
         raise ValueError(f"unsupported period: {period}")
     symbol_id = resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
-    if period == "1w":
-        from app.services.weekly_kline import get_weekly_bars
+    if period in ("1w", "1mon"):
+        from app.services.weekly_kline import get_period_bars
 
-        bars = get_weekly_bars(db, symbol_id, start, end, limit, offset)
+        bars = get_period_bars(db, symbol_id, period, start, end, limit, offset)
         return [market_cache.kline_bar_to_dict(bar) for bar in bars]
     use_cache = start is None and end is None and offset == 0
     if use_cache:

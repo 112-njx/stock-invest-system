@@ -132,7 +132,7 @@ def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: s
         if sym is None:
             return {"fetched": 0, "added": 0}
         symbol_param, asset_type = _provider_params(sym)
-        source_period = "1d" if period == "1w" else period
+        source_period = "1d" if period in ("1w", "1mon") else period
         bars, confirmed_empty = get_provider().fetch_kline_checked(
             symbol_param, source_period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
         )
