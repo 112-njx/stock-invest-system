@@ -98,6 +98,8 @@ const historyState = ref<'loading' | 'empty' | 'failed' | ''>('')
 const historyWidth = ref(0)
 const quality = ref<KlineQuality | null>(null)
 let qualityTimer: ReturnType<typeof setInterval> | null = null
+let retryTimer: ReturnType<typeof setInterval> | null = null
+const retryRemaining = ref(0)
 const hoveredCandle = ref<{ bar: KLineBar; change: number | null; percent: number | null } | null>(null)
 let loadVersion = 0
 let loadedBars: KLineBar[] = []
@@ -109,7 +111,7 @@ let retryBackfill = false
 const qualityWarning = computed(() => {
   if (quality.value?.status === 'partial') {
     const ranges = quality.value.missing_ranges.slice(0, 2).map((r) => r.join('～')).join('、')
-    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${quality.value.sync_status === 'syncing' ? '更新中' : '暂未同步'}`
+    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${retryRemaining.value > 0 ? `${retryRemaining.value} 秒后同步` : quality.value.sync_status === 'syncing' ? '更新中' : '暂未同步'}`
   }
   if (quality.value?.status === 'unknown') return '交易日历不可用，历史数据未能核验'
   if (quality.value?.status === 'unchecked') return '历史数据尚未核验'
@@ -870,6 +872,7 @@ async function loadKline() {
     const byTime = new Map([...existing, ...loaded].map((bar) => [bar.ts, bar]))
     const bars = [...byTime.values()].sort((a, b) => toUtcSeconds(a.ts) - toUtcSeconds(b.ts))
     quality.value = checked
+    retryRemaining.value = checked?.retry_after_seconds ?? 0
     if (!chart) initChart()
     const previousRange = initialViewport ? null : chart?.timeScale().getVisibleLogicalRange()
     const previousCount = loadedBars.length
@@ -1027,7 +1030,9 @@ onMounted(() => {
     if (!checked || props.symbol?.id !== symbolId || market.period !== period) return
     if (checked.status === 'complete') { void loadKline(); return }
     quality.value = checked
+    retryRemaining.value = checked.retry_after_seconds ?? 0
   }, 10000)
+  retryTimer = setInterval(() => { if (retryRemaining.value > 0) retryRemaining.value-- }, 1000)
   // V0.2：注册 WS kline 更新回调
   ws.setKlineHandler((symbolId, period, bar) => {
     if (props.symbol?.id === symbolId && market.period === '1w' && (period === '1d' || period === '1w')) {
@@ -1056,6 +1061,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('mousemove', onIndicatorDrag, true)
   window.removeEventListener('mouseup', scheduleIndicatorTops, true)
   if (qualityTimer) clearInterval(qualityTimer)
+  if (retryTimer) clearInterval(retryTimer)
   container.value?.removeEventListener('dblclick', onDblClick, true)
   chart?.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange)
   window.removeEventListener('wheel', onWheel, true)

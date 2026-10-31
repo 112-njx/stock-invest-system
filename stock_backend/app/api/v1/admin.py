@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 class TrafficLimits(BaseModel):
     interval_seconds: int = Field(ge=1, le=60)
     daily_budget: int = Field(ge=100, le=100000)
+    retry_interval_seconds: int = Field(default=10, ge=1, le=120)
 
 
 @router.get('/traffic')
@@ -31,6 +32,7 @@ def traffic_status(current: User = Depends(get_current_admin), db: Session = Dep
     data['poll_interval_seconds'] = get_settings().REALTIME_POLL_INTERVAL
     data['probe_interval_seconds'] = get_settings().PROVIDER_PROBE_INTERVAL
     redis = get_redis_client()
+    data['retry_interval_seconds'] = int(redis.get('provider:retry:interval') or get_settings().SYNC_RETRY_BACKOFF)
     data['queues'] = {name: redis.llen(name) for name in ('sync', 'backtest', 'ai', 'backup')}
     data['sync_status'] = {}
     for scope in ('fixed_indices', 'catalog'):
@@ -46,7 +48,8 @@ def update_traffic_limits(payload: TrafficLimits, current: User = Depends(get_cu
 
     redis = get_redis_client()
     redis.mset({'provider:limit:interval': payload.interval_seconds,
-                'provider:limit:budget': payload.daily_budget})
+                'provider:limit:budget': payload.daily_budget,
+                'provider:retry:interval': payload.retry_interval_seconds})
     return ok(data=usage())
 
 

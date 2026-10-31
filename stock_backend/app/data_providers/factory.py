@@ -153,7 +153,7 @@ class DataProviderFactory:
         return [], confirmed and attempted
 
     def fetch_kline_all(self, symbol: str, period: str, start, end, asset_type: str = "stock") -> list:
-        """关注股日 K：合并各可用来源，避免首个来源只有旧数据时提前停止。"""
+        """关注股日 K：股票仅请求首个适用来源；其他资产合并可用来源。"""
         merged = {}
         for p in self._providers:
             if not p.can_fetch_kline(asset_type, period):
@@ -163,6 +163,8 @@ class DataProviderFactory:
             with self._lock:
                 allowed = circuit.allow(now)
             if not allowed:
+                if asset_type == "stock":
+                    break
                 continue
             try:
                 bars = p.fetch_kline(symbol, period, start, end, asset_type)
@@ -175,6 +177,8 @@ class DataProviderFactory:
                 with self._lock:
                     circuit.record_failure(now)
                 logger.warning("[provider] %s watchlist fetch failed: %s", p.name, str(exc)[:120])
+            if asset_type == "stock":
+                break
         return [merged[ts] for ts in sorted(merged)]
 
     def fetch_realtime(self, symbols) -> list:

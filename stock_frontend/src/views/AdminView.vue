@@ -3,9 +3,10 @@ import { onMounted, ref } from 'vue'
 import { request } from '@/api/http'
 
 interface Provider { name: string; used: number; health: { state: string; failures: number; last_success_at: string | null } }
-interface Traffic { day: string; interval_seconds: number; daily_budget: number; poll_interval_seconds: number; probe_interval_seconds: number; providers: Provider[]; queues: Record<string, number>; sync_status: Record<string, { status: string; message: string } | null> }
+interface Traffic { day: string; interval_seconds: number; retry_interval_seconds: number; daily_budget: number; poll_interval_seconds: number; probe_interval_seconds: number; providers: Provider[]; queues: Record<string, number>; sync_status: Record<string, { status: string; message: string } | null> }
 const data = ref<Traffic | null>(null)
 const interval = ref(2)
+const retryInterval = ref(10)
 const budget = ref(2000)
 const error = ref('')
 const saving = ref(false)
@@ -14,6 +15,7 @@ async function load() {
   try {
     data.value = await request<Traffic>({ url: '/admin/traffic' })
     interval.value = data.value.interval_seconds
+    retryInterval.value = data.value.retry_interval_seconds
     budget.value = data.value.daily_budget
     error.value = ''
   } catch { error.value = '管理指标读取失败' }
@@ -21,7 +23,7 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    await request<Traffic>({ url: '/admin/traffic/limits', method: 'put', data: { interval_seconds: interval.value, daily_budget: budget.value } })
+    await request<Traffic>({ url: '/admin/traffic/limits', method: 'put', data: { interval_seconds: interval.value, retry_interval_seconds: retryInterval.value, daily_budget: budget.value } })
     await load()
   } catch { error.value = '限流配置保存失败' }
   finally { saving.value = false }
@@ -43,6 +45,7 @@ onMounted(load)
       </section>
       <section><h2>请求保护</h2>
         <label>同一数据源最小请求间隔（秒）<input v-model.number="interval" type="number" min="1" max="60"></label>
+        <label>请求失败后重试间隔（秒）<input v-model.number="retryInterval" type="number" min="1" max="120"></label>
         <label>单数据源每日请求预算<input v-model.number="budget" type="number" min="100" max="100000"></label>
         <button :disabled="saving" @click="save">保存</button>
         <p>实时行情任务间隔：{{ data.poll_interval_seconds }} 秒；熔断源探测间隔：{{ data.probe_interval_seconds }} 秒。达到预算后该数据源当日暂停外部调用。</p>

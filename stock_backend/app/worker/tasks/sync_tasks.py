@@ -48,8 +48,11 @@ def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict
     from app.repositories import kline_repo, ops_repo, user_repo
     from app.services import kline_quality_service
     from app.utils import market_cache
+    from app.utils.redis_client import get_redis_client
 
     task_type = "kline_init" if initialize else "kline_incremental"
+    retry_key = f"provider:watchlist-retry:{symbol_id}"
+    get_redis_client().delete(retry_key)
     _log(task_type, self.request.id, "running", f"watchlist symbol_id={symbol_id}")
     db = get_session()
     try:
@@ -70,11 +73,12 @@ def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict
         return result
     except Exception as exc:
         db.rollback()
-        ops_repo.upsert_sync_task(db, task_type, symbol_id, "failed", datetime.now(UTC))
-        user_repo.update_watchlist_sync_status(db, symbol_id, "failed")
+        ops_repo.upsert_sync_task(db, task_type, symbol_id, "queued", datetime.now(UTC))
+        user_repo.update_watchlist_sync_status(db, symbol_id, "pending")
         db.commit()
         _log(task_type, self.request.id, "failed", str(exc))
-        raise
+        get_redis_client().set(retry_key, "1", ex=60)
+        raise self.retry(exc=exc, countdown=60, max_retries=None)
     finally:
         for user_id in db.scalars(select(UserWatchlist.user_id).where(UserWatchlist.symbol_id == symbol_id)):
             market_cache.invalidate_watchlist_cache(user_id)
@@ -113,18 +117,30 @@ def kline_init_fixed_indices(self) -> dict:
     from app.utils.redis_client import get_redis_client
 
     redis = get_redis_client()
+    redis.delete('provider:fixed-indices-retry')
     lock = redis.lock('provider:presync:running', timeout=7200)
     if not lock.acquire(blocking=False):
         return {'skipped': 'fixed indices sync already running'}
     _log("kline_init", self.request.id, "running", "fixed indices presync start")
     try:
         result = sync_service.run_fixed_indices_sync()
+        from app.repositories import ops_repo
+
+        db = get_session()
+        try:
+            batch = ops_repo.get_latest_sync_status(db, "fixed_indices")
+            incomplete = batch is not None and batch.status == "partial"
+        finally:
+            db.close()
+        if incomplete:
+            raise RuntimeError("fixed indices still have missing daily bars")
         _log("kline_init", self.request.id, "success", f"fixed indices presync done: {result}")
         return result
     except Exception as exc:  # noqa: BLE001
         logger.exception("kline_init_fixed_indices failed")
         _log("kline_init", self.request.id, "failed", str(exc))
-        raise
+        redis.set('provider:fixed-indices-retry', '1', ex=120)
+        raise self.retry(exc=exc, countdown=120, max_retries=None)
     finally:
         redis.delete('provider:presync:queued')
         lock.release()

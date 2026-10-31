@@ -156,6 +156,15 @@ def get_kline_quality(
     batch = ops_repo.get_latest_sync_status(db, "fixed_indices") if sym.is_fixed_index else None
     batch_syncing = batch is not None and batch.status in {"queued", "running"}
     data['sync_status'] = 'syncing' if symbol_syncing or batch_syncing else 'idle'
+    from app.utils.redis_client import get_redis_client
+
+    retry_key = None
+    if sym.is_fixed_index:
+        retry_key = 'provider:fixed-indices-retry'
+    elif kline_quality_service.is_a_share_stock(sym):
+        retry_key = f"provider:watchlist-retry:{sym.id}"
+    if retry_key:
+        data['retry_after_seconds'] = max(0, get_redis_client().ttl(retry_key))
     return ok(data=data)
 
 

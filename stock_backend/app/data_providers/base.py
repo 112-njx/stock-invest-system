@@ -111,7 +111,9 @@ class BaseDataProvider(ABC):
                 return fn(**kwargs)
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
-                wait = self.retry_backoff * (2**attempt)
+                from app.utils.redis_client import get_redis_client
+
+                wait = float(get_redis_client().get('provider:retry:interval') or self.retry_backoff)
                 logger.warning(
                     "[provider:%s] %s failed (attempt %d): %s, retry in %.1fs",
                     self.name,
@@ -120,7 +122,8 @@ class BaseDataProvider(ABC):
                     str(exc)[:120],
                     wait,
                 )
-                time.sleep(wait)
+                if attempt < retries - 1:
+                    time.sleep(wait)
         logger.error("[provider:%s] %s give up: %s", self.name, getattr(fn, "__name__", fn), last_exc)
         if raise_on_giveup:
             raise ProviderError(f"{getattr(fn, '__name__', fn)} give up: {last_exc}") from last_exc
