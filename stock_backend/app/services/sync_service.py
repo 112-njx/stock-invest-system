@@ -372,10 +372,14 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dic
                 added = _write_bars(db, period, sym.id, bars)
                 counts[period] = added
                 logger.info("kline_init %s %s added=%d", sym.name, period, added)
-            if sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym) and kline_repo.latest_ts(db, "1d", sym.id):
-                kline_quality_service.check_and_repair(db, sym, provider)
-            ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
-            _mark_watchlist_synced(db, sym.id, "done")
+            quality = kline_quality_service.check_and_repair(db, sym, provider) if (
+                sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym)
+            ) else {"status": "unsupported"}
+            complete = quality["status"] == "complete"
+            ops_repo.upsert_sync_task(db, "kline_init", sym.id,
+                                      "failed" if sym.id in watched_ids and not complete else "success", datetime.now(UTC))
+            if sym.id in watched_ids:
+                _mark_watchlist_synced(db, sym.id, "done" if complete else "failed")
             db.commit()
             results[sym.code or sym.name] = counts
         return results
@@ -418,7 +422,13 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
             ) if (
                 sym.is_fixed_index or sym.id in watched_ids
             ) else {"status": "unsupported"}
-            ops_repo.upsert_sync_task(db, "kline_incremental", sym.id, "success", datetime.now(UTC))
+            ops_repo.upsert_sync_task(
+                db, "kline_incremental", sym.id,
+                "failed" if sym.id in watched_ids and quality["status"] != "complete" else "success",
+                datetime.now(UTC),
+            )
+            if sym.id in watched_ids:
+                _mark_watchlist_synced(db, sym.id, "done" if quality["status"] == "complete" else "failed")
             db.commit()
             if sym.is_fixed_index and quality["status"] in ("partial", "unknown"):
                 incomplete += 1

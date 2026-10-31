@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models.ops import SyncStatus, SyncTask, TaskLog
@@ -16,7 +17,18 @@ def upsert_sync_task(
     last_run_at: datetime,
     next_run_at: datetime | None = None,
 ) -> None:
-    """按 (task_type, symbol_id) 幂等更新同步任务状态（无唯一约束，查询-更新/插入）。"""
+    """按 (task_type, symbol_id) 原子更新同步任务状态。"""
+    if symbol_id is not None:
+        stmt = pg_insert(SyncTask).values(
+            task_type=task_type, symbol_id=symbol_id, status=status,
+            last_run_at=last_run_at, next_run_at=next_run_at,
+        )
+        db.execute(stmt.on_conflict_do_update(
+            index_elements=[SyncTask.task_type, SyncTask.symbol_id],
+            index_where=SyncTask.symbol_id.is_not(None),
+            set_={"status": status, "last_run_at": last_run_at, "next_run_at": next_run_at},
+        ))
+        return
     stmt = select(SyncTask).where(
         SyncTask.task_type == task_type,
         SyncTask.symbol_id.is_(None) if symbol_id is None else SyncTask.symbol_id == symbol_id,

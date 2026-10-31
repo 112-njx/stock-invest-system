@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -10,6 +10,8 @@ from .base import Base
 
 class SyncTask(Base):
     __tablename__ = "sync_tasks"
+    __table_args__ = (Index("uq_sync_tasks_type_symbol", "task_type", "symbol_id", unique=True,
+                            postgresql_where=text("symbol_id IS NOT NULL")),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_type: Mapped[str] = mapped_column(String(32), nullable=False)  # kline_init/kline_incremental/realtime
@@ -17,6 +19,10 @@ class SyncTask(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")  # running/success/failed
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    celery_task_id: Mapped[str | None] = mapped_column(String(64))
+    publish_status: Mapped[str | None] = mapped_column(String(16))
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text)
 
 
 class SyncStatus(Base):

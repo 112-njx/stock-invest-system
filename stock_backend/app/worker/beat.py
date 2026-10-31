@@ -8,6 +8,10 @@ from app.core.config import get_settings
 def build_beat_schedule() -> dict:
     settings = get_settings()
     return {
+        "watchlist-delivery-reconcile": {
+            "task": "app.worker.tasks.sync_tasks.watchlist_delivery_reconcile",
+            "schedule": 30.0,
+        },
         "kline-incremental-daily": {
             "task": "app.worker.tasks.sync_tasks.kline_incremental",
             "schedule": crontab(hour=settings.SYNC_INCREMENTAL_HOUR, minute=settings.SYNC_INCREMENTAL_MINUTE),

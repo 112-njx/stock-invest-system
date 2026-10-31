@@ -43,7 +43,7 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
 
     key = f"kline-backfill:{payload.symbol_id}:{payload.period}:{payload.start.isoformat()}:{payload.end.isoformat()}"
     redis = get_redis_client()
-    # 同一历史窗口一小时内复用任务结果；主动 retry 也不绕过冷却期。
+    # 同一历史窗口复用任务；失败时 worker 清理该键，允许重新请求。
     task_id = str(uuid4())
     if not redis.set(key, task_id, ex=3600, nx=True):
         return ok(data={"task_id": redis.get(key)})
@@ -156,15 +156,14 @@ def get_kline_quality(
     batch = ops_repo.get_latest_sync_status(db, "fixed_indices") if sym.is_fixed_index else None
     batch_syncing = batch is not None and batch.status in {"queued", "running"}
     data['sync_status'] = 'syncing' if symbol_syncing or batch_syncing else 'idle'
-    from app.utils.redis_client import get_redis_client
-
-    retry_key = None
     if sym.is_fixed_index:
-        retry_key = 'provider:fixed-indices-retry'
+        from app.utils.redis_client import get_redis_client
+
+        data['retry_after_seconds'] = max(0, get_redis_client().ttl('provider:fixed-indices-retry'))
     elif kline_quality_service.is_a_share_stock(sym):
-        retry_key = f"provider:watchlist-retry:{sym.id}"
-    if retry_key:
-        data['retry_after_seconds'] = max(0, get_redis_client().ttl(retry_key))
+        next_times = [task.next_run_at for task in tasks if task and task.status in {'queued', 'failed'}
+                      and task.next_run_at is not None]
+        data['retry_after_seconds'] = max(0, int((min(next_times) - datetime.now(next_times[0].tzinfo)).total_seconds())) if next_times else 0
     return ok(data=data)
 
 

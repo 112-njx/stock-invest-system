@@ -4,7 +4,8 @@
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 from sqlalchemy import select
 
@@ -45,17 +46,24 @@ def kline_init(self, symbol_id: int | None = None, days: int | None = None) -> d
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.watchlist_stock_sync")
 def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict:
     """关注 A 股的首次初始化或日 K 增量与缺口修复。"""
-    from app.repositories import kline_repo, ops_repo, user_repo
+    from app.models.ops import SyncTask
+    from app.repositories import kline_repo, user_repo
     from app.services import kline_quality_service
     from app.utils import market_cache
-    from app.utils.redis_client import get_redis_client
 
     task_type = "kline_init" if initialize else "kline_incremental"
-    retry_key = f"provider:watchlist-retry:{symbol_id}"
-    get_redis_client().delete(retry_key)
-    _log(task_type, self.request.id, "running", f"watchlist symbol_id={symbol_id}")
     db = get_session()
     try:
+        row = db.scalar(select(SyncTask).where(SyncTask.task_type == task_type,
+                                             SyncTask.symbol_id == symbol_id).with_for_update())
+        if row is None or row.celery_task_id != self.request.id or row.status != "queued":
+            return {"skipped": "stale or duplicate delivery"}
+        row.status = "running"
+        row.publish_status = "started"
+        row.last_run_at = datetime.now(UTC)
+        row.next_run_at = None
+        db.commit()
+        _log(task_type, self.request.id, "running", f"watchlist symbol_id={symbol_id}")
         if initialize:
             result = sync_service.run_kline_init(symbol_id=symbol_id)
         else:
@@ -68,25 +76,49 @@ def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict
         if quality is None or quality.status != "complete":
             raise RuntimeError(f"关注股票历史日 K 仍有缺口：{quality.missing_count if quality else '未核验'}")
         user_repo.update_watchlist_sync_status(db, symbol_id, "done")
+        row.status = "success"
+        row.publish_status = "completed"
+        row.retry_count = 0
+        row.next_run_at = None
+        row.last_error = None
         db.commit()
         _log(task_type, self.request.id, "success", f"watchlist symbol_id={symbol_id}: {result}")
         return result
     except Exception as exc:
         db.rollback()
-        ops_repo.upsert_sync_task(db, task_type, symbol_id, "queued", datetime.now(UTC))
-        user_repo.update_watchlist_sync_status(db, symbol_id, "pending")
+        row = db.scalar(select(SyncTask).where(SyncTask.task_type == task_type,
+                                             SyncTask.symbol_id == symbol_id).with_for_update())
+        if row is not None and row.celery_task_id == self.request.id:
+            row.retry_count += 1
+            row.last_error = str(exc)[:500]
+            row.last_run_at = datetime.now(UTC)
+            row.status = "queued" if row.retry_count <= 3 else "failed"
+            row.publish_status = "pending" if row.status == "queued" else "completed"
+            from app.services.watchlist_delivery import RETRY_SECONDS
+
+            row.next_run_at = datetime.now(UTC) + timedelta(seconds=RETRY_SECONDS if row.status == "queued" else 900)
+            row.celery_task_id = str(uuid4()) if row.status == "queued" else self.request.id
+            user_repo.update_watchlist_sync_status(db, symbol_id, "pending" if row.status == "queued" else "failed")
         db.commit()
         _log(task_type, self.request.id, "failed", str(exc))
-        get_redis_client().set(retry_key, "1", ex=60)
-        raise self.retry(exc=exc, countdown=60, max_retries=None)
+        logger.warning("watchlist sync failed: symbol_id=%s retry=%s: %s", symbol_id,
+                       row.retry_count if row else None, exc)
+        raise
     finally:
         for user_id in db.scalars(select(UserWatchlist.user_id).where(UserWatchlist.symbol_id == symbol_id)):
             market_cache.invalidate_watchlist_cache(user_id)
         db.close()
 
 
-@celery_app.task(name="app.worker.tasks.sync_tasks.kline_backfill")
-def kline_backfill(symbol_id: int, period: str, start_iso: str, end_iso: str) -> dict:
+@celery_app.task(name="app.worker.tasks.sync_tasks.watchlist_delivery_reconcile")
+def watchlist_delivery_reconcile() -> dict:
+    from app.services.watchlist_delivery import dispatch_watchlist_sync
+
+    return dispatch_watchlist_sync()
+
+
+@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_backfill")
+def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: str) -> dict:
     """按用户请求的历史窗口补取，结果供前端轮询。"""
     from datetime import datetime
 
@@ -104,9 +136,22 @@ def kline_backfill(symbol_id: int, period: str, start_iso: str, end_iso: str) ->
         bars, confirmed_empty = get_provider().fetch_kline_checked(
             symbol_param, source_period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
         )
+        if not bars and not confirmed_empty:
+            raise RuntimeError("historical providers unavailable")
         added = _write_bars(db, source_period, symbol_id, bars)
         db.commit()
         return {"fetched": len(bars), "added": added, "confirmed_empty": confirmed_empty if not bars else False}
+    except Exception as exc:
+        db.rollback()
+        if self.request.retries < 2:
+            raise self.retry(exc=exc, countdown=10, max_retries=2)
+        from app.utils.redis_client import get_redis_client
+
+        key = f"kline-backfill:{symbol_id}:{period}:{start_iso}:{end_iso}"
+        redis = get_redis_client()
+        if redis.get(key) == self.request.id:
+            redis.delete(key)
+        raise
     finally:
         db.close()
 
