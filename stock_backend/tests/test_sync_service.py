@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.data_providers.base import KlineBar, RealtimeQuote
-from app.models.kline import Kline1d, Kline1mon, Kline1w
+from app.models.kline import Kline1d, Kline1mon
 from app.models.snapshot import SnapshotRealtime
 from app.models.symbol import Symbol
 from app.services import sync_service
@@ -22,7 +22,6 @@ def _cleanup():
     if test_symbol_ids:
         ids = [r[0] for r in test_symbol_ids]
         db.query(Kline1d).filter(Kline1d.symbol_id.in_(ids)).delete(synchronize_session=False)
-        db.query(Kline1w).filter(Kline1w.symbol_id.in_(ids)).delete(synchronize_session=False)
         db.query(Kline1mon).filter(Kline1mon.symbol_id.in_(ids)).delete(synchronize_session=False)
         db.query(SnapshotRealtime).filter(SnapshotRealtime.symbol_id.in_(ids)).delete(synchronize_session=False)
         db.query(Symbol).filter(Symbol.id.in_(ids)).delete(synchronize_session=False)
@@ -76,7 +75,6 @@ def test_kline_init_upserts_all_periods_and_backfills_code():
         result = sync_service.run_kline_init(symbol_id=sym.id, days=10)
     db = get_session()
     assert db.query(Kline1d).filter_by(symbol_id=sym.id).count() == 2
-    assert db.query(Kline1w).filter_by(symbol_id=sym.id).count() == 2
     assert db.query(Kline1mon).filter_by(symbol_id=sym.id).count() == 2
     assert result["600519"]["1d"] == 2
     db.close()

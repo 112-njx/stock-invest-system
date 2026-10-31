@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kline import KLINE_MODELS
 
-# 四个 K 线父表名（与迁移 create_kline_partitions 对应）
+# 三个存储型 K 线父表名（周 K 从日 K 聚合）
 KLINE_TABLES = tuple(model.__tablename__ for model in KLINE_MODELS.values())
 
 
@@ -25,7 +25,7 @@ def create_kline_partitions(db: Session, table_name: str, start: date, end: date
 
 
 def ensure_current_partitions(db: Session, extend_months: int = 2) -> None:
-    """确保四个 K 线父表覆盖「当前月 + 未来 extend_months 月」分区。
+    """确保持久化 K 线父表覆盖「当前月 + 未来 extend_months 月」分区。
 
     越界写由迁移创建的 *_default 兜底分区承接，不会报错；此函数用于按月提前扩容。
     """

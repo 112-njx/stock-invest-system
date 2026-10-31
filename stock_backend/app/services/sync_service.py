@@ -19,7 +19,7 @@ from app.utils.kline_partition import ensure_current_partitions
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-ALL_PERIODS = tuple(period for period in KLINE_MODELS if period != "1w")  # 周 K 从本地日 K 聚合
+ALL_PERIODS = tuple(KLINE_MODELS)
 
 
 def is_market_open(now: datetime | None = None) -> bool:

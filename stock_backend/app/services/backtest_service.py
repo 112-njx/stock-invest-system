@@ -87,7 +87,7 @@ def create_backtest(
     end: datetime | None,
     fill_on: str,
 ) -> dict:
-    if period not in KLINE_MODELS:
+    if period not in (*KLINE_MODELS.keys(), "1w"):
         raise ApiError(status_code=400, code=40030, msg=f"不支持的周期: {period}")
     if fill_on not in _VALID_FILL:
         raise ApiError(status_code=400, code=40030, msg="fill_on 仅支持 close|open")

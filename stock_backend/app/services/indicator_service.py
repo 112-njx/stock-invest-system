@@ -38,7 +38,7 @@ def compute_indicators(
     limit: int = 1000,
 ) -> list[dict]:
     """返回指标序列：每行含 K 线基础字段 + 指标列（ts 升序，NaN 已置 None）。"""
-    if period not in KLINE_MODELS:
+    if period not in (*KLINE_MODELS.keys(), "1w"):
         raise ValueError(f"unsupported period: {period}")
     names = list(dict.fromkeys(n.strip().lower() for n in names if n.strip()))
     if not names:

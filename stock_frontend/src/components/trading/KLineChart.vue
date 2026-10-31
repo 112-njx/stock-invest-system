@@ -857,6 +857,7 @@ async function loadKline() {
       const recent = recentBars(bars)
       if (recent.length > 1) {
         chart?.timeScale().setVisibleRange({ from: toUtcSeconds(recent[0].ts), to: toUtcSeconds(recent[recent.length - 1].ts) })
+        if (period === '1w' && props.showIndicators) chart?.timeScale().applyOptions({ barSpacing: 14 })
       } else chart?.timeScale().fitContent()
       initialViewport = false
     } else if (previousRange) {

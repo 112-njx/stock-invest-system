@@ -1,4 +1,4 @@
-"""K 线分区表（按月分区）：四周期共用同一结构。"""
+"""K 线分区表（按月分区）：15 分钟、日、月周期持久化；周 K 从日 K 聚合。"""
 
 from datetime import datetime
 from decimal import Decimal
@@ -32,11 +32,6 @@ class Kline1d(KlineMixin, Base):
     __table_args__ = (PrimaryKeyConstraint("symbol_id", "ts"), {"postgresql_partition_by": "RANGE (ts)"})
 
 
-class Kline1w(KlineMixin, Base):
-    __tablename__ = "kline_1w"
-    __table_args__ = (PrimaryKeyConstraint("symbol_id", "ts"), {"postgresql_partition_by": "RANGE (ts)"})
-
-
 class Kline1mon(KlineMixin, Base):
     __tablename__ = "kline_1mon"
     __table_args__ = (PrimaryKeyConstraint("symbol_id", "ts"), {"postgresql_partition_by": "RANGE (ts)"})
@@ -46,7 +41,6 @@ class Kline1mon(KlineMixin, Base):
 KLINE_MODELS = {
     "15m": Kline15m,
     "1d": Kline1d,
-    "1w": Kline1w,
     "1mon": Kline1mon,
 }
 

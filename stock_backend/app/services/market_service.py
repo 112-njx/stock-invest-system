@@ -2,13 +2,14 @@
 
 import logging
 import time
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta
+from datetime import time as dt_time
 
 from sqlalchemy import select, true
 from sqlalchemy.orm import Session
 
-from app.data_providers.factory import get_provider
 from app.core.config import get_settings
+from app.data_providers.factory import get_provider
 from app.models.kline import KLINE_MODELS, Kline1d
 from app.models.snapshot import EtfPremium, IndexValuation, SnapshotRealtime, StockFundamental
 from app.models.symbol import Symbol
@@ -123,7 +124,7 @@ def get_kline(
     显式指定 start/end/offset 时直查 PG（保证范围正确性，不参与缓存）。
     返回统一 dict 列表（ts 为 ISO 字符串），供 API/前端渲染。
     """
-    if period not in KLINE_MODELS:
+    if period not in (*KLINE_MODELS.keys(), "1w"):
         raise ValueError(f"unsupported period: {period}")
     symbol_id = resolve_symbol_id(db, symbol)
     if symbol_id is None:
