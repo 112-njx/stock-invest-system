@@ -372,7 +372,6 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dic
                 added = _write_bars(db, period, sym.id, bars)
                 counts[period] = added
                 logger.info("kline_init %s %s added=%d", sym.name, period, added)
-            from app.services import kline_quality_service
             if sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym) and kline_repo.latest_ts(db, "1d", sym.id):
                 kline_quality_service.check_and_repair(db, sym, provider)
             ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success", datetime.now(UTC))
@@ -413,8 +412,6 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
                 added = _write_bars(db, period, sym.id, bars)
                 counts[period] = added
             db.commit()
-            from app.services import kline_quality_service
-
             quality = kline_quality_service.check_and_repair(db, sym, provider) if (
                 sym.is_fixed_index or sym.id in watched_ids
             ) else {"status": "unsupported"}
