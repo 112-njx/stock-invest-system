@@ -672,19 +672,23 @@ function recentBars(bars: KLineBar[]): KLineBar[] {
   return bars.filter((bar) => toUtcSeconds(bar.ts) * 1000 >= cutoff.getTime())
 }
 
+function showRecentWeeklyBars(bars: KLineBar[]) {
+  if (!chart || bars.length < 2) return
+  // 用周柱的逻辑序号确定缩放，避免时间戳范围与图表内的指标时间轴互相影响。
+  const visibleCount = Math.min(bars.length, initialWeeklyCount())
+  chart.timeScale().setVisibleLogicalRange({
+    from: bars.length - visibleCount - 0.5,
+    to: bars.length - 0.5 + 4,
+  })
+}
+
 function selectPeriod(period: Period) {
   if (market.period !== period) {
     market.setPeriod(period)
     return
   }
   if (period === '1w' && chart && loadedBars.length) {
-    const recent = recentBars(loadedBars)
-    if (recent.length > 1) {
-      chart.timeScale().setVisibleRange({
-        from: toUtcSeconds(recent[0].ts),
-        to: toUtcSeconds(recent[recent.length - 1].ts),
-      })
-    }
+    showRecentWeeklyBars(loadedBars)
   }
 }
 
@@ -897,10 +901,13 @@ async function loadKline() {
     await refreshIndicators(version, symbolId, period)
     if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
     if (initialViewport) {
-      const recent = recentBars(bars)
-      if (recent.length > 1) {
-        chart?.timeScale().setVisibleRange({ from: toUtcSeconds(recent[0].ts), to: toUtcSeconds(recent[recent.length - 1].ts) })
-      } else chart?.timeScale().fitContent()
+      if (period === '1w' && bars.length > 1) showRecentWeeklyBars(bars)
+      else {
+        const recent = recentBars(bars)
+        if (recent.length > 1) {
+          chart?.timeScale().setVisibleRange({ from: toUtcSeconds(recent[0].ts), to: toUtcSeconds(recent[recent.length - 1].ts) })
+        } else chart?.timeScale().fitContent()
+      }
       initialViewport = false
     } else if (previousRange) {
       const prepended = period === '1w' && previousFirstTs
