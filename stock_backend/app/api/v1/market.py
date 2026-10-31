@@ -25,7 +25,6 @@ class KlineBackfillRequest(BaseModel):
     period: str
     start: datetime
     end: datetime
-    retry: bool = False
 
 
 @router.post("/kline/backfill")

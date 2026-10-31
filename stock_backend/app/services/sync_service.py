@@ -155,7 +155,6 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
         )
         db.commit()
         results: dict = {}
-        skipped = 0  # 已有数据跳过拉取的标的数
         attempted = 0  # 实际发起拉取的标的数
         written_total = 0  # 全部标的所有周期累计写入条数
         incomplete = 0
@@ -171,7 +170,6 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
                 expected_day is None or saved_quality.checked_to is not None and saved_quality.checked_to >= expected_day
             ) and (latest is not None and (expected_day is None or latest.date() >= expected_day))
             if skip_existing and complete:
-                skipped += 1
                 results[sym.code or sym.name] = {"skipped": True}
                 continue
             attempted += 1
