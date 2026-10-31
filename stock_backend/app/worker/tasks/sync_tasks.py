@@ -61,6 +61,9 @@ def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict
         expected = kline_quality_service.last_completed_mainland_day(db)
         if latest is None or expected is None or latest.astimezone(kline_quality_service.settings.tz).date() < expected:
             raise RuntimeError(f"关注股票最新日 K 未更新到已完成交易日 {expected}")
+        quality = kline_quality_service.get_quality(db, symbol_id, "1d")
+        if quality is None or quality.status != "complete":
+            raise RuntimeError(f"关注股票历史日 K 仍有缺口：{quality.missing_count if quality else '未核验'}")
         user_repo.update_watchlist_sync_status(db, symbol_id, "done")
         db.commit()
         _log(task_type, self.request.id, "success", f"watchlist symbol_id={symbol_id}: {result}")

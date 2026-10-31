@@ -412,7 +412,10 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
                 added = _write_bars(db, period, sym.id, bars)
                 counts[period] = added
             db.commit()
-            quality = kline_quality_service.check_and_repair(db, sym, provider) if (
+            quality = kline_quality_service.check_and_repair(
+                db, sym, provider,
+                full_watchlist_repair=sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym),
+            ) if (
                 sym.is_fixed_index or sym.id in watched_ids
             ) else {"status": "unsupported"}
             ops_repo.upsert_sync_task(db, "kline_incremental", sym.id, "success", datetime.now(UTC))
