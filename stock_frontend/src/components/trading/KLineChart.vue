@@ -158,11 +158,11 @@ function onWheel(e: WheelEvent) {
 interface IndicatorPaneRef {
   pane: IPaneApi<any>
   series: ISeriesApi<any>[]
-  markers?: ISeriesMarkersPluginApi<Time>
   referenceLines?: IPriceLine[]
 }
 const indicatorPanes = new Map<IndicatorKey, IndicatorPaneRef>()
 const indicatorTops = ref<Partial<Record<IndicatorKey, number>>>({})
+const macdCrossPoints = ref<{ x: number; y: number; golden: boolean }[]>([])
 const hoveredIndicatorTime = ref<number | null>(null)
 let paneLayoutFrame = 0
 let chartResizeObserver: ResizeObserver | null = null
@@ -177,12 +177,45 @@ function updateIndicatorTops() {
     }
     top += pane.getHeight() + 2 // pane separator
   }
-  indicatorTops.value = tops
+  if (Object.keys(tops).some((key) => tops[key as IndicatorKey] !== indicatorTops.value[key as IndicatorKey]) ||
+      Object.keys(tops).length !== Object.keys(indicatorTops.value).length) indicatorTops.value = tops
+  updateMacdCrossPoints()
+}
+
+function updateMacdCrossPoints() {
+  const macd = indicatorPanes.get('macd')
+  const top = indicatorTops.value.macd
+  if (!chart || !macd || top == null || !chartHost.value) { macdCrossPoints.value = []; return }
+  const rows = indicatorRows.value
+  const points: { x: number; y: number; golden: boolean }[] = []
+  for (let i = 1; i < rows.length; i++) {
+    const previous = rows[i - 1]
+    const current = rows[i]
+    if (previous.macd_dif == null || previous.macd_dea == null || current.macd_dif == null || current.macd_dea == null) continue
+    const before = previous.macd_dif - previous.macd_dea
+    const after = current.macd_dif - current.macd_dea
+    if (!((before <= 0 && after > 0) || (before >= 0 && after < 0))) continue
+    const x0 = chart.timeScale().timeToCoordinate(toUtcSeconds(previous.ts))
+    const x1 = chart.timeScale().timeToCoordinate(toUtcSeconds(current.ts))
+    if (x0 == null || x1 == null) continue
+    const fraction = before / (before - after)
+    const price = previous.macd_dif + fraction * (current.macd_dif - previous.macd_dif)
+    const y = macd.series[1].priceToCoordinate(price)
+    const x = x0 + fraction * (x1 - x0)
+    if (y != null && x >= -5 && x <= chartHost.value.clientWidth + 5) {
+      points.push({ x, y: top + y, golden: after > 0 })
+    }
+  }
+  macdCrossPoints.value = points
 }
 
 function scheduleIndicatorTops() {
   cancelAnimationFrame(paneLayoutFrame)
   paneLayoutFrame = requestAnimationFrame(updateIndicatorTops)
+}
+
+function onIndicatorDrag(event: MouseEvent) {
+  if (event.buttons) scheduleIndicatorTops()
 }
 
 const PERIODS: { label: string; value: Period }[] = [
@@ -359,6 +392,10 @@ function initChart() {
   chart.subscribeCrosshairMove(onCrosshairMove)
   chartResizeObserver = new ResizeObserver(scheduleIndicatorTops)
   chartResizeObserver.observe(chartHost.value)
+  if (props.showIndicators) {
+    window.addEventListener('mousemove', onIndicatorDrag, true)
+    window.addEventListener('mouseup', scheduleIndicatorTops, true)
+  }
 
   chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange)
   container.value?.addEventListener('dblclick', onDblClick, { capture: true })
@@ -403,6 +440,7 @@ function applyTheme() {
 }
 
 function onVisibleRangeChange(range: { from: number; to: number } | null) {
+  scheduleIndicatorTops()
   if (!chart || !loadedBars.length) return
   const x = chart.timeScale().timeToCoordinate(toUtcSeconds(loadedBars[0].ts))
   historyWidth.value = x == null ? 0 : Math.max(0, Math.min(x, container.value?.clientWidth ?? 0))
@@ -424,6 +462,7 @@ function removeAllIndicatorPanes() {
   }
   indicatorPanes.clear()
   indicatorTops.value = {}
+  macdCrossPoints.value = []
 }
 
 function rebuildIndicatorPanes() {
@@ -485,7 +524,6 @@ function rebuildIndicatorPanes() {
     indicatorPanes.set(meta.key, {
       pane, series,
       referenceLines,
-      ...(meta.key === 'macd' ? { markers: createSeriesMarkers(series[1], []) } : {}),
     })
   }
 
@@ -786,24 +824,13 @@ function setIndicatorData() {
       })))
       ref.series[1].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.macd_dif == null ? {} : { value: r.macd_dif }) })))
       ref.series[2].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.macd_dea == null ? {} : { value: r.macd_dea }) })))
-      const crosses: SeriesMarker<Time>[] = []
-      for (let i = 1; i < rows.length; i++) {
-        const previous = rows[i - 1]
-        const current = rows[i]
-        if (previous.macd_dif == null || previous.macd_dea == null || current.macd_dif == null || current.macd_dea == null) continue
-        if (previous.macd_dif <= previous.macd_dea && current.macd_dif > current.macd_dea) {
-          crosses.push({ time: toUtcSeconds(current.ts), position: 'belowBar', shape: 'circle', color: c.down })
-        } else if (previous.macd_dif >= previous.macd_dea && current.macd_dif < current.macd_dea) {
-          crosses.push({ time: toUtcSeconds(current.ts), position: 'aboveBar', shape: 'circle', color: c.up })
-        }
-      }
-      ref.markers?.setMarkers(crosses)
     } else if (key === 'kdj') {
       ref.series[0].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.kdj_k == null ? {} : { value: r.kdj_k }) })))
       ref.series[1].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.kdj_d == null ? {} : { value: r.kdj_d }) })))
       ref.series[2].setData(rows.map((r) => ({ time: toUtcSeconds(r.ts), ...(r.kdj_j == null ? {} : { value: r.kdj_j }) })))
     }
   }
+  scheduleIndicatorTops()
 }
 
 async function loadKline() {
@@ -1011,6 +1038,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   cancelAnimationFrame(paneLayoutFrame)
   chartResizeObserver?.disconnect()
+  window.removeEventListener('mousemove', onIndicatorDrag, true)
+  window.removeEventListener('mouseup', scheduleIndicatorTops, true)
   if (qualityTimer) clearInterval(qualityTimer)
   container.value?.removeEventListener('dblclick', onDblClick, true)
   chart?.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange)
@@ -1132,6 +1161,18 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
     <div ref="container" class="kline-chart__body">
       <div ref="chartHost" class="kline-chart__canvas" />
+      <svg v-if="showIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
+        <circle
+          v-for="(point, index) in macdCrossPoints"
+          :key="index"
+          :cx="point.x"
+          :cy="point.y"
+          r="4"
+          :fill="point.golden ? 'var(--down)' : 'var(--up)'"
+          stroke="var(--bg-panel)"
+          stroke-width="1.5"
+        />
+      </svg>
       <div
         v-for="indicator in showIndicators ? enabledList : []"
         :key="indicator.key"
@@ -1375,6 +1416,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   position: relative;
 }
 .kline-chart__canvas { position: absolute; inset: 0; z-index: 0; }
+.kline-chart__crosses { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; overflow: hidden; pointer-events: none; }
 .kline-chart__indicator-legend {
   position: absolute;
   left: 8px;
