@@ -9,11 +9,13 @@
 import logging
 import threading
 import time
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 
 from app.core.config import get_settings
 
 from .base import BaseDataProvider, RealtimeQuote, RealtimeSymbol, unavailable_quote
+from .request_activity import kline_scope, realtime_scope
 from .eastmoney import EastMoneyProvider
 from .sina import SinaProvider
 from .ths import THSProvider
@@ -90,7 +92,9 @@ class DataProviderFactory:
                 logger.info("[provider] %s open (cooldown %ds), skip", p.name, int(circuit.cooldown_until - now))
                 continue
             try:
-                result = getattr(p, method)(*args, **kwargs)
+                scope_context = kline_scope(*args) if method == "fetch_kline" else nullcontext()
+                with scope_context:
+                    result = getattr(p, method)(*args, **kwargs)
                 if result:
                     with self._lock:
                         circuit.record_success(now)
@@ -140,7 +144,8 @@ class DataProviderFactory:
                 continue
             attempted = True
             try:
-                bars = p.fetch_kline(symbol, period, start, end, asset_type)
+                with kline_scope(symbol, period, start, end, asset_type):
+                    bars = p.fetch_kline(symbol, period, start, end, asset_type)
                 if bars:
                     with self._lock:
                         circuit.record_success(now)
@@ -167,7 +172,8 @@ class DataProviderFactory:
                     break
                 continue
             try:
-                bars = p.fetch_kline(symbol, period, start, end, asset_type)
+                with kline_scope(symbol, period, start, end, asset_type):
+                    bars = p.fetch_kline(symbol, period, start, end, asset_type)
                 if bars:
                     with self._lock:
                         circuit.record_success(now)
@@ -220,7 +226,8 @@ class DataProviderFactory:
                 )
                 continue
             try:
-                result = p.fetch_realtime(items)
+                with realtime_scope(items, atype):
+                    result = p.fetch_realtime(items)
                 if result and any(getattr(q, "available", False) for q in result):
                     with self._lock:
                         circuit.record_success(now)
@@ -313,7 +320,8 @@ class DataProviderFactory:
             try:
                 end = datetime.now(UTC)
                 start = end - timedelta(days=5)
-                bars = p.fetch_kline(p.probe_symbol, "1d", start, end, p.probe_asset_type)
+                with kline_scope(p.probe_symbol, "1d", start, end, p.probe_asset_type):
+                    bars = p.fetch_kline(p.probe_symbol, "1d", start, end, p.probe_asset_type)
                 recovered = bool(bars)
             except Exception:  # noqa: BLE001
                 recovered = False

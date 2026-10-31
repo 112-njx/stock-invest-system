@@ -103,31 +103,40 @@ class BaseDataProvider(ABC):
         """
         retries = self.retry_times if retry_times is None else retry_times
         last_exc = None
-        for attempt in range(retries):
-            try:
-                from app.data_providers.traffic import acquire
+        from app.data_providers.request_activity import ActiveProviderRequest
 
-                acquire(self.name)
-                return fn(**kwargs)
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                from app.utils.redis_client import get_redis_client
+        activity = ActiveProviderRequest(self.name, fn, kwargs)
+        try:
+            for attempt in range(retries):
+                try:
+                    from app.data_providers.traffic import acquire
 
-                wait = float(get_redis_client().get('provider:retry:interval') or self.retry_backoff)
-                logger.warning(
-                    "[provider:%s] %s failed (attempt %d): %s, retry in %.1fs",
-                    self.name,
-                    getattr(fn, "__name__", fn),
-                    attempt + 1,
-                    str(exc)[:120],
-                    wait,
-                )
-                if attempt < retries - 1:
-                    time.sleep(wait)
-        logger.error("[provider:%s] %s give up: %s", self.name, getattr(fn, "__name__", fn), last_exc)
-        if raise_on_giveup:
-            raise ProviderError(f"{getattr(fn, '__name__', fn)} give up: {last_exc}") from last_exc
-        return None
+                    activity.update("throttling", attempt + 1, retries)
+                    acquire(self.name)
+                    activity.update("requesting", attempt + 1, retries)
+                    return fn(**kwargs)
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    from app.utils.redis_client import get_redis_client
+
+                    wait = float(get_redis_client().get('provider:retry:interval') or self.retry_backoff)
+                    logger.warning(
+                        "[provider:%s] %s failed (attempt %d): %s, retry in %.1fs",
+                        self.name,
+                        getattr(fn, "__name__", fn),
+                        attempt + 1,
+                        str(exc)[:120],
+                        wait,
+                    )
+                    if attempt < retries - 1:
+                        activity.update("retry_wait", attempt + 1, retries, wait)
+                        time.sleep(wait)
+            logger.error("[provider:%s] %s give up: %s", self.name, getattr(fn, "__name__", fn), last_exc)
+            if raise_on_giveup:
+                raise ProviderError(f"{getattr(fn, '__name__', fn)} give up: {last_exc}") from last_exc
+            return None
+        finally:
+            activity.close()
 
     # ---- 服务范围判定（工厂据此跳过不适用 Provider）----
     def can_fetch_kline(self, asset_type: str, period: str) -> bool:
