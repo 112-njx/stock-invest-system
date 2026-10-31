@@ -19,6 +19,7 @@ QUEUE_DEPTH = Gauge("celery_queue_depth", "Celery 队列积压任务数", ["queu
 CACHE_HIT_RATE = Gauge("redis_cache_hit_rate", "Redis 缓存命中率（0-1）")
 MARKET_FRESHNESS = Gauge("market_data_freshness_seconds", "行情快照最新更新时间距现在的秒数")
 BACKTEST_QUEUED = Gauge("backtest_queued_tasks", "回测队列 queued 任务数")
+WORKER_UP = Gauge("celery_worker_up", "Celery worker 是否响应 ping", ["role"])
 
 # G05（P1-1）备份监控：最近一次成功备份的年龄/大小、磁盘剩余、WAL 归档文件数
 BACKUP_AGE = Gauge("backup_last_success_age_seconds", "最近一次成功备份距今秒数（-1 表示尚无成功备份）")
@@ -26,7 +27,7 @@ BACKUP_SIZE = Gauge("backup_last_dump_bytes", "最近一次全量备份文件大
 BACKUP_DISK_FREE = Gauge("backup_disk_free_ratio", "备份目录所在文件系统剩余空间占比（0-1）")
 BACKUP_WAL_FILES = Gauge("backup_wal_archive_files", "WAL 归档目录文件数（-1 表示未配置/不可读）")
 
-_CELERY_QUEUES = ("sync", "backtest", "ai", "backup")
+_CELERY_QUEUES = ("sync", "backtest", "ai", "backup", "watchlist", "fixed_indices", "backfill", "control")
 
 
 def refresh_platform_metrics() -> None:
@@ -36,6 +37,20 @@ def refresh_platform_metrics() -> None:
     _refresh_market_freshness()
     _refresh_backtest_queued()
     _refresh_backup_metrics()
+    _refresh_worker_health()
+
+
+def _refresh_worker_health() -> None:
+    try:
+        from app.worker.celery_app import celery_app
+
+        replies = celery_app.control.inspect(timeout=1).ping() or {}
+        for role in ("watchlist", "fixed", "backfill", "control"):
+            WORKER_UP.labels(role).set(int(any(node.startswith(role + "@") for node in replies)))
+    except Exception as exc:
+        logger.warning("worker health collect failed: %s", exc)
+        for role in ("watchlist", "fixed", "backfill", "control"):
+            WORKER_UP.labels(role).set(0)
 
 
 def _refresh_queue_depth() -> None:

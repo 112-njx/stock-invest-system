@@ -154,6 +154,78 @@ services:
     restart: unless-stopped
     networks: [backend]
 
+  worker-watchlist:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "watchlist", "--pool=prefork", "--concurrency=1", "-n", "watchlist@%h"]
+    environment: *backend_env
+    volumes: ["backenddata:/app/data"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d watchlist@$$HOSTNAME | grep -q pong"]
+      interval: 30s
+      timeout: 8s
+      start_period: 45s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
+  worker-control:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "control", "--pool=prefork", "--concurrency=1", "-n", "control@%h"]
+    environment: *backend_env
+    volumes: ["backenddata:/app/data"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d control@$$HOSTNAME | grep -q pong"]
+      interval: 30s
+      timeout: 8s
+      start_period: 45s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
+  worker-fixed:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "fixed_indices", "--pool=prefork", "--concurrency=1", "-n", "fixed@%h"]
+    environment: *backend_env
+    volumes: ["backenddata:/app/data"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d fixed@$$HOSTNAME | grep -q pong"]
+      interval: 30s
+      timeout: 8s
+      start_period: 45s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
+  worker-backfill:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backfill", "--pool=prefork", "--concurrency=1", "-n", "backfill@%h"]
+    environment: *backend_env
+    volumes: ["backenddata:/app/data"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d backfill@$$HOSTNAME | grep -q pong"]
+      interval: 30s
+      timeout: 8s
+      start_period: 45s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
   worker-backtest:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest", "--pool=solo", "--concurrency=1", "-n", "backtest@%h"]

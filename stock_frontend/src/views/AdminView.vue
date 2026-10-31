@@ -3,7 +3,8 @@ import { onMounted, ref } from 'vue'
 import { request } from '@/api/http'
 
 interface Provider { name: string; used: number; health: { state: string; failures: number; last_success_at: string | null } }
-interface Traffic { day: string; interval_seconds: number; retry_interval_seconds: number; daily_budget: number; poll_interval_seconds: number; probe_interval_seconds: number; providers: Provider[]; queues: Record<string, number>; sync_status: Record<string, { status: string; message: string } | null> }
+interface QueueState { ready: number; active: number; delayed: number; reserved: number; abnormal: number }
+interface Traffic { day: string; interval_seconds: number; retry_interval_seconds: number; daily_budget: number; poll_interval_seconds: number; probe_interval_seconds: number; providers: Provider[]; queues: Record<string, QueueState>; workers: Record<string, boolean>; sync_status: Record<string, { status: string; message: string } | null> }
 const data = ref<Traffic | null>(null)
 const interval = ref(2)
 const retryInterval = ref(10)
@@ -50,7 +51,8 @@ onMounted(load)
         <button :disabled="saving" @click="save">保存</button>
         <p>实时行情任务间隔：{{ data.poll_interval_seconds }} 秒；熔断源探测间隔：{{ data.probe_interval_seconds }} 秒。达到预算后该数据源当日暂停外部调用。</p>
       </section>
-      <section><h2>任务队列</h2><div class="grid"><article v-for="(count, name) in data.queues" :key="name"><h3>{{ name }}</h3><strong>{{ count }}</strong></article></div></section>
+      <section><h2>任务队列</h2><div class="grid"><article v-for="(state, name) in data.queues" :key="name"><h3>{{ name }}</h3><p>就绪 {{ state.ready }} · 执行中 {{ state.active }}</p><p>已取走 {{ state.reserved }} · 延迟重试 {{ state.delayed }}</p><p :class="{ error: state.abnormal > 0 }">异常 {{ state.abnormal }}</p></article></div></section>
+      <section><h2>Worker 健康</h2><div class="grid"><article v-for="(healthy, name) in data.workers" :key="name"><h3>{{ name }}</h3><strong :class="{ error: !healthy }">{{ healthy ? '在线' : '未响应' }}</strong></article></div></section>
       <section><h2>数据同步</h2><p v-for="(item, name) in data.sync_status" :key="name">{{ name }}：{{ item?.status || '无记录' }} · {{ item?.message || '' }}</p></section>
     </template>
   </main>

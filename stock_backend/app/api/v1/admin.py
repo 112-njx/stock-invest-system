@@ -1,17 +1,76 @@
-"""管理员 API：行情 Provider 健康检查、全量标的目录同步（is_admin 鉴权）。"""
+"""管理员 API：行情 Provider、队列与 worker 状态。"""
+
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
 from app.api.deps import get_read_db
 from app.core.response import ok
 from app.data_providers.factory import get_provider
-from app.models.user import User
+from app.models.user import User, UserWatchlist
+from app.models.ops import SyncTask, TaskLog
+from app.models.symbol import Symbol
+from app.worker.celery_app import celery_app
 from app.worker.tasks.sync_tasks import catalog_sync
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+QUEUE_NAMES = ("watchlist", "fixed_indices", "backfill", "control", "sync", "backtest", "ai", "backup")
+
+
+def _queue_name(task: dict) -> str:
+    name = task.get("name", "")
+    if name.endswith("watchlist_stock_sync"):
+        return "watchlist"
+    if name.endswith("watchlist_delivery_reconcile"):
+        return "control"
+    if name.endswith("kline_init_fixed_indices"):
+        return "fixed_indices"
+    if name.endswith("kline_backfill"):
+        return "backfill"
+    for prefix, queue in (("backtest_tasks.", "backtest"), ("ai_tasks.", "ai"),
+                          ("export_tasks.", "ai"), ("backup_tasks.", "backup")):
+        if prefix in name:
+            return queue
+    return "sync"
+
+
+def _task_queue_state(db: Session, redis) -> tuple[dict, dict]:
+    queues = {name: {"ready": redis.llen(name), "active": 0, "delayed": 0,
+                     "reserved": 0, "abnormal": 0} for name in QUEUE_NAMES}
+    inspect = celery_app.control.inspect(timeout=1)
+    pings = inspect.ping() or {}
+    active_queues = inspect.active_queues() or {}
+    workers = {queue: any(node in pings and any(item.get("name") == queue for item in subscriptions)
+                          for node, subscriptions in active_queues.items()) for queue in QUEUE_NAMES}
+    for method, field in ((inspect.active, "active"), (inspect.scheduled, "delayed"),
+                          (inspect.reserved, "reserved")):
+        for tasks in (method() or {}).values():
+            for item in tasks:
+                task = item.get("request", item)
+                queues[_queue_name(task)][field] += 1
+    queues["fixed_indices"]["abnormal"] = db.scalar(select(func.count()).select_from(SyncTask).join(
+        Symbol, SyncTask.symbol_id == Symbol.id).where(
+        SyncTask.status == "failed", Symbol.is_fixed_index.is_(True),
+        SyncTask.task_type == "kline_init",
+    )) or 0
+    queues["watchlist"]["abnormal"] = db.scalar(select(func.count()).select_from(SyncTask).where(
+        SyncTask.status == "failed", SyncTask.symbol_id.in_(select(UserWatchlist.symbol_id)),
+        SyncTask.task_type.in_(("kline_init", "kline_incremental")),
+    )) or 0
+    queues["watchlist"]["delayed"] += db.scalar(select(func.count()).select_from(SyncTask).where(
+        SyncTask.status.in_(("queued", "failed")), SyncTask.next_run_at > datetime.now(UTC),
+        SyncTask.task_type.in_(("kline_init", "kline_incremental")),
+        SyncTask.symbol_id.in_(select(UserWatchlist.symbol_id)),
+    )) or 0
+    queues["backfill"]["abnormal"] = db.scalar(select(func.count()).select_from(TaskLog).where(
+        TaskLog.task_type == "kline_backfill", TaskLog.status == "failed",
+        TaskLog.created_at >= datetime.now(UTC) - timedelta(hours=1),
+    )) or 0
+    return queues, workers
 
 
 class TrafficLimits(BaseModel):
@@ -33,7 +92,7 @@ def traffic_status(current: User = Depends(get_current_admin), db: Session = Dep
     data['probe_interval_seconds'] = get_settings().PROVIDER_PROBE_INTERVAL
     redis = get_redis_client()
     data['retry_interval_seconds'] = int(redis.get('provider:retry:interval') or get_settings().SYNC_RETRY_BACKOFF)
-    data['queues'] = {name: redis.llen(name) for name in ('sync', 'backtest', 'ai', 'backup')}
+    data['queues'], data['workers'] = _task_queue_state(db, redis)
     data['sync_status'] = {}
     for scope in ('fixed_indices', 'catalog'):
         row = ops_repo.get_latest_sync_status(db, scope)
