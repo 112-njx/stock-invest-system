@@ -25,6 +25,7 @@ const user = useUserStore()
       <RouterLink to="/" class="appbar__link">行情</RouterLink>
       <RouterLink to="/ai" class="appbar__link">AI 策略</RouterLink>
       <RouterLink v-if="user.user?.username === 'root' && user.user.is_admin" to="/admin" class="appbar__link">管理后台</RouterLink>
+      <RouterLink to="/stockdb" class="appbar__link">指数蓝图</RouterLink>
     </nav>
 
     <div class="appbar__right">

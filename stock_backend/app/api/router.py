@@ -16,6 +16,7 @@ from .v1 import (
     market,
     memory,
     notifications,
+    stockdb,
     strategies,
     strategy_templates,
     support_resistance,
@@ -28,6 +29,7 @@ api_router = APIRouter()
 api_router.include_router(health.router)  # /health /ready /metrics
 api_router.include_router(admin.router)  # /api/v1/admin（Provider 健康/目录同步）
 api_router.include_router(market.router)  # /api/v1/symbols|kline|snapshot
+api_router.include_router(stockdb.router)
 api_router.include_router(auth.router)  # /api/v1/auth/register|login
 api_router.include_router(users.router)  # /api/v1/users/me
 api_router.include_router(watchlist.router)  # /api/v1/watchlist
