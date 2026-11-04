@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 from app.core.config import get_settings
 from app.data_providers.base import RealtimeQuote, RealtimeSymbol
 from app.data_providers.factory import get_provider
-from app.models.kline import KLINE_MODELS
 from app.models.symbol import Symbol
 from app.models.user import UserWatchlist
 from app.repositories import kline_repo, ops_repo, snapshot_repo, symbol_repo, user_repo
