@@ -100,9 +100,7 @@ class ActiveProviderRequest:
 
 def list_active_requests() -> list[dict]:
     redis = get_redis_client()
-    now = time.time()
-    redis.zremrangebyscore(_INDEX, "-inf", now)
-    keys = redis.zrange(_INDEX, 0, 99)
+    keys = redis.zrangebyscore(_INDEX, f"({time.time()}", "+inf", start=0, num=100)
     if not keys:
         return []
     values = redis.mget(keys)
