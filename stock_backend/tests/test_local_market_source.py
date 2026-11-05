@@ -168,7 +168,8 @@ def test_postgres_upsert_replaces_old_qfq_prices_and_is_idempotent():
 
 
 @pytest.mark.parametrize("offline", [False, True])
-def test_manual_job_uses_source_date_and_refreshes_existing_history(monkeypatch, offline):
+@pytest.mark.parametrize("stale_period", [None, "1d", "15m"])
+def test_manual_job_uses_source_date_and_refreshes_existing_history(monkeypatch, offline, stale_period):
     from uuid import uuid4
     from sqlalchemy import delete, select
     from app.data_providers.base import KlineBar
@@ -190,8 +191,16 @@ def test_manual_job_uses_source_date_and_refreshes_existing_history(monkeypatch,
     target_id = target.id
     first = datetime(2024, 1, 2, tzinfo=UTC)
     last = datetime(2025, 1, 2, tzinfo=UTC)
-    kline_repo.upsert_bars(db, "1d", target_id, [KlineBar(first, 10, 10, 10, 10, 100, 1000)])
+    initial_price = 5 if stale_period else 10
+    kline_repo.upsert_bars(db, "1d", target_id, [
+        KlineBar(first, initial_price, initial_price, initial_price, initial_price, 100, 1000)
+    ])
+    if stale_period:
+        newer = last + timedelta(days=1)
+        kline_repo.upsert_bars(db, stale_period, target_id, [KlineBar(newer, 6, 6, 6, 6, 200, 1200)])
     db.commit()
+    before = {period: [(bar.ts, float(bar.close)) for bar in kline_repo.latest_bars(db, period, target_id)]
+              for period in ("1d", "15m")}
 
     def session():
         connection = get_session()
@@ -202,7 +211,9 @@ def test_manual_job_uses_source_date_and_refreshes_existing_history(monkeypatch,
         assert start <= first
         target = datetime.now(sync_service.settings.tz).date() if offline else last.date()
         assert end.astimezone(sync_service.settings.tz).date() == target
-        return [KlineBar(first, 5, 5, 5, 5, 100, 1000), KlineBar(last, 6, 6, 6, 6, 200, 1200)]
+        price = 10 if stale_period else 5
+        return [KlineBar(first, price, price, price, price, 100, 1000),
+                KlineBar(last, 6, 6, 6, 6, 200, 1200)]
 
     provider = SimpleNamespace(fetch_kline=fetch)
     monkeypatch.setattr(local_market_sync, "get_session", session)
@@ -215,10 +226,22 @@ def test_manual_job_uses_source_date_and_refreshes_existing_history(monkeypatch,
     monkeypatch.setattr(factory, "get_provider", lambda: SimpleNamespace(probe=lambda: []))
     monkeypatch.setattr(sync_service, "get_provider", lambda: provider)
     monkeypatch.setattr(sync_service, "run_catalog_sync", lambda **kwargs: {})
+    write = Mock(wraps=sync_service._write_bars)
+    monkeypatch.setattr(sync_service, "_write_bars", write)
     try:
         task = local_market_sync.request_sync()
         assert local_market_sync.request_sync()["task_id"] == task["task_id"]
-        assert local_market_sync.run(task["task_id"])["failed"] == []
+        result = local_market_sync.run(task["task_id"])
+        if stale_period:
+            write.assert_not_called()  # Do not publish a rebased daily bar before validating 15m.
+            assert len(result["failed"]) == 1
+            assert "已阻止覆盖" in result["failed"][0]
+            assert local_market_sync.status(db)["status"] == "failed"
+            for period, expected in before.items():
+                actual = [(bar.ts, float(bar.close)) for bar in kline_repo.latest_bars(db, period, target_id)]
+                assert actual == expected
+            return
+        assert result["failed"] == []
         assert local_market_sync.status(db)["status"] == "success"
         bars = kline_repo.latest_bars(db, "1d", target_id)
         assert [float(bar.close) for bar in bars] == [5, 6]

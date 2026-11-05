@@ -65,14 +65,34 @@ def _write_bars(db, period: str, symbol_id: int, bars) -> int:
 def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetime,
                         watched_a_share: bool) -> dict[str, int]:
     symbol_param, asset_type = _provider_params(sym)
-    counts = {}
+    fetched = {}
     for period in ALL_PERIODS:
         fetch = provider.fetch_kline_all if watched_a_share and period == "1d" else provider.fetch_kline
         bars = fetch(symbol_param, period, start, end, asset_type)
         if period == "1d" and not bars:
             raise RuntimeError(f"{sym.name} 的所有数据源均未返回日 K")
-        counts[period] = _write_bars(db, period, sym.id, bars)
-    return counts
+        if asset_type in {"stock", "etf"}:
+            from sqlalchemy import func, select
+            from app.models.kline import KLINE_MODELS
+
+            model = KLINE_MODELS[period]
+            first, last = db.execute(select(func.min(model.ts), func.max(model.ts)).where(
+                model.symbol_id == sym.id
+            )).one()
+            # A qfq refresh must replace the whole stored range in one transaction.
+            # A stale local source must never rebase the prefix while leaving a newer tail.
+            if first is not None and (not bars or
+                    min(market_cache.as_utc(bar.ts) for bar in bars) > market_cache.as_utc(first) or
+                    max(market_cache.as_utc(bar.ts) for bar in bars) < market_cache.as_utc(last)):
+                logger.warning("qfq coverage_rejected symbol=%s period=%s stored=%s..%s",
+                               sym.code, period, first, last)
+                raise RuntimeError(
+                    f"{sym.name} 的 {period} 数据未覆盖库中已有历史，已阻止覆盖以保护前复权基准；"
+                    "请先运行数据更新.exe 更新 Free-StockDB 后重试"
+                )
+        fetched[period] = bars
+    # Validate both periods before publishing or writing either of them.
+    return {period: _write_bars(db, period, sym.id, bars) for period, bars in fetched.items()}
 
 
 def _mark_watchlist_synced(db, symbol_id: int, status: str) -> None:
