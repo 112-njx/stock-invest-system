@@ -102,9 +102,9 @@ function loadHomeIndices(): Promise<void> {
   return indicesInFlight
 }
 
-/** G/H 固定指数按 sort_order 分组：1~14 大盘（G），15+ 行业（H） */
-const marketIndices = computed(() => market.fixedIndices.filter((i) => (i.sort_order ?? 99) <= 14))
-const industryIndices = computed(() => market.fixedIndices.filter((i) => (i.sort_order ?? 99) > 14))
+/** G/H 固定指数按 sort_order 分组：1~8 大盘（G），9+ 行业（H） */
+const marketIndices = computed(() => market.fixedIndices.filter((i) => (i.sort_order ?? 99) <= 8))
+const industryIndices = computed(() => market.fixedIndices.filter((i) => (i.sort_order ?? 99) > 8))
 
 function goDetail() {
   router.push('/market/detail')

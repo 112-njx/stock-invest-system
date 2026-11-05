@@ -39,6 +39,11 @@ const router = createRouter({
       name: 'admin',
       component: () => import('@/views/AdminView.vue'),
     },
+    {
+      path: '/stockdb',
+      name: 'stockdb',
+      component: () => import('@/views/StockDbView.vue'),
+    },
     // 独立页（不显示顶部导航/公告条）
     {
       path: '/login',

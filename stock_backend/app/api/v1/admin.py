@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
@@ -121,13 +121,13 @@ def task_queues(current: User = Depends(get_current_admin), db: Session = Depend
 def active_provider_requests(current: User = Depends(get_current_admin),
                              db: Session = Depends(get_read_db)) -> dict:
     from app.data_providers.request_activity import list_active_requests
+    from app.services.sync_service import _provider_params
 
     records = list_active_requests()
     symbols = {row["symbol"] for row in records if row.get("symbol")}
     if symbols:
-        matches = db.scalars(select(Symbol).where(or_(Symbol.code.in_(symbols), Symbol.name.in_(symbols))))
-        by_code = {(sym.code, "industry_index" if sym.type == "index" and sym.code.startswith(("BK", "881"))
-                    else sym.type): sym.name for sym in matches}
+        matches = db.scalars(select(Symbol).where(Symbol.code.in_(symbols)))
+        by_code = {(sym.code, _provider_params(sym)[1]): sym.name for sym in matches}
         for row in records:
             symbol = row.get("symbol")
             row["symbol_name"] = by_code.get((symbol, row.get("asset_type")), symbol)

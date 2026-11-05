@@ -112,6 +112,7 @@ services:
     environment:
       <<: *backend_env
       RUN_MIGRATIONS: "1"
+      STOCKDB_URL: ${STOCKDB_URL:-http://host.docker.internal:7899}
     volumes:
       # 热挂载后端源码（数据/memory 等随宿主 stock_backend/data 落盘，与本地开发一致）
       - ../stock_backend:/app

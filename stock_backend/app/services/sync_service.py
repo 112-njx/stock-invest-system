@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 from app.core.config import get_settings
 from app.data_providers.base import RealtimeQuote, RealtimeSymbol
 from app.data_providers.factory import get_provider
-from app.models.kline import KLINE_MODELS
 from app.models.symbol import Symbol
 from app.models.user import UserWatchlist
 from app.repositories import kline_repo, ops_repo, snapshot_repo, symbol_repo, user_repo
@@ -61,6 +60,17 @@ def _write_bars(db, period: str, symbol_id: int, bars) -> int:
 
             publisher.publish_kline(symbol_id, period, market_cache.kline_bar_to_dict(newest))
     return added
+
+
+def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetime,
+                        watched_a_share: bool) -> dict[str, int]:
+    symbol_param, asset_type = _provider_params(sym)
+    counts = {}
+    for period in ALL_PERIODS:
+        fetch = provider.fetch_kline_all if watched_a_share and period == "1d" else provider.fetch_kline
+        bars = fetch(symbol_param, period, start, end, asset_type)
+        counts[period] = _write_bars(db, period, sym.id, bars)
+    return counts
 
 
 def _mark_watchlist_synced(db, symbol_id: int, status: str) -> None:
@@ -366,18 +376,13 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dic
                 if code:
                     symbol_repo.update_code(db, sym.id, code)
                     logger.info("backfill industry index code: %s -> %s", sym.name, code)
-            counts: dict = {}
-            for period in ALL_PERIODS:
-                symbol_param, asset_type = _provider_params(sym)
-                bars = (provider.fetch_kline_all(symbol_param, period, start, end, asset_type)
-                        if sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym) and period == "1d"
-                        else provider.fetch_kline(symbol_param, period, start, end, asset_type))
-                added = _write_bars(db, period, sym.id, bars)
-                counts[period] = added
+            watched_a_share = sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym)
+            counts = _sync_symbol_klines(db, provider, sym, start, end, watched_a_share)
+            for period, added in counts.items():
                 logger.info("kline_init %s %s added=%d", sym.name, period, added)
-            quality = kline_quality_service.check_and_repair(db, sym, provider) if (
-                sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym)
-            ) else {"status": "unsupported"}
+            quality = kline_quality_service.check_and_repair(db, sym, provider) if watched_a_share else {
+                "status": "unsupported"
+            }
             complete = quality["status"] == "complete"
             ops_repo.upsert_sync_task(db, "kline_init", sym.id,
                                       "failed" if sym.id in watched_ids and not complete else "success", datetime.now(UTC))
@@ -410,18 +415,12 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
                 continue
             ops_repo.upsert_sync_task(db, "kline_incremental", sym.id, "running", datetime.now(UTC))
             db.commit()
-            counts: dict = {}
-            for period in ALL_PERIODS:
-                symbol_param, asset_type = _provider_params(sym)
-                bars = (provider.fetch_kline_all(symbol_param, period, start, end, asset_type)
-                        if sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym) and period == "1d"
-                        else provider.fetch_kline(symbol_param, period, start, end, asset_type))
-                added = _write_bars(db, period, sym.id, bars)
-                counts[period] = added
+            watched_a_share = sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym)
+            counts = _sync_symbol_klines(db, provider, sym, start, end, watched_a_share)
             db.commit()
             quality = kline_quality_service.check_and_repair(
                 db, sym, provider,
-                full_watchlist_repair=sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym),
+                full_watchlist_repair=watched_a_share,
             ) if (
                 sym.is_fixed_index or sym.id in watched_ids
             ) else {"status": "unsupported"}
