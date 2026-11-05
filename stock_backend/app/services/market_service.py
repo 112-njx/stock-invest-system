@@ -92,7 +92,11 @@ def _kline_symbol_ids(db: Session, ids: list[int]) -> set[int]:
     """命中 K 线的标的 id 集合（kline_1d 存在即视为有数据）。"""
     if not ids:
         return set()
-    return set(db.scalars(select(Kline1d.symbol_id).where(Kline1d.symbol_id.in_(ids)).distinct()))
+    from app.services.market_policy import akshare_enabled
+    query = select(Kline1d.symbol_id).where(Kline1d.symbol_id.in_(ids))
+    if not akshare_enabled():
+        query = query.where(Kline1d.source == 'stockdb')
+    return set(db.scalars(query.distinct()))
 
 
 def has_kline(db: Session, symbol_id: int) -> bool:
@@ -129,11 +133,6 @@ def get_kline(
     symbol_id = resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
-    if period in ("1w", "1mon"):
-        from app.services.weekly_kline import get_period_bars
-
-        bars = get_period_bars(db, symbol_id, period, start, end, limit, offset)
-        return [market_cache.kline_bar_to_dict(bar) for bar in bars]
     use_cache = start is None and end is None and offset == 0
     if use_cache:
         cached = market_cache.get_kline_cache(symbol_id, period, limit)
@@ -162,6 +161,28 @@ def get_kline(
 
 
 def get_snapshots(db: Session, symbol_ids: list[int]) -> list[dict]:
+    from app.services import local_quotes, market_policy
+    policy = market_policy.read()
+    symbols = list(db.scalars(select(Symbol).where(Symbol.id.in_(symbol_ids))))
+    baseline = local_quotes.quotes(db, symbols)
+    for row in baseline:
+        row['policy_revision'] = policy['revision']
+    if not (policy['akshare_enabled'] and policy['snapshots_enabled']):
+        return baseline
+    live = {row['symbol_id']: row for row in _legacy_snapshots(db, symbol_ids)
+            if row.get('source') == 'snapshot' and row.get('price') is not None}
+    for row in baseline:
+        quote = live.get(row['symbol_id'])
+        if quote and (not row.get('data_date') or str(quote.get('updated_at') or '')[:10] >= row['data_date']):
+            extras = row['extra']
+            row.update(quote)
+            if row['type'] in {'stock', 'etf'} and row.get('volume') is not None:
+                row['volume'] *= 100
+            row['extra'] = extras
+    return baseline
+
+
+def _legacy_snapshots(db: Session, symbol_ids: list[int]) -> list[dict]:
     """批量实时快照，按类型合并特殊字段；快照主体走 Redis 缓存（MGET → PG 兜底 → 回写）。
 
     附带 `data_age_seconds`（当前时间 - updated_at），前端据此标注"数据时间"。

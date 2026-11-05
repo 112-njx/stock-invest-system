@@ -187,12 +187,7 @@ def execute_backtest(task_id: int) -> dict:
         if symbol is None:
             raise BacktestFatalError("回测标的不存在")
 
-        if task.period in ("1w", "1mon"):
-            from app.services.weekly_kline import get_period_bars
-
-            bars = get_period_bars(db, task.symbol_id, task.period, task.start_ts, task.end_ts, limit=_KLINE_LIMIT)
-        else:
-            bars = kline_repo.get_bars(db, task.period, task.symbol_id, task.start_ts, task.end_ts, limit=_KLINE_LIMIT)
+        bars = kline_repo.get_bars(db, task.period, task.symbol_id, task.start_ts, task.end_ts, limit=_KLINE_LIMIT)
         if not bars:
             raise BacktestFatalError("标的无 K 线数据，请先同步行情后再回测")
         bars_dict = [_bar_to_dict(b) for b in bars]

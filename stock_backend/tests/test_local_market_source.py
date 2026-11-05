@@ -69,7 +69,8 @@ def test_index_code_collision_never_queries_local_stock_prices(monkeypatch):
 
 
 @pytest.mark.parametrize("local", [[], ProviderError("offline")])
-def test_watchlist_history_falls_back_when_local_is_empty_or_offline(local):
+def test_watchlist_history_falls_back_when_local_is_empty_or_offline(local, monkeypatch):
+    monkeypatch.setattr("app.services.market_policy.akshare_enabled", lambda: True)
     factory = DataProviderFactory.__new__(DataProviderFactory)
     import threading
 
@@ -134,6 +135,7 @@ def test_completed_watchlist_is_not_queued_again_when_source_date_is_old(monkeyp
     db.get.side_effect = [SimpleNamespace(type="stock", code="600519", market="SSE"),
                           SimpleNamespace(status="complete", checked_to=datetime(2000, 1, 1).date())]
     db.scalar.return_value = None
+    monkeypatch.setattr("app.repositories.kline_repo.latest_ts", lambda *args: datetime(2000, 1, 1, tzinfo=UTC))
     monkeypatch.setattr(watchlist_delivery, "get_session", lambda: db)
     monkeypatch.setattr(local_market_sync, "dispatch", Mock())
     monkeypatch.setattr(celery_app.control, "inspect", lambda **kwargs: SimpleNamespace(active=lambda: {}))
@@ -182,6 +184,8 @@ def test_manual_job_uses_source_date_and_refreshes_existing_history(monkeypatch,
     from app.services import local_market_sync, sync_service
     from app.utils.db import get_session
 
+    if offline:
+        monkeypatch.setattr("app.services.market_policy.akshare_enabled", lambda: True)
     scope = "test_local_" + uuid4().hex[:12]
     monkeypatch.setattr(local_market_sync, "TASK_TYPE", scope)
     db = get_session()
@@ -204,7 +208,7 @@ def test_manual_job_uses_source_date_and_refreshes_existing_history(monkeypatch,
 
     def session():
         connection = get_session()
-        connection.scalars = Mock(return_value=[SimpleNamespace(id=target_id, name=scope)])
+        connection.scalars = Mock(return_value=[SimpleNamespace(id=target_id, name=scope, type="stock", market="SSE")])
         return connection
 
     def fetch(symbol, period, start, end, asset_type):
@@ -223,6 +227,7 @@ def test_manual_job_uses_source_date_and_refreshes_existing_history(monkeypatch,
         return last.date()
 
     monkeypatch.setattr(StockDBProvider, "latest_day", source_date)
+    monkeypatch.setattr(StockDBProvider, "refresh_sdk", lambda self: None)
     monkeypatch.setattr(factory, "get_provider", lambda: SimpleNamespace(probe=lambda: []))
     monkeypatch.setattr(sync_service, "get_provider", lambda: provider)
     monkeypatch.setattr(sync_service, "run_catalog_sync", lambda **kwargs: {})

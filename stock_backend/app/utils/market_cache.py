@@ -40,8 +40,13 @@ SNAPSHOT_FIELDS = (
 
 
 # ---- K线缓存 ----
+def policy_revision():
+    from app.services.market_policy import read
+    return read()["revision"]
+
+
 def kline_key(symbol_id: int, period: str, limit: int) -> str:
-    return f"kline:{symbol_id}:{period}:{limit}"
+    return f"kline:{symbol_id}:{period}:{policy_revision()}:{limit}"
 
 
 def get_kline_cache(symbol_id: int, period: str, limit: int) -> list | None:
@@ -98,7 +103,7 @@ def kline_bar_to_dict(bar) -> dict:
 
 # ---- 快照缓存 ----
 def snapshot_key(symbol_id: int) -> str:
-    return f"snapshot:{symbol_id}"
+    return f"snapshot:{symbol_id}:{policy_revision()}"
 
 
 def get_snapshot_cache(symbol_id: int) -> dict | None:
@@ -150,11 +155,11 @@ def snapshot_to_cache_dict(obj) -> dict:
 
 # ---- 关注列表缓存 ----
 def watchlist_key(user_id: int) -> str:
-    return f"watchlist:{user_id}"
+    return f"watchlist:{user_id}:{policy_revision()}"
 
 
 def watchlist_snap_key(user_id: int) -> str:
-    return f"watchlist_snap:{user_id}"
+    return f"watchlist_snap:{user_id}:{policy_revision()}"
 
 
 def get_watchlist_cache(user_id: int) -> list | None:
@@ -198,7 +203,7 @@ def invalidate_watchlist_cache(user_id: int) -> None:
 
 # ---- 搜索缓存 ----
 def search_key(type_: str | None, keyword: str) -> str:
-    return f"search:{type_ or 'all'}:{keyword}"
+    return f"search:{type_ or 'all'}:{policy_revision()}:{keyword}"
 
 
 def get_search_cache(type_: str | None, keyword: str) -> list | None:

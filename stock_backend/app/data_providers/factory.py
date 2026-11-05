@@ -9,26 +9,56 @@
 import logging
 import threading
 import time
+from importlib import import_module
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 
 from app.core.config import get_settings
 
-from .base import BaseDataProvider, RealtimeQuote, RealtimeSymbol, unavailable_quote
+from .base import BaseDataProvider, KlineBar, RealtimeQuote, RealtimeSymbol, unavailable_quote
 from .request_activity import kline_scope, realtime_scope
-from .eastmoney import EastMoneyProvider
-from .sina import SinaProvider
-from .ths import THSProvider
 from .stockdb import StockDBProvider
 
 logger = logging.getLogger(__name__)
 
-PROVIDER_REGISTRY: dict[str, type[BaseDataProvider]] = {
+PROVIDER_REGISTRY = {
     "stockdb": StockDBProvider,
-    "eastmoney": EastMoneyProvider,
-    "sina": SinaProvider,
-    "ths": THSProvider,
+    "eastmoney": "eastmoney:EastMoneyProvider",
+    "sina": "sina:SinaProvider",
+    "ths": "ths:THSProvider",
 }
+
+
+class LazyExternalProvider:
+    """Keep AkShare imports and initialization outside the default local path."""
+    def __init__(self, name, specification):
+        self.name = name
+        self.specification = specification
+        self._instance = None
+        self._attempted = False
+        self._init_lock = threading.Lock()
+
+    def __getattr__(self, attribute):
+        with self._init_lock:
+            if not self._attempted:
+                self._attempted = True
+                try:
+                    specification = self.specification
+                    if isinstance(specification, str):
+                        module, class_name = specification.split(':')
+                        specification = getattr(import_module('.' + module, __package__), class_name)
+                    self._instance = specification()
+                except Exception as exc:
+                    logger.warning('optional provider %s could not initialize: %s', self.name, exc)
+        return getattr(self._instance, attribute, None)
+
+    def can_fetch_kline(self, *args):
+        method = self.__getattr__('can_fetch_kline')
+        return bool(method and method(*args))
+
+    def can_fetch_realtime(self):
+        method = self.__getattr__('can_fetch_realtime')
+        return bool(method and method())
 
 
 class ProviderCircuit:
@@ -69,13 +99,26 @@ class DataProviderFactory:
         settings = get_settings()
         names = [n.strip() for n in (priority or settings.DATA_PROVIDER_PRIORITY).split(",") if n.strip()]
         self._providers: list[BaseDataProvider] = [
-            PROVIDER_REGISTRY[name]() for name in names if name in PROVIDER_REGISTRY
+            PROVIDER_REGISTRY[name]() if name == 'stockdb' else LazyExternalProvider(name, PROVIDER_REGISTRY[name])
+            for name in names if name in PROVIDER_REGISTRY
         ]
         self._circuits: dict[str, ProviderCircuit] = {
             p.name: ProviderCircuit(settings.PROVIDER_CIRCUIT_FAILURE_THRESHOLD, settings.PROVIDER_CIRCUIT_COOLDOWN)
             for p in self._providers
         }
         self._lock = threading.Lock()
+
+    def _active_providers(self):
+        from app.services.market_policy import akshare_enabled
+        enabled = akshare_enabled()
+        return [p for p in self._providers if p.name == "stockdb" or enabled]
+
+    @staticmethod
+    def _label_bars(bars, provider):
+        for bar in bars:
+            if isinstance(bar, KlineBar):
+                bar.source = "stockdb" if provider.name == "stockdb" else "akshare"
+        return bars
 
     @property
     def providers(self) -> list[BaseDataProvider]:
@@ -84,7 +127,7 @@ class DataProviderFactory:
     def _iter_chain(self, method: str, args: tuple, kwargs: dict, scope) -> object | None:
         """按优先级遍历 Provider 执行 method，返回第一个非空结果；熔断/异常自动切下一个。"""
         now = time.time()
-        for p in self._providers:
+        for p in self._active_providers():
             if scope and not scope(p):
                 continue
             circuit = self._circuits[p.name]
@@ -100,7 +143,7 @@ class DataProviderFactory:
                 if result:
                     with self._lock:
                         circuit.record_success(now)
-                    return result
+                    return self._label_bars(result, p) if method == "fetch_kline" else result
                 logger.warning("[provider] %s empty, fallback to next", p.name)
             except Exception as exc:  # noqa: BLE001
                 with self._lock:
@@ -134,7 +177,7 @@ class DataProviderFactory:
         """历史补拉专用：返回 K 线及空区间是否已由全部可用来源确认。"""
         confirmed = True
         attempted = False
-        for p in self._providers:
+        for p in self._active_providers():
             if not p.can_fetch_kline(asset_type, period):
                 continue
             circuit = self._circuits[p.name]
@@ -151,7 +194,7 @@ class DataProviderFactory:
                 if bars:
                     with self._lock:
                         circuit.record_success(now)
-                    return bars, True
+                    return self._label_bars(bars, p), True
             except Exception as exc:  # noqa: BLE001
                 confirmed = False
                 with self._lock:
@@ -190,7 +233,7 @@ class DataProviderFactory:
     def _fetch_realtime_type(self, atype: str, items: list[RealtimeSymbol]) -> list:
         """单资产类型走优先级链：熔断跳过、异常降级、全 unavailable 视作未覆盖继续降级。"""
         now = time.time()
-        for p in self._providers:
+        for p in self._active_providers():
             if not p.can_fetch_realtime_type(atype):
                 continue
             circuit = self._circuits[p.name]
@@ -217,7 +260,7 @@ class DataProviderFactory:
 
     def resolve_index_code(self, name: str) -> str | None:
         """行业指数名称 → 板块代码（best-effort，仅东方财富提供）。"""
-        for p in self._providers:
+        for p in self._active_providers():
             try:
                 code = p.resolve_index_code(name)
                 if code:
@@ -228,7 +271,7 @@ class DataProviderFactory:
 
     def fetch_catalog(self) -> dict:
         """全量标的目录（仅东方财富提供）：{stocks: [(code,name)], etfs: [(code,name)]}。"""
-        for p in self._providers:
+        for p in self._active_providers():
             fn = getattr(p, "fetch_catalog", None)
             if fn is None:
                 continue
@@ -242,7 +285,7 @@ class DataProviderFactory:
 
     def search_ak_stock(self, keyword: str, limit: int = 10) -> list[tuple[str, str]]:
         """外部搜索回退：仅东方财富提供，失败返回空。"""
-        for p in self._providers:
+        for p in self._active_providers():
             fn = getattr(p, "search_ak_stock", None)
             if fn is None:
                 continue
@@ -256,7 +299,7 @@ class DataProviderFactory:
 
     def fetch_index_pe(self, names: list[str]) -> dict:
         """指数 PE（best-effort，仅东方财富提供，失败静默跳过）。"""
-        for p in self._providers:
+        for p in self._active_providers():
             fn = getattr(p, "fetch_index_pe", None)
             if fn is None:
                 continue
@@ -272,12 +315,13 @@ class DataProviderFactory:
     def health(self) -> list[dict]:
         now = time.time()
         out: list[dict] = []
+        active = {p.name for p in self._active_providers()}
         for p in self._providers:
             c = self._circuits[p.name]
             out.append(
                 {
                     "name": p.name,
-                    "state": c.state,
+                    "state": c.state if p.name in active else "disabled",
                     "failures": c.failures,
                     "last_success_at": c.last_success_at.isoformat() if c.last_success_at else None,
                     "cooldown_remaining": max(0, int(c.cooldown_until - now)) if c.state == "open" else 0,
@@ -289,7 +333,7 @@ class DataProviderFactory:
         """探测熔断中的 Provider（取固定标的 1 根日K），成功即恢复。返回本次探测结果。"""
         now = time.time()
         results: list[dict] = []
-        for p in self._providers:
+        for p in self._active_providers():
             c = self._circuits[p.name]
             if c.state != "open":
                 continue

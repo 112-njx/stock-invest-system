@@ -22,7 +22,6 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.config import get_settings
 from app.core.security import decode_access_token_full, is_access_token_blacklisted
-from app.repositories import snapshot_repo
 from app.utils.db import get_session
 from app.ws.manager import ConnectionState, manager
 
@@ -154,6 +153,11 @@ async def _receive_loop(state: ConnectionState) -> None:
 async def _handle_sync(state: ConnectionState, since: str) -> None:
     """断线增量补拉：查询 since 之后更新的快照，仅返回订阅范围内标的。"""
     from datetime import UTC, datetime
+    from app.services import market_policy, market_service
+    from app.utils.market_cache import as_utc
+
+    if not market_policy.snapshots_enabled():
+        return
 
     if not since or not state.subscribed:
         return
@@ -163,10 +167,16 @@ async def _handle_sync(state: ConnectionState, since: str) -> None:
         return
     db = get_session()
     try:
-        updates = snapshot_repo.get_updated_after(db, since_dt)
+        updates = market_service.get_snapshots(db, list(state.subscribed))
     finally:
         db.close()
-    data = {sid: d for sid, d in updates.items() if sid in state.subscribed}
+    data = {}
+    for row in updates:
+        stamp = row.get('updated_at')
+        if isinstance(stamp, str):
+            stamp = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+        if stamp and as_utc(stamp) > since_dt:
+            data[row['symbol_id']] = {**row, 'volume_unit': 'share'}
     if data:
         await manager.send_to_user(state.user_id, {"type": "snapshot", "data": data})
 
@@ -183,6 +193,12 @@ async def _dispatch(loop: asyncio.AbstractEventLoop, payload: dict) -> None:
     if symbol_id is None:
         return
     if kind == "snapshot":
+        from app.services.market_policy import read
+        policy = read()
+        if not (policy['akshare_enabled'] and policy['snapshots_enabled']):
+            return
+        if payload.get('data', {}).get('policy_revision') != policy['revision']:
+            return
         await manager.broadcast_snapshots({int(symbol_id): payload.get("data", {})})
     elif kind == "kline":
         await manager.broadcast_kline(payload)

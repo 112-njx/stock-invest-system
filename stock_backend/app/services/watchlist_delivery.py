@@ -76,7 +76,7 @@ def dispatch_watchlist_sync() -> dict:
             if not is_a_share_stock(sym):
                 continue
             quality = db.get(KlineQuality, (symbol_id, "1d"))
-            if quality is not None and quality.status == "complete":
+            if quality is not None and quality.status == "complete" and kline_repo.latest_ts(db, '1d', symbol_id):
                 if db.scalar(select(UserWatchlist.id).where(UserWatchlist.symbol_id == symbol_id,
                                                           UserWatchlist.sync_status != "done").limit(1)):
                     user_repo.update_watchlist_sync_status(db, symbol_id, "done")

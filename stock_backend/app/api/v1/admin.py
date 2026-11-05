@@ -24,6 +24,27 @@ logger = logging.getLogger(__name__)
 QUEUE_NAMES = ("watchlist", "fixed_indices", "backfill", "control", "sync", "backtest", "ai", "backup")
 
 
+class MarketSourcePolicy(BaseModel):
+    akshare_enabled: bool = False
+    snapshots_enabled: bool = False
+
+
+@router.get('/market-source-policy')
+def get_market_source_policy(current: User = Depends(get_current_admin)):
+    from app.services import market_policy
+    return ok(data=market_policy.read())
+
+
+@router.put('/market-source-policy')
+def update_market_source_policy(payload: MarketSourcePolicy, current: User = Depends(get_current_admin)):
+    from app.services import market_policy
+    from app.core.exceptions import ApiError
+    try:
+        return ok(data=market_policy.save(payload.akshare_enabled, payload.snapshots_enabled))
+    except ValueError as exc:
+        raise ApiError(status_code=400, msg=str(exc)) from exc
+
+
 def _queue_name(task: dict) -> str:
     name = task.get("name", "")
     if name.endswith("watchlist_stock_sync"):

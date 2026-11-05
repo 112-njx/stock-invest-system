@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.data_providers.base import KlineBar, RealtimeQuote
-from app.models.kline import Kline1d, Kline1mon
+from app.models.kline import KLINE_MODELS, Kline1d, Kline1mon
 from app.models.snapshot import SnapshotRealtime
 from app.models.symbol import Symbol
 from app.services import sync_service
@@ -14,15 +14,17 @@ from app.utils.redis_client import get_redis_client
 
 
 @pytest.fixture(autouse=True)
-def _cleanup():
+def _cleanup(monkeypatch):
+    monkeypatch.setattr("app.services.market_policy.akshare_enabled", lambda: True)
+    monkeypatch.setattr("app.services.market_policy.snapshots_enabled", lambda: True)
     yield
     # 仅清理测试数据（名称含“测试”），不破坏种子固定指数
     db = get_session()
     test_symbol_ids = db.query(Symbol.id).filter(Symbol.name.like("测试%")).all()
     if test_symbol_ids:
         ids = [r[0] for r in test_symbol_ids]
-        db.query(Kline1d).filter(Kline1d.symbol_id.in_(ids)).delete(synchronize_session=False)
-        db.query(Kline1mon).filter(Kline1mon.symbol_id.in_(ids)).delete(synchronize_session=False)
+        for model in KLINE_MODELS.values():
+            db.query(model).filter(model.symbol_id.in_(ids)).delete(synchronize_session=False)
         db.query(SnapshotRealtime).filter(SnapshotRealtime.symbol_id.in_(ids)).delete(synchronize_session=False)
         db.query(Symbol).filter(Symbol.id.in_(ids)).delete(synchronize_session=False)
     db.commit()
@@ -69,16 +71,18 @@ def _mock_provider() -> MagicMock:
     return p
 
 
-def test_kline_init_fetches_only_daily_and_15m():
+def test_kline_init_fetches_all_source_periods():
     sym = _make_symbol()
     provider = _mock_provider()
+    daily = provider.fetch_kline.return_value
+    provider.fetch_kline.side_effect = lambda symbol, period, *args: daily[-1:] if period in {"1w", "1mon"} else daily
     with patch("app.services.sync_service.get_provider", return_value=provider):
         result = sync_service.run_kline_init(symbol_id=sym.id, days=10)
     db = get_session()
     assert db.query(Kline1d).filter_by(symbol_id=sym.id).count() == 2
-    assert db.query(Kline1mon).filter_by(symbol_id=sym.id).count() == 0
+    assert db.query(Kline1mon).filter_by(symbol_id=sym.id).count() == 1
     assert result["600519"]["1d"] == 2
-    assert {call.args[1] for call in provider.fetch_kline.call_args_list} == {"1d", "15m"}
+    assert {call.args[1] for call in provider.fetch_kline.call_args_list} == {"1d", "15m", "1w", "1mon"}
     db.close()
 
 
@@ -111,7 +115,8 @@ def test_realtime_poll_writes_snapshot_and_redis_cache():
     st = db.query(SyncTask).filter(SyncTask.task_type == "realtime").order_by(SyncTask.id.desc()).first()
     assert st is not None and st.status == "success"
     db.close()
-    assert get_redis_client().exists(f"snapshot:{sym.id}") == 1
+    from app.utils.market_cache import snapshot_key
+    assert get_redis_client().exists(snapshot_key(sym.id)) == 1
 
 
 def test_is_market_open_weekend_false():
@@ -219,7 +224,7 @@ def test_realtime_poll_stock_upserts_fundamentals():
     db.close()
 
 
-def test_realtime_poll_index_upserts_valuation():
+def test_realtime_poll_index_keeps_hidden_valuation_empty():
     """大盘指数快照同步时落 index_valuations（指数 PE）。"""
     db = get_session()
     sym = Symbol(code="000300", name="测试沪深300", type="index", market="CSI", is_fixed_index=True)
@@ -246,7 +251,7 @@ def test_realtime_poll_index_upserts_valuation():
 
     db = get_session()
     val = db.get(IndexValuation, sym.id)
-    assert val is not None and float(val.pe) == 12.5
+    assert val is None
     db.close()
 
 
@@ -332,7 +337,7 @@ def test_realtime_poll_kline_fallback_when_all_unavailable():
     db.close()
 
 
-def test_fixed_indices_sync_generates_snapshot():
+def test_fixed_indices_sync_exposes_daily_quote_without_snapshot():
     """预同步完成后固定指数有快照记录（K线推导兜底）。"""
     db = get_session()
     sym = Symbol(code="000001", name="测试上证指数", type="index", market="SSE", is_fixed_index=True)
@@ -354,6 +359,7 @@ def test_fixed_indices_sync_generates_snapshot():
         sync_service.run_fixed_indices_sync()
     db = get_session()
     snap = db.get(SnapshotRealtime, sym.id)
-    assert snap is not None
-    assert float(snap.price) == 3896.0
+    assert snap is None
+    from app.services.market_service import get_snapshots
+    assert get_snapshots(db, [sym.id])[0]["price"] == 3896.0
     db.close()

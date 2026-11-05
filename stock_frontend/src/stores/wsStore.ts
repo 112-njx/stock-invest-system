@@ -81,7 +81,10 @@ export const useWsStore = defineStore('ws', {
           // merge：保留 code/name/type/extra，更新价格字段
           const updated: Snapshot = {
             ...existing,
-            source: 'snapshot',
+            source: (data.source as Snapshot['source']) ?? 'snapshot',
+            policy_revision: (data.policy_revision as number) ?? 0,
+            data_date: (data.data_date as string) ?? existing.data_date,
+            extra: data.extra ? { ...existing.extra, ...(data.extra as Snapshot['extra']) } : existing.extra,
             price: (data.price as number) ?? existing.price,
             change: (data.change as number) ?? existing.change,
             change_pct: (data.change_pct as number) ?? existing.change_pct,
@@ -89,7 +92,7 @@ export const useWsStore = defineStore('ws', {
             high: (data.high as number) ?? existing.high,
             low: (data.low as number) ?? existing.low,
             pre_close: (data.pre_close as number) ?? existing.pre_close,
-            volume: (data.volume as number) ?? existing.volume,
+            volume: data.volume == null ? existing.volume : (data.volume as number) * (data.volume_unit === 'lot' && existing.type !== 'index' ? 100 : 1),
             amount: (data.amount as number) ?? existing.amount,
             turnover: (data.turnover as number) ?? existing.turnover,
             amplitude: (data.amplitude as number) ?? existing.amplitude,

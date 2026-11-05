@@ -67,7 +67,7 @@ function onWatchlistLoaded() {
 function applyIndices(rows: HomeIndex[], source: string) {
   market.setFixedIndices(rows)
   // 本地缓存只用于立即显示名称；价格须经服务端比较快照与日 K 后再展示。
-  if (source === 'server') market.mergeSnapshots(rows.flatMap((row) => row.snapshot?.price != null ? [row.snapshot] : []))
+  if (source === 'server') market.mergeSnapshots(rows.flatMap((row) => row.snapshot ? [row.snapshot] : []))
   cachedIds.value = new Set(rows
     .filter((row) => source === 'cache' || (row.snapshot?.price == null && market.snapshots[row.id]?.price != null))
     .map((row) => row.id))

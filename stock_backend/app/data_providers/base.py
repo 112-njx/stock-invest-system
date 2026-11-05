@@ -47,6 +47,7 @@ class KlineBar:
     close: float
     volume: int
     amount: float
+    source: str = "stockdb"
 
 
 @dataclass

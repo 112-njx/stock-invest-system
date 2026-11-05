@@ -53,6 +53,7 @@ class Settings(BaseSettings):
 
     # ---- 行情同步 ----
     STOCKDB_URL: str = "http://127.0.0.1:7899"  # 本地历史行情及证券目录 RD 服务
+    STOCKDB_SDK_URL: str = "http://127.0.0.1:7900"
     DATA_PROVIDER_PRIORITY: str = "stockdb,eastmoney,sina,ths"  # Provider 优先级链（逗号分隔，可调整顺序/禁用）
     PROVIDER_CIRCUIT_FAILURE_THRESHOLD: int = 3  # Provider 连续失败 N 次熔断
     PROVIDER_CIRCUIT_COOLDOWN: int = 600  # Provider 熔断冷却（秒），冷却后半开探测

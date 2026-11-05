@@ -35,7 +35,9 @@ class StockDBProvider(BaseDataProvider):
 
     def can_fetch_kline(self, asset_type: str, period: str) -> bool:
         # Bare index codes collide with stock codes in the local dataset.
-        return asset_type in {"stock", "etf"} and period in {"1d", "15m"}
+        if asset_type == 'sw_index' and period == '15m':
+            return False
+        return asset_type in {"stock", "etf", "sw_index"} and period in {"1d", "15m", "1w", "1mon"}
 
     def can_fetch_realtime(self) -> bool:
         return False
@@ -50,7 +52,17 @@ class StockDBProvider(BaseDataProvider):
         keys = self.query("keys", "日k", k1=f"key:{code}", k2="all:", num=-1)
         return datetime.strptime(keys[-1].rsplit(":", 1)[-1], "%Y%m%d").date() if keys else None
 
+    def refresh_sdk(self):
+        try:
+            with httpx.Client(timeout=180, trust_env=False) as client:
+                response = client.post(get_settings().STOCKDB_SDK_URL.rstrip('/') + '/refresh')
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ProviderError(f'Free-StockDB SDK 服务不可用: {exc}') from exc
+
     def fetch_kline(self, symbol, period, start, end, asset_type="stock") -> list[KlineBar]:
+        if self.can_fetch_kline(asset_type, period) and (period in {"1w", "1mon"} or asset_type == "sw_index"):
+            return self._sdk_kline(symbol, period, start, end)
         if not self.can_fetch_kline(asset_type, period) or not re.fullmatch(r"\d{6}", symbol):
             return []
         settings = get_settings()
@@ -104,6 +116,37 @@ class StockDBProvider(BaseDataProvider):
         if not output:
             logger.info("[stockdb] coverage_empty code=%s period=%s start=%s end=%s", symbol, period, start, end)
         return sorted(output, key=lambda bar: bar.ts)
+
+    def _sdk_kline(self, symbol, period, start, end):
+        settings = get_settings()
+        frequency = "1M" if period == "1mon" else period
+        # Ask the SDK for complete containing periods, then filter by returned labels.
+        first = start.astimezone(UTC).date()
+        if period == "1w":
+            first -= timedelta(days=first.weekday())
+        elif period == "1mon":
+            first = first.replace(day=1)
+        try:
+            with httpx.Client(timeout=180, trust_env=False) as client:
+                response = client.get(settings.STOCKDB_SDK_URL.rstrip("/") + "/kline", params={
+                    "code": symbol, "frequency": frequency, "start": first.strftime("%Y%m%d"),
+                    "end": end.astimezone(settings.tz).strftime("%Y%m%d"),
+                })
+                response.raise_for_status()
+                rows = response.json()
+            if not isinstance(rows, list):
+                raise ValueError("invalid SDK result")
+            bars = []
+            for row in rows:
+                stamp = str(row['date'])
+                ts = datetime.strptime(stamp, '%Y%m%d%H%M%S' if len(stamp) == 14 else '%Y%m%d')
+                ts = ts.replace(tzinfo=settings.tz if len(stamp) == 14 else UTC).astimezone(UTC)
+                if start <= ts <= end:
+                    bars.append(KlineBar(ts, *[float(row[f]) for f in ('open','high','low','close')],
+                                         int(row.get('volume') or 0) // 100, float(row.get('amount') or 0)))
+            return bars
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            raise ProviderError(f"Free-StockDB SDK 查询失败: {exc}") from exc
 
     @staticmethod
     def _aggregate_minutes(records):

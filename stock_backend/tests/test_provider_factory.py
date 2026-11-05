@@ -5,11 +5,17 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 from app.data_providers.base import BaseDataProvider, KlineBar, RealtimeQuote, RealtimeSymbol, unavailable_quote
 from app.data_providers.eastmoney import EastMoneyProvider
 from app.data_providers.factory import DataProviderFactory, ProviderCircuit, reset_provider
 from app.data_providers.sina import SinaProvider, to_sina_index
 from app.data_providers.ths import THSProvider
+
+
+@pytest.fixture(autouse=True)
+def enable_external_providers_for_chain_tests(monkeypatch):
+    monkeypatch.setattr("app.services.market_policy.akshare_enabled", lambda: True)
 
 
 def _df_daily():

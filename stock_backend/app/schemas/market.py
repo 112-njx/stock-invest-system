@@ -58,4 +58,6 @@ class SnapshotOut(BaseModel):
     amplitude: float | None = None
     updated_at: datetime | None = None
     data_age_seconds: int | None = None  # 快照数据龄（当前时间 - updated_at），前端标注"数据时间"
+    data_date: str | None = None
+    policy_revision: int = 0
     extra: dict[str, Any] = {}  # stock: {market_cap, pe} / etf: {nav, premium} / index: {pe}

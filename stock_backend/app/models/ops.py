@@ -2,10 +2,20 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+
+
+class MarketSourceSettings(Base):
+    __tablename__ = 'market_source_policy'
+    __table_args__ = (CheckConstraint('id=1', name='singleton'),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    akshare_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    snapshots_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('1'))
 
 
 class SyncTask(Base):

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kline import KLINE_MODELS
 
-# 三个存储型 K 线父表名（周 K 从日 K 聚合）
+# 各周期均存储来源返回的数据
 KLINE_TABLES = tuple(model.__tablename__ for model in KLINE_MODELS.values())
 
 

@@ -36,6 +36,25 @@ const queueError = ref('')
 const activeRequests = ref<ProviderRequest[]>([])
 const activityError = ref('')
 const activityLoading = ref(true)
+const sourcePolicy = ref({ akshare_enabled: false, snapshots_enabled: false })
+const sourcePolicyLoaded = ref(false)
+const sourcePolicySaving = ref(false)
+const sourcePolicyError = ref('')
+async function loadSourcePolicy() {
+  try {
+    sourcePolicy.value = await request<typeof sourcePolicy.value>({ url: '/admin/market-source-policy' })
+    sourcePolicyLoaded.value = true
+  } catch { sourcePolicyError.value = '数据源设置读取失败' }
+}
+async function saveSourcePolicy() {
+  sourcePolicySaving.value = true
+  sourcePolicyError.value = ''
+  if (!sourcePolicy.value.akshare_enabled) sourcePolicy.value.snapshots_enabled = false
+  try {
+    sourcePolicy.value = await request<typeof sourcePolicy.value>({ url: '/admin/market-source-policy', method: 'put', data: sourcePolicy.value })
+  } catch { sourcePolicyError.value = '数据源设置保存失败' }
+  finally { sourcePolicySaving.value = false }
+}
 interface LocalSync { status: string; task_id: string | null; error: string | null; progress: number; message: string }
 const localSync = ref<LocalSync | null>(null)
 const localSyncSubmitting = ref(false)
@@ -126,6 +145,7 @@ async function save() {
 onMounted(() => {
   void load()
   void loadActivity()
+  void loadSourcePolicy()
   void loadLocalSync()
   activityTimer = setInterval(() => { void loadActivity(); void loadLocalSync() }, 3000)
 })
@@ -136,6 +156,13 @@ onUnmounted(() => { if (activityTimer) clearInterval(activityTimer) })
   <main class="admin">
     <header><h1>系统管理</h1><button @click="load">刷新指标</button></header>
     <p v-if="error" class="error">{{ error }}</p>
+    <section>
+      <h2>行情数据源</h2>
+      <p>默认仅使用 Free-StockDB；实时快照需要同时开启 AkShare。</p>
+      <label><input v-model="sourcePolicy.akshare_enabled" type="checkbox" :disabled="!sourcePolicyLoaded || sourcePolicySaving" @change="saveSourcePolicy">启用 AkShare 兜底补充</label>
+      <label><input v-model="sourcePolicy.snapshots_enabled" type="checkbox" :disabled="!sourcePolicyLoaded || !sourcePolicy.akshare_enabled || sourcePolicySaving" @change="saveSourcePolicy">启用实时快照</label>
+      <p v-if="sourcePolicyError" class="error">{{ sourcePolicyError }}</p>
+    </section>
     <section>
       <h2>本地行情手动同步</h2>
       <p>先手动运行数据更新.exe，等待 Free-StockDB 更新完成，再同步证券目录、固定指数和关注标的的前复权 K 线。</p>
@@ -210,6 +237,7 @@ header{display:flex;align-items:center;justify-content:space-between}h1{font-siz
 section{background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;padding:20px;margin:16px 0}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}article{padding:14px;background:var(--bg-hover);border-radius:6px}article h3{font-size:14px;margin:0 0 8px}strong{font-size:22px}p{color:var(--text-secondary);font-size:13px}
 label{display:block;margin:12px 0;font-size:13px}input{display:block;margin-top:6px;padding:7px;background:var(--bg-hover);color:var(--text);border:1px solid var(--border);border-radius:4px;width:180px}
+input[type=checkbox]{display:inline-block;width:16px;height:16px;margin:0 8px 0 0;padding:0;vertical-align:middle;accent-color:var(--accent)}
 button{padding:7px 14px;border-radius:5px;background:var(--accent);color:white}.error{color:#e55}
 small{font-size:11px;color:var(--text-secondary);font-weight:normal}.muted{font-size:13px;color:var(--text-secondary)}
 .request-list{display:grid;gap:10px}.request-list article{padding:14px;background:var(--bg-hover);border-radius:6px}.request-list h3{font-size:15px;margin:0 0 8px}.request-list p{margin:5px 0}code{font-size:12px;overflow-wrap:anywhere}

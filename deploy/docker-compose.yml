@@ -19,6 +19,7 @@ x-backend-env: &backend_env
   REDIS_URL: redis://redis:6379/0
   CELERY_BROKER_URL: redis://redis:6379/1
   CELERY_RESULT_BACKEND: redis://redis:6379/2
+  STOCKDB_SDK_URL: ${STOCKDB_SDK_URL:-http://host.docker.internal:7900}
   STOCKDB_URL: ${STOCKDB_URL:-http://host.docker.internal:7899}
   MEMORY_DIR: /app/data/memory
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}

@@ -141,7 +141,7 @@ def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: s
         if sym is None:
             return {"fetched": 0, "added": 0}
         symbol_param, asset_type = _provider_params(sym)
-        source_period = "1d" if period in ("1w", "1mon") else period
+        source_period = period
         db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 5000000000 + symbol_id})
         bars, confirmed_empty = get_provider().fetch_kline_checked(
             symbol_param, source_period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
@@ -224,6 +224,9 @@ def kline_incremental(self, symbol_id: int | None = None) -> dict:
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.realtime_poll")
 def realtime_poll(self, symbol_id: int | None = None, force: bool = False) -> dict:
     """交易时段实时快照轮询；非交易时段跳过（beat 周期触发，force 用于手动验证/运维）。"""
+    from app.services.market_policy import snapshots_enabled
+    if not snapshots_enabled():
+        return {"skipped": "snapshots disabled"}
     if not force and not sync_service.is_market_open():
         return {"skipped": "market closed"}
     _log("realtime", self.request.id, "running", f"start symbol_id={symbol_id}")

@@ -56,13 +56,7 @@ def compute_indicators(
     if start is None:
         start = end - timedelta(days=_DEFAULT_BACK_DAYS)
 
-    if period in ("1w", "1mon"):
-        from app.services.weekly_kline import get_period_bars
-
-        bars = get_period_bars(db, symbol_id, period, None, end, limit=100000) if explicit_range else get_period_bars(
-            db, symbol_id, period, None, None, limit=limit
-        )
-    elif explicit_range:
+    if explicit_range:
         # 从库中最早的 K 线起算递推指标，返回时再裁到请求区间，避免补页交界处数值跳变。
         bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end, limit=100000)
     else:
@@ -103,7 +97,8 @@ def _cache_key(
     """
     params_hash = hashlib.md5(json.dumps(params or {}, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
     names_sorted = ",".join(sorted(names))
-    key = f"indicator:{symbol_id}:{period}:{names_sorted}:{params_hash}:{latest_ts.isoformat()}"
+    from app.services.market_policy import read
+    key = f"indicator:{symbol_id}:{period}:{read()['revision']}:{names_sorted}:{params_hash}:{latest_ts.isoformat()}"
     if explicit_range:
         key += f":{start.isoformat()}:{end.isoformat()}:{limit}"
     return key

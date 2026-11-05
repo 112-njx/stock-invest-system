@@ -18,7 +18,7 @@ from app.utils.kline_partition import ensure_current_partitions
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-ALL_PERIODS = ("1d", "15m")
+ALL_PERIODS = ("1d", "15m", "1w", "1mon")
 
 
 def is_market_open(now: datetime | None = None) -> bool:
@@ -35,6 +35,8 @@ def _provider_params(sym: Symbol) -> tuple[str, str]:
 
     BKxxxx=东财板块代码、881xxx=同花顺行业代码（东财被限流时由 THS resolve_index_code 兜底回填）。
     """
+    if sym.market == "SW":
+        return sym.code, "sw_index"
     if sym.type == "index":
         if not sym.code or sym.code.startswith(("BK", "881")):
             return sym.name, "industry_index"
@@ -55,7 +57,10 @@ def _write_bars(db, period: str, symbol_id: int, bars) -> int:
             invalidate_indicator_cache(symbol_id, "1w")
             invalidate_indicator_cache(symbol_id, "1mon")
         newest = max(bars, key=lambda b: b.ts)
-        if previous_latest is None or market_cache.as_utc(newest.ts) >= market_cache.as_utc(previous_latest):
+        selected = kline_repo.latest_bars(db, period, symbol_id, limit=1)
+        if selected and selected[0].source == newest.source and (
+            previous_latest is None or market_cache.as_utc(newest.ts) >= market_cache.as_utc(previous_latest)
+        ):
             from app.ws import publisher
 
             publisher.publish_kline(symbol_id, period, market_cache.kline_bar_to_dict(newest))
@@ -71,19 +76,28 @@ def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetim
         bars = fetch(symbol_param, period, start, end, asset_type)
         if period == "1d" and not bars:
             raise RuntimeError(f"{sym.name} 的所有数据源均未返回日 K")
+        if sym.market == 'SW' and period in {'1w', '1mon'} and not bars:
+            raise RuntimeError(f'{sym.name} 的本地 {period} 数据暂不可用')
         if asset_type in {"stock", "etf"}:
             from sqlalchemy import func, select
             from app.models.kline import KLINE_MODELS
 
             model = KLINE_MODELS[period]
             first, last = db.execute(select(func.min(model.ts), func.max(model.ts)).where(
-                model.symbol_id == sym.id
+                model.symbol_id == sym.id, model.source == (bars[0].source if bars else "stockdb")
             )).one()
+            def boundary(ts):
+                stamp = market_cache.as_utc(ts)
+                if period == '1w':
+                    return (stamp - timedelta(days=stamp.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+                if period == '1mon':
+                    return stamp.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                return stamp
             # A qfq refresh must replace the whole stored range in one transaction.
             # A stale local source must never rebase the prefix while leaving a newer tail.
             if first is not None and (not bars or
-                    min(market_cache.as_utc(bar.ts) for bar in bars) > market_cache.as_utc(first) or
-                    max(market_cache.as_utc(bar.ts) for bar in bars) < market_cache.as_utc(last)):
+                    min(boundary(bar.ts) for bar in bars) > boundary(first) or
+                    max(boundary(bar.ts) for bar in bars) < boundary(last)):
                 logger.warning("qfq coverage_rejected symbol=%s period=%s stored=%s..%s",
                                sym.code, period, first, last)
                 raise RuntimeError(
@@ -104,8 +118,13 @@ def _mark_watchlist_synced(db, symbol_id: int, status: str) -> None:
 
 
 # ---- V0.2 1.1 启动预同步 / 缓存预热 ----
+def supported_symbol(sym):
+    from app.services.market_policy import akshare_enabled
+    return sym.type != "index" or sym.market == "SW" or akshare_enabled()
+
+
 def stale_fixed_index_count(db) -> tuple[int, int]:
-    symbols = symbol_repo.list_fixed_indices(db)
+    symbols = [sym for sym in symbol_repo.list_fixed_indices(db) if supported_symbol(sym)]
     missing = sum(kline_repo.latest_ts(db, "1d", sym.id) is None for sym in symbols)
     return missing, len(symbols)
 
@@ -148,7 +167,7 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
     """Initialize missing fixed symbols, or explicitly refresh their stored qfq history."""
     db = get_session()
     try:
-        symbols = symbol_repo.list_fixed_indices(db)
+        symbols = [sym for sym in symbol_repo.list_fixed_indices(db) if supported_symbol(sym)]
         ops_repo.upsert_sync_status(db, "fixed_indices", "running", 0, len(symbols), "固定指数同步开始")
         db.commit()
         result = {}
@@ -159,6 +178,7 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
                 result[str(sym.id)] = run_kline_init(symbol_id=sym.id)
             except Exception as exc:
                 result[str(sym.id)] = {"error": str(exc)[:200]}
+                logger.warning('fixed index sync failed code=%s: %s', sym.code, exc, exc_info=True)
             ops_repo.upsert_sync_status(db, "fixed_indices", "running", int(number / len(symbols) * 100),
                                         len(symbols), f"已处理 {number}/{len(symbols)}")
             db.commit()
@@ -236,7 +256,7 @@ def warmup_fixed_indices_cache() -> dict:
     """固定指数最近500根日K + 最新快照写 Redis（best-effort，失败不阻断启动）。"""
     db = get_session()
     try:
-        symbols = symbol_repo.list_fixed_indices(db)
+        symbols = [sym for sym in symbol_repo.list_fixed_indices(db) if supported_symbol(sym)]
         kline_warmed, snap_warmed = 0, 0
         for sym in symbols:
             bars = kline_repo.latest_bars(db, "1d", sym.id, 500)
@@ -272,7 +292,7 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: d
         watched_ids = set(db.scalars(select(UserWatchlist.symbol_id).distinct()))
         results: dict = {}
         for sym in symbols:
-            if sym is None:
+            if sym is None or not supported_symbol(sym):
                 continue
             ops_repo.upsert_sync_task(db, "kline_init", sym.id, "running", datetime.now(UTC))
             if sym.type == "index" and not sym.code:  # 行业指数 code 回填
@@ -325,6 +345,9 @@ def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> 
 # ---- 实时快照 ----
 def run_realtime_poll(symbol_id: int | None = None) -> dict:
     """实时快照轮询：拉取 → 特殊字段补全（行业K线推导/指数PE/市值/溢价） → 写快照与特殊表 → Redis 缓存。"""
+    from app.services.market_policy import snapshots_enabled
+    if not snapshots_enabled():
+        return {"skipped": "snapshots disabled"}
     db = get_session()
     try:
         provider = get_provider()

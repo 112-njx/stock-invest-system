@@ -30,9 +30,12 @@ export const useMarketStore = defineStore('market', {
     mergeSnapshots(list: Snapshot[]) {
       for (const s of list) {
         const existing = this.snapshots[s.symbol_id]
+        const incomingRevision = s.policy_revision ?? 0
+        const existingRevision = existing?.policy_revision ?? 0
+        if (incomingRevision < existingRevision) continue
         const incomingTime = s.updated_at ? snapshotTime(s.updated_at) : 0
         const existingTime = existing?.updated_at ? snapshotTime(existing.updated_at) : 0
-        if (existing && incomingTime && existingTime) {
+        if (existing && incomingRevision === existingRevision && incomingTime && existingTime) {
           const incomingDay = new Date(incomingTime).toISOString().slice(0, 10)
           const existingDay = new Date(existingTime).toISOString().slice(0, 10)
           if (incomingDay < existingDay) continue

@@ -27,8 +27,8 @@ from .em_utils import install_requests_patch
 logger = logging.getLogger(__name__)
 
 # 周期映射
-_DAILY_PERIOD = {"1d": "daily", "1mon": "monthly"}
-_BOARD_PERIOD = {"1d": "日k", "1mon": "月k"}
+_DAILY_PERIOD = {"1d": "daily", "1w": "weekly", "1mon": "monthly"}
+_BOARD_PERIOD = {"1d": "日k", "1w": "周k", "1mon": "月k"}
 _MIN_PERIODS = ("15m",)
 # 国内指数实时分类（覆盖固定大盘指数）
 _INDEX_CATEGORIES = ("上证系列指数", "深证系列指数", "中证系列指数", "沪深系列指数")
@@ -51,7 +51,7 @@ class EastMoneyProvider(BaseDataProvider):
     name = "eastmoney"
 
     def can_fetch_kline(self, asset_type: str, period: str) -> bool:
-        return period in ("15m", "1d", "1mon")
+        return asset_type in {"stock", "etf", "index", "industry_index"} and period in ("15m", "1d", "1w", "1mon")
 
     def __init__(self) -> None:
         super().__init__()

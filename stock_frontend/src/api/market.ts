@@ -53,7 +53,9 @@ export function fetchKlineQuality(symbol: string | number, period: Period) {
 
 export interface Snapshot {
   symbol_id: number
-  source?: 'snapshot' | 'kline'
+  source?: 'snapshot' | 'kline' | 'stockdb' | 'akshare'
+  data_date?: string | null
+  policy_revision?: number
   code: string
   name: string
   type: SymbolType

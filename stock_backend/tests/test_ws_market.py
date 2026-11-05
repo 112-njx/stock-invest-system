@@ -164,7 +164,9 @@ def test_ws_unsubscribe(ws_client: TestClient):
         assert conns[0].subscribed == {6}
 
 
-def test_ws_sync_catches_up_missing_snapshots(ws_client: TestClient):
+def test_ws_sync_catches_up_missing_snapshots(ws_client: TestClient, monkeypatch):
+    monkeypatch.setattr("app.services.market_policy.snapshots_enabled", lambda: True)
+    monkeypatch.setattr("app.services.market_policy.read", lambda: {"akshare_enabled": True, "snapshots_enabled": True, "revision": 1})
     """断线补拉：sync since 之后更新的快照批量返回。"""
     db = get_session()
     sym = Symbol(code="600519", name="测试WS快照", type="stock", market="SSE")

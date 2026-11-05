@@ -43,14 +43,14 @@ const fields = computed(() => {
   const list = [
     { label: '名称', value: s.name, cls: '' },
     { label: '代码', value: s.code, cls: '' },
-    { label: '现价', value: formatPrice(s.price), cls: trendClass(s.change), big: true },
+    { label: s.source === 'snapshot' ? '现价' : '最新收盘价', value: formatPrice(s.price), cls: trendClass(s.change), big: true },
     { label: '涨跌额', value: (s.change ?? 0) > 0 ? `+${s.change?.toFixed(2)}` : s.change?.toFixed(2), cls: trendClass(s.change) },
     { label: '涨跌幅', value: formatPct(s.change_pct), cls: trendClass(s.change_pct) },
     { label: '昨收', value: formatPrice(s.pre_close) },
     { label: '今开', value: formatPrice(s.open) },
     { label: '最高', value: formatPrice(s.high), cls: 't-up' },
     { label: '最低', value: formatPrice(s.low), cls: 't-down' },
-    { label: '成交量', value: formatAmount(s.volume) },
+    { label: '成交量（股）', value: formatAmount(s.volume) },
   ]
   // 指数通常无成交额、换手率数据，隐藏（bug6）
   if (!isIndex) {
@@ -60,7 +60,7 @@ const fields = computed(() => {
   list.push({ label: '振幅', value: formatPct(s.amplitude) })
   // V0.2：数据新鲜度标注（交易时段绿色/延迟黄色/非交易灰色收盘）
   const fresh = getFreshness(s.updated_at, s.data_age_seconds)
-  list.push({ label: '更新时间', value: fresh.label, cls: `fresh-${fresh.level}` })
+  list.push({ label: s.source === 'snapshot' ? '更新时间' : '数据日期', value: s.source === 'snapshot' ? fresh.label : (s.data_date ?? '--'), cls: s.source === 'snapshot' ? `fresh-${fresh.level}` : '' })
   return list
 })
 
@@ -72,7 +72,13 @@ const specialFields = computed(() => {
   if (s.type === 'stock') {
     return [
       { label: '总市值', value: formatAmount(e.market_cap as number) },
-      { label: '市盈率 PE', value: formatPrice(e.pe as number) },
+      { label: '流通市值', value: formatAmount(e.float_mv as number) },
+      { label: '总股本', value: formatAmount(e.total_share as number) },
+      { label: '流通股本', value: formatAmount(e.float_share as number) },
+      { label: '市盈率 PE TTM', value: formatPrice(e.pe_ttm as number) },
+      { label: '市净率 PB', value: formatPrice(e.pb as number) },
+      { label: '量比', value: formatPrice(e.vol_ratio as number) },
+      { label: 'ST 状态', value: e.is_st == null ? '--' : e.is_st ? '是' : '否' },
     ]
   }
   return []

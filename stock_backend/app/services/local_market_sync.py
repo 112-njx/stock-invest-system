@@ -89,12 +89,24 @@ def run(task_id: str) -> dict:
         from app.core.config import get_settings
         from app.data_providers.base import ProviderError
         from app.data_providers.factory import get_provider
+        from app.services.market_policy import akshare_enabled
 
         try:
             source_day = StockDBProvider().latest_day()
         except (ProviderError, ValueError) as exc:
+            if not akshare_enabled():
+                raise RuntimeError('本地服务连接失败，AkShare 兜底未启用') from exc
             logger.warning("manual sync local_connection_error, using AkShare fallback: %s", exc)
             source_day = None
+        if source_day is None and not akshare_enabled():
+            raise RuntimeError('本地服务没有可用行情数据，AkShare 兜底未启用')
+        if source_day is not None:
+            try:
+                StockDBProvider().refresh_sdk()
+            except ProviderError:
+                if not akshare_enabled():
+                    raise
+                logger.warning('local SDK unavailable; explicit AkShare fallback is enabled')
         target_day = source_day or datetime.now(get_settings().tz).date()
         source_label = f"本地源日期 {source_day}" if source_day else f"本地源不可用，AkShare 请求截至 {target_day}"
         get_provider().probe()
@@ -104,6 +116,7 @@ def run(task_id: str) -> dict:
         symbols = list(db.scalars(select(Symbol).where(
             Symbol.is_fixed_index.is_(True) | Symbol.id.in_(select(UserWatchlist.symbol_id))
         ).order_by(Symbol.id)))
+        symbols = [sym for sym in symbols if sync_service.supported_symbol(sym)]
         failed = []
         changed = 0
         end = datetime.combine(target_day, datetime.max.time(), get_settings().tz).astimezone(UTC)
