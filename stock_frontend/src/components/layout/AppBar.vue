@@ -5,6 +5,7 @@
  * G35：头像区回归顶部（方案 B）——未登录显示「登录」入口，已登录显示头像 + 下拉菜单；
  * 与 G16 铃铛并存，I 区用户 Cell 保留。
  */
+import StockSearch from '@/components/layout/StockSearch.vue'
 import NotificationBell from '@/components/layout/NotificationBell.vue'
 import UserMenu from '@/components/layout/UserMenu.vue'
 import { onBeforeUnmount, onMounted } from 'vue'
@@ -40,6 +41,7 @@ onBeforeUnmount(() => clearTimeout(prepareTimer))
 
     <div class="appbar__right">
       <!-- G16：通知铃铛（仅新增此区块，不改现有布局结构） -->
+      <StockSearch />
       <NotificationBell />
       <!-- G35：头像区（未登录=登录入口；已登录=下拉菜单） -->
       <UserMenu />
