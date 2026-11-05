@@ -219,6 +219,9 @@ async function loadWorkspace(retry = true) {
     if (request !== workspaceRequest || disposed) return
     if (saved && rank(saved.boards).slice(0, 10).every((board) => saved.charts[board.id]) &&
       (saved.category !== shownCategory.value || saved.weight !== shownWeight.value || !screen.value)) {
+      cardScroll.value = 0
+      cards.value?.scrollTo(0, 0)
+      boardList.value?.scrollTo(0, 0)
       screen.value = saved
     }
     const value = await buildWorkspace(group, method)
