@@ -62,7 +62,7 @@ function shortNumber(value: number) {
 function volumeHeight(bar: Bar) { return bar[5] / volumeMax.value * 42 }
 function candleColor(bar: Bar, index: number) {
   return bar[4] >= (props.minute ? (props.bars[index - 1]?.[4] ?? props.baseline ?? bar[1]) : bar[1])
-    ? '#d53750' : '#13a479'
+    ? 'var(--blueprint-candle-up)' : 'var(--blueprint-candle-down)'
 }
 function move(event: PointerEvent) {
   const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
@@ -82,12 +82,12 @@ const movingAverages = computed(() => averages.map(([period, color]) => ({
   <div v-if="!bars.length" class="chart-empty">暂无{{ minute ? '分时' : '日 K' }}数据</div>
   <div v-else class="chart" :aria-label="label" role="img" @pointermove="move" @pointerleave="cursor = null">
     <svg :viewBox="`0 0 ${width} ${height}`" preserveAspectRatio="none" aria-hidden="true">
-      <path :d="`M0 ${bottom + 9}H${width} M0 ${volumeBottom}H${width}`" stroke="#e5ecef" />
+      <path :d="`M0 ${bottom + 9}H${width} M0 ${volumeBottom}H${width}`" stroke="var(--border)" />
       <template v-if="minute">
-        <polygon :points="`${x(0)},${bottom} ${minuteLine} ${x(bars.length - 1)},${bottom}`" fill="#eaf4fa" />
+        <polygon :points="`${x(0)},${bottom} ${minuteLine} ${x(bars.length - 1)},${bottom}`" fill="var(--accent-soft)" />
         <line v-if="baseline" x1="0" :x2="width" :y1="y(baseline)" :y2="y(baseline)"
-          stroke="#9eabb6" stroke-dasharray="4 4" />
-        <polyline :points="minuteLine" fill="none" stroke="#1a74ae" vector-effect="non-scaling-stroke" />
+          stroke="var(--text-secondary)" stroke-dasharray="4 4" />
+        <polyline :points="minuteLine" fill="none" stroke="var(--blueprint-link)" vector-effect="non-scaling-stroke" />
       </template>
       <template v-for="(bar, i) in bars" :key="bar[0]">
         <g :fill="candleColor(bar, i)">
@@ -104,7 +104,7 @@ const movingAverages = computed(() => averages.map(([period, color]) => ({
       <polyline v-for="ma in minute ? [] : movingAverages" :key="ma.color" :points="ma.points"
         fill="none" :stroke="ma.color" vector-effect="non-scaling-stroke" />
       <path v-if="cursor" :d="`M${x(cursor.index)} 0V${volumeBottom} M0 ${cursor.y * height}H${width}`"
-        fill="none" stroke="#8a98a6" stroke-dasharray="4 4" vector-effect="non-scaling-stroke" />
+        fill="none" stroke="var(--text-secondary)" stroke-dasharray="4 4" vector-effect="non-scaling-stroke" />
     </svg>
     <span v-for="tick in ticks" :key="tick.y" class="tick" :style="{ top: tick.y / height * 100 + '%' }">{{ tick.value.toFixed(2) }}</span>
     <template v-if="minute && baseline">
@@ -137,18 +137,18 @@ const movingAverages = computed(() => averages.map(([period, color]) => ({
 </template>
 
 <style scoped>
-.chart { position: relative; width: 100%; height: 100%; min-height: 110px; background: #fff; color: #708090; cursor: crosshair; }
-.chart-empty { display: grid; place-items: center; min-height: 110px; height: 100%; color: #75848d; }
+.chart { position: relative; width: 100%; height: 100%; min-height: 110px; background: var(--bg-panel); color: var(--text-secondary); cursor: crosshair; }
+.chart-empty { display: grid; place-items: center; min-height: 110px; height: 100%; color: var(--text-secondary); }
 svg { position: absolute; width: 100%; height: 100%; inset: 0; }
 .tick, .volume-label, .time, .cursor-date { position: absolute; font: 11px/1.1 system-ui, sans-serif; pointer-events: none; }
 .tick { left: 3px; transform: translateY(-50%); }
 .tick--right { left: auto; right: 3px; }
 .volume-label { top: 75%; left: 3px; }
 .time, .cursor-date { bottom: 1px; transform: translateX(-50%); white-space: nowrap; }
-.cursor-date { background: #263749; color: white; padding: 2px 4px; border-radius: 2px; }
-.tooltip { position: absolute; z-index: 2; top: 5px; display: grid; grid-template-columns: auto auto; gap: 3px 8px; margin: 0 0 0 9px; padding: 7px; background: #fffffff5; border: 1px solid #dbe4eb; border-radius: 5px; box-shadow: 0 2px 10px #21394b20; font-size: 11px; pointer-events: none; white-space: nowrap; }
+.cursor-date { background: var(--bg-active); color: var(--text); padding: 2px 4px; border-radius: 2px; }
+.tooltip { position: absolute; z-index: 2; top: 5px; display: grid; grid-template-columns: auto auto; gap: 3px 8px; margin: 0 0 0 9px; padding: 7px; background: var(--bg-panel-2); border: 1px solid var(--border-strong); border-radius: 5px; box-shadow: var(--shadow); font-size: 11px; pointer-events: none; white-space: nowrap; }
 .tooltip--left { transform: translateX(-100%); margin-left: -9px; }
-dd { margin: 0; text-align: right; color: #253643; }
-.up { color: #bd2444; }
-.down { color: #138463; }
+dd { margin: 0; text-align: right; color: var(--text); }
+.up { color: var(--blueprint-up); }
+.down { color: var(--blueprint-down); }
 </style>

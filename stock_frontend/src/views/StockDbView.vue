@@ -414,14 +414,32 @@ onBeforeUnmount(() => { clearHover(); compareController?.abort() })
 </template>
 
 <style scoped>
-.blueprint { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(95px, 10.7%) minmax(170px, 19.3%) minmax(410px, 1fr) minmax(255px, 23.5%); background: #eaf0f3; color: #192c39; color-scheme: light; }
-.panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: white; border-right: 1px solid #e6edf1; }
-.panel-head { flex: none; height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; border-bottom: 1px solid #e8eef1; white-space: nowrap; }
-small, .source { color: #657882; font-size: 11px; }
+.blueprint {
+  --blueprint-workspace: var(--bg);
+  --blueprint-active: var(--bg-active);
+  --blueprint-link: #93c5fd;
+  --blueprint-up: #f87171;
+  --blueprint-down: #4ade80;
+  --blueprint-candle-up: var(--up);
+  --blueprint-candle-down: var(--down);
+}
+[data-theme='light'] .blueprint {
+  --blueprint-workspace: #eaf0f3;
+  --blueprint-active: #e7f2fa;
+  --blueprint-link: #1c638f;
+  --blueprint-up: #bb2544;
+  --blueprint-down: #12835e;
+  --blueprint-candle-up: #d53750;
+  --blueprint-candle-down: #13a479;
+}
+.blueprint { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(95px, 10.7%) minmax(170px, 19.3%) minmax(410px, 1fr) minmax(255px, 23.5%); background: var(--blueprint-workspace); color: var(--text); }
+.panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-panel); border-right: 1px solid var(--border); }
+.panel-head { flex: none; height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+small, .source { color: var(--text-secondary); font-size: 11px; }
 button, select { font: inherit; background: transparent; color: inherit; border: 0; cursor: pointer; border-radius: 4px; }
 button:disabled { opacity: .45; cursor: default; }
-button:focus-visible, select:focus-visible { outline: 2px solid #2665aa; outline-offset: -2px; }
-button:hover, .active { background: #e7f2fa; color: #1c638f; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+button:hover, .active { background: var(--blueprint-active); color: var(--blueprint-link); }
 .categories__list { display: grid; padding: 6px 8px; gap: 5px; }
 .categories__list button { padding: 10px; text-align: left; }
 .categories__list .active { font-weight: 700; }
@@ -430,51 +448,51 @@ button:hover, .active { background: #e7f2fa; color: #1c638f; }
 .boards .rows { padding: 6px 7px; }
 .board-row { grid-template-columns: minmax(0, 1fr) 36px 64px; min-height: 39px; margin-bottom: 2px; }
 .board-row.active { font-weight: 700; }
-.board-row small { border-radius: 15px; text-align: center; background: #edf2f5; }
+.board-row small { border-radius: 15px; text-align: center; background: var(--bg-hover); }
 .board-row strong, .stock-row span:nth-child(n + 3) { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.up { color: #bb2544; }
-.down { color: #12835e; }
-.custom-actions { padding: 6px; display: flex; gap: 5px; border-bottom: 1px solid #e8eef1; }
-.custom-actions button, .source button { padding: 4px 7px; color: #216491; background: #edf5fb; }
+.up { color: var(--blueprint-up); }
+.down { color: var(--blueprint-down); }
+.custom-actions { padding: 6px; display: flex; gap: 5px; border-bottom: 1px solid var(--border); }
+.custom-actions button, .source button { padding: 4px 7px; color: var(--blueprint-link); background: var(--accent-soft); }
 .index-toolbar { gap: 6px; }
 .algorithms, .segmented, .ranking { display: flex; align-items: center; gap: 3px; }
 .algorithms strong, .segmented, .ranking { font-size: 11px; }
-.segmented { background: #edf2f7; border-radius: 6px; padding: 3px; }
+.segmented { background: var(--bg-hover); border-radius: 6px; padding: 3px; }
 .segmented button, .ranking button, .ranking select { padding: 5px 7px; }
 .segmented .active, .primary { background: #2455d7; color: #fff; font-weight: 700; }
 .ranking .active, .member-sorts .active { font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
-.indices { background: #e8eff2; }
-.index-toolbar { background: white; }
+.indices { background: var(--blueprint-workspace); }
+.index-toolbar { background: var(--bg-panel); }
 .cards { flex: 1; min-height: 0; overflow: auto; padding: 10px 10px 0; }
 .card-window { position: absolute; inset-inline: 0; }
-.card { height: 328px; margin-bottom: 10px; padding: 0 9px 5px; display: flex; flex-direction: column; background: #fff; border-radius: 7px; overflow: hidden; }
-.card-head { flex: none; height: 43px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #eff2f4; }
+.card { height: 328px; margin-bottom: 10px; padding: 0 9px 5px; display: flex; flex-direction: column; background: var(--bg-panel); border-radius: 7px; overflow: hidden; }
+.card-head { flex: none; height: 43px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--border); }
 .rank { align-self: flex-start; margin-left: -9px; padding: 4px 8px; color: #fff; background: #57748e; font-size: 10px; white-space: nowrap; font-weight: 800; }
 .rank--1 { background: #b90040; }.rank--2 { background: #bd4a13; }.rank--3 { background: #a76920; }
 .card-name { padding: 3px; font-weight: 700; }
-.card-name.selected::before { content: '●'; color: #b32744; font-size: 8px; margin-right: 5px; }
-.weight-label, .compare { white-space: nowrap; color: #2856a1; background: #edf4fc; border: 1px solid #cfdef5; border-radius: 4px; padding: 3px 5px; font-size: 10px; }
+.card-name.selected::before { content: '●'; color: var(--blueprint-up); font-size: 8px; margin-right: 5px; }
+.weight-label, .compare { white-space: nowrap; color: var(--blueprint-link); background: var(--accent-soft); border: 1px solid var(--border-strong); border-radius: 4px; padding: 3px 5px; font-size: 10px; }
 .compare { margin-left: auto; }
-.quote { min-width: 66px; text-align: center; background: #f5f8f9; border: 1px solid #e5edf2; padding: 3px 6px; border-radius: 4px; white-space: nowrap; }
-.quote.up { background: #fdf0f3; }.quote.down { background: #eaf8f2; }
+.quote { min-width: 66px; text-align: center; background: var(--bg-panel-2); border: 1px solid var(--border); padding: 3px 6px; border-radius: 4px; white-space: nowrap; }
+.quote.up { background: var(--up-soft); }.quote.down { background: var(--down-soft); }
 .stock-chart { flex: none; height: 246px; display: flex; flex-direction: column; padding: 6px 6px 0; overflow: hidden; }
 .stock-chart > strong, .intraday > strong { flex: none; padding: 0 3px; }
-.member-sorts { display: flex; gap: 5px; padding: 5px 8px; border-block: 1px solid #edf1f4; }
+.member-sorts { display: flex; gap: 5px; padding: 5px 8px; border-block: 1px solid var(--border); }
 .member-sorts button { padding: 4px 6px; font-size: 12px; }
-.stock-row { grid-template-columns: 54px minmax(0, 1fr) 53px 64px; min-height: 34px; border-bottom: 1px solid #f2f5f6; font-size: 12px; }
-.stock-row strong { color: #235e86; }
-.source { display: flex; gap: 7px; align-items: center; padding: 5px 8px; border-top: 1px solid #edf1f4; }.source button { margin-left: auto; }
-.empty { padding: 12px; color: #657882; text-align: center; }.state { margin-top: 24px; }.state button { color: #216491; text-decoration: underline; }
-.intraday { position: fixed; z-index: 20; width: min(420px, calc(100vw - 16px)); height: 214px; display: flex; flex-direction: column; gap: 4px; padding: 8px; background: #fff; border: 1px solid #e4ebef; border-radius: 7px; box-shadow: 0 8px 28px #14273935; pointer-events: none; }
-dialog { color: #192c39; background: #fff; padding: 0; border: 1px solid #d8e3eb; border-radius: 8px; }
+.stock-row { grid-template-columns: 54px minmax(0, 1fr) 53px 64px; min-height: 34px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.stock-row strong { color: var(--blueprint-link); }
+.source { display: flex; gap: 7px; align-items: center; padding: 5px 8px; border-top: 1px solid var(--border); }.source button { margin-left: auto; }
+.empty { padding: 12px; color: var(--text-secondary); text-align: center; }.state { margin-top: 24px; }.state button { color: var(--blueprint-link); text-decoration: underline; }
+.intraday { position: fixed; z-index: 20; width: min(420px, calc(100vw - 16px)); height: 214px; display: flex; flex-direction: column; gap: 4px; padding: 8px; background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 7px; box-shadow: var(--shadow); pointer-events: none; }
+dialog { color: var(--text); background: var(--bg-panel); padding: 0; border: 1px solid var(--border-strong); border-radius: 8px; }
 dialog::backdrop { background: #23344950; }.compare-dialog { width: min(96vw, 1650px); max-width: none; margin: auto auto 36px; }
 .compare-dialog .panel-head button { padding: 5px 8px; }.compare-dialog .panel-head small { margin-left: auto; }
-.compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; padding: 8px; background: #eaf0f3; }
-.compare-grid article { height: 235px; padding: 8px; display: flex; flex-direction: column; background: white; border-radius: 5px; }
+.compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; padding: 8px; background: var(--blueprint-workspace); }
+.compare-grid article { height: 235px; padding: 8px; display: flex; flex-direction: column; background: var(--bg-panel); border-radius: 5px; }
 .compare-grid article header { display: flex; justify-content: space-between; }
 .edit-dialog { width: min(480px, 92vw); margin: auto; }.edit-dialog label, .edit-dialog footer, .edit-dialog p { display: block; margin: 12px; }
-.edit-dialog input, .edit-dialog textarea { display: block; width: 100%; margin-top: 4px; padding: 7px; color: inherit; font: inherit; background: white; border: 1px solid #c9d7df; border-radius: 4px; }
+.edit-dialog input, .edit-dialog textarea { display: block; width: 100%; margin-top: 4px; padding: 7px; color: inherit; font: inherit; background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 4px; }
 .edit-dialog footer { display: flex; justify-content: flex-end; gap: 7px; }.edit-dialog button { padding: 6px 10px; }
 @media (max-width: 1080px) {
   .blueprint { grid-template-columns: 105px minmax(150px, 22%) minmax(0, 1fr); overflow: auto; grid-template-rows: minmax(510px, 1fr) 440px; }
