@@ -58,14 +58,16 @@ def compute_indicators(
 
     if explicit_range:
         # 从库中最早的 K 线起算递推指标，返回时再裁到请求区间，避免补页交界处数值跳变。
-        bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end, limit=100000)
+        bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end,
+                                   limit=100000, source_window=(start, end))
     else:
         bars = kline_repo.latest_bars(db, period, symbol_id, limit=limit)
     if not bars:
         return []
 
     latest_ts = bars[-1].ts
-    key = _cache_key(symbol_id, period, names, params, latest_ts, explicit_range, start, end, limit)
+    key = _cache_key(symbol_id, period, names, params, latest_ts, explicit_range, start, end, limit,
+                     source=bars[-1].source)
     cached = _get_cache(key)
     if cached is not None:
         return cached
@@ -90,6 +92,7 @@ def _cache_key(
     start: datetime,
     end: datetime,
     limit: int,
+    source: str = 'stockdb',
 ) -> str:
     """默认区间（未显式指定 start/end）按"最新N根"缓存：键只含 latest_ts，新K线到达自动失效。
 
@@ -98,7 +101,7 @@ def _cache_key(
     params_hash = hashlib.md5(json.dumps(params or {}, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
     names_sorted = ",".join(sorted(names))
     from app.services.market_policy import read
-    key = f"indicator:{symbol_id}:{period}:{read()['revision']}:{names_sorted}:{params_hash}:{latest_ts.isoformat()}"
+    key = f"indicator:{symbol_id}:{period}:{read()['revision']}:{source}:{names_sorted}:{params_hash}:{latest_ts.isoformat()}"
     if explicit_range:
         key += f":{start.isoformat()}:{end.isoformat()}:{limit}"
     return key

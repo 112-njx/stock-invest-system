@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import Date, case, delete, exists, func, or_, select
+from sqlalchemy import Date, and_, case, delete, exists, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -69,11 +69,32 @@ def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) 
     return changed
 
 
-def source_filter(model, symbol_id):
+def source_filter(model, symbol_id, start=None, end=None):
     from app.services.market_policy import akshare_enabled
     if not akshare_enabled():
         return model.source == "stockdb"
     local = model.__table__.alias("local_history")
+    if start is not None or end is not None:
+        def bounds(source):
+            conditions = [local.c.symbol_id == symbol_id, local.c.source == source]
+            if start is not None:
+                conditions.append(local.c.ts >= start)
+            if end is not None:
+                conditions.append(local.c.ts <= end)
+            return tuple(select(aggregate(local.c.ts)).where(*conditions).scalar_subquery()
+                         for aggregate in (func.min, func.max))
+
+        local_first, local_last = bounds('stockdb')
+        remote_first, remote_last = bounds('akshare')
+        # Pick one source for the requested window, including indicator warmup.
+        # Never replace individual bars across different qfq bases.
+        remote_covers_more = and_(
+            remote_first <= local_first, remote_last >= local_last,
+            or_(remote_first < local_first, remote_last > local_last),
+        )
+        return model.source == case(
+            (or_(local_first.is_(None), remote_covers_more), 'akshare'), else_='stockdb'
+        )
     has_local = exists(select(1).select_from(local).where(
         local.c.symbol_id == symbol_id, local.c.source == "stockdb"
     ))
@@ -89,11 +110,14 @@ def get_bars(
     end: datetime,
     limit: int = 1000,
     offset: int = 0,
+    source_window: tuple[datetime, datetime] | None = None,
 ) -> list:
     model = _model(period)
     stmt = (
         select(model)
-        .where(model.symbol_id == symbol_id, source_filter(model, symbol_id), model.ts >= start, model.ts <= end)
+        .where(model.symbol_id == symbol_id,
+               source_filter(model, symbol_id, *(source_window or (start, end))),
+               model.ts >= start, model.ts <= end)
         .order_by(model.ts)
         .limit(limit)
         .offset(offset)

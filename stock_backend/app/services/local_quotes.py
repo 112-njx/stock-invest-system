@@ -18,6 +18,7 @@ def stored_quote(db, sym):
     previous = float(bars[-2].close) if len(bars) > 1 else None
     return dict(price=close, pre_close=previous, change=close-previous if previous else None,
                 change_pct=(close/previous-1)*100 if previous else None,
+                amplitude=(float(latest.high)-float(latest.low))/previous*100 if previous else None,
                 open=float(latest.open), high=float(latest.high), low=float(latest.low),
                 volume=int(latest.volume)*100, amount=float(latest.amount),
                 updated_at=latest.ts.isoformat(), data_date=latest.ts.date().isoformat(),

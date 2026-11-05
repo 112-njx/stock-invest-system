@@ -126,7 +126,8 @@ def test_manual_api_accepts_admin_submission_and_returns_progress(client, monkey
         app.dependency_overrides.pop(get_current_admin)
 
 
-def test_completed_watchlist_is_not_queued_again_when_source_date_is_old(monkeypatch):
+@pytest.mark.parametrize('missing_period', [None, '1w', '1mon'])
+def test_completed_watchlist_is_not_queued_again_when_source_date_is_old(monkeypatch, missing_period):
     from app.services import local_market_sync, watchlist_delivery
     from app.worker.celery_app import celery_app
 
@@ -135,14 +136,18 @@ def test_completed_watchlist_is_not_queued_again_when_source_date_is_old(monkeyp
     db.get.side_effect = [SimpleNamespace(type="stock", code="600519", market="SSE"),
                           SimpleNamespace(status="complete", checked_to=datetime(2000, 1, 1).date())]
     db.scalar.return_value = None
-    monkeypatch.setattr("app.repositories.kline_repo.latest_ts", lambda *args: datetime(2000, 1, 1, tzinfo=UTC))
+    monkeypatch.setattr("app.repositories.kline_repo.latest_ts", lambda db, period, sid:
+                        None if period == missing_period else datetime(2000, 1, 1, tzinfo=UTC))
     monkeypatch.setattr(watchlist_delivery, "get_session", lambda: db)
     monkeypatch.setattr(local_market_sync, "dispatch", Mock())
     monkeypatch.setattr(celery_app.control, "inspect", lambda **kwargs: SimpleNamespace(active=lambda: {}))
     queue = Mock()
     monkeypatch.setattr(watchlist_delivery, "queue_watchlist_sync", queue)
     assert watchlist_delivery.dispatch_watchlist_sync() == {"published": 0}
-    queue.assert_not_called()
+    if missing_period:
+        queue.assert_called_once()
+    else:
+        queue.assert_not_called()
 
 
 def test_postgres_upsert_replaces_old_qfq_prices_and_is_idempotent():

@@ -74,7 +74,7 @@ def test_sources_coexist_without_splicing_and_week_month_are_stored(monkeypatch)
                 rows = kline_repo.latest_bars(db, period, symbol.id)
                 assert [float(row.close) for row in rows] == [1]
             rows = market_service.get_kline(db, str(symbol.id), period, first, last)
-            assert [row['close'] for row in rows] == [1]
+            assert [row['close'] for row in rows] == [10, 20]
         for model in KLINE_MODELS.values():
             db.execute(delete(model).where(model.symbol_id == symbol.id, model.source == 'stockdb'))
         monkeypatch.setattr(market_policy, 'akshare_enabled', lambda: False)
@@ -84,6 +84,68 @@ def test_sources_coexist_without_splicing_and_week_month_are_stored(monkeypatch)
     finally:
         db.rollback()
         db.close()
+
+
+def test_fallback_window_and_indicator_warmup_use_the_same_source(monkeypatch):
+    from app.models.symbol import Symbol
+    from app.repositories import kline_repo
+    from app.services import indicator_service, market_service
+    from app.utils.db import get_session
+    db = get_session()
+    try:
+        symbol = Symbol(code='999993', name='window_source_'+uuid4().hex, type='stock', market='SSE')
+        db.add(symbol)
+        db.flush()
+        old, recent = datetime(2020, 1, 10, tzinfo=UTC), datetime(2026, 11, 5, tzinfo=UTC)
+        first, last = datetime(2020, 1, 1, tzinfo=UTC), datetime(2020, 1, 31, tzinfo=UTC)
+        for period in ('1d', '1w', '1mon'):
+            kline_repo.upsert_bars(db, period, symbol.id, [KlineBar(recent, 1, 1, 1, 1, 100, 1)])
+            kline_repo.upsert_bars(db, period, symbol.id, [KlineBar(old, 10, 10, 10, 10, 100, 1, 'akshare')])
+            monkeypatch.setattr(market_policy, 'akshare_enabled', lambda: False)
+            assert market_service.get_kline(db, str(symbol.id), period, first, last) == []
+            monkeypatch.setattr(market_policy, 'akshare_enabled', lambda: True)
+            assert market_service.get_kline(db, str(symbol.id), period, first, last)[0]['close'] == 10
+            assert kline_repo.latest_bars(db, period, symbol.id)[0].source == 'stockdb'
+
+        # A local warmup bar outside a remote-only requested window must not
+        # change the source used to compute the indicators shown on that chart.
+        tail = datetime(2026, 11, 6, tzinfo=UTC)
+        kline_repo.upsert_bars(db, '1d', symbol.id, [KlineBar(tail, 20, 20, 20, 20, 100, 1, 'akshare')])
+        monkeypatch.setattr(indicator_service, '_get_cache', lambda *a: None)
+        monkeypatch.setattr(indicator_service, '_set_cache', lambda *a: None)
+        rows = indicator_service.compute_indicators(db, str(symbol.id), '1d', ['macd'], start=tail, end=tail)
+        assert [row['close'] for row in rows] == [20]
+    finally:
+        db.rollback()
+        db.close()
+
+
+@pytest.mark.parametrize('asset_type', ['stock', 'etf'])
+@pytest.mark.parametrize('missing_period', ['1w', '1mon'])
+def test_stock_sdk_failure_aborts_initialization_before_any_write(monkeypatch, asset_type, missing_period):
+    from app.services import sync_service
+    bar = KlineBar(datetime(2026, 11, 5, tzinfo=UTC), 1, 2, 1, 2, 100, 200)
+    provider = SimpleNamespace(fetch_kline=lambda code, period, *args: [] if period == missing_period else [bar])
+    db = Mock()
+    db.execute.return_value.one.return_value = (None, None)
+    write = Mock()
+    monkeypatch.setattr(sync_service, '_write_bars', write)
+    symbol = SimpleNamespace(id=1, code='300502', name='example', type=asset_type, market='SZSE')
+    with pytest.raises(RuntimeError, match=missing_period):
+        sync_service._sync_symbol_klines(db, provider, symbol, bar.ts, bar.ts, False)
+    write.assert_not_called()
+
+
+@pytest.mark.parametrize('previous', [10, 0, None])
+def test_stored_industry_quote_restores_amplitude(monkeypatch, previous):
+    from app.services import local_quotes
+    from app.repositories import kline_repo
+    latest = SimpleNamespace(ts=datetime(2026, 11, 5, tzinfo=UTC), open=10, close=11,
+                             high=12, low=9, volume=100, amount=1000, source='stockdb')
+    bars = [latest] if previous is None else [SimpleNamespace(close=previous), latest]
+    monkeypatch.setattr(kline_repo, 'latest_bars', lambda *a, **kw: bars)
+    result = local_quotes.stored_quote(None, SimpleNamespace(id=1))
+    assert result['amplitude'] == (30 if previous else None)
 
 
 def test_snapshots_disabled_even_for_direct_service_calls(monkeypatch):

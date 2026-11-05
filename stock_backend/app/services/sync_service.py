@@ -76,8 +76,8 @@ def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetim
         bars = fetch(symbol_param, period, start, end, asset_type)
         if period == "1d" and not bars:
             raise RuntimeError(f"{sym.name} 的所有数据源均未返回日 K")
-        if sym.market == 'SW' and period in {'1w', '1mon'} and not bars:
-            raise RuntimeError(f'{sym.name} 的本地 {period} 数据暂不可用')
+        if asset_type in {'stock', 'etf', 'sw_index'} and period in {'1w', '1mon'} and not bars:
+            raise RuntimeError(f'{sym.name} 的 {period} 数据获取失败，未完成同步，请检查数据源后重试')
         if asset_type in {"stock", "etf"}:
             from sqlalchemy import func, select
             from app.models.kline import KLINE_MODELS
