@@ -1,11 +1,12 @@
 """Read-only RD queries for the independent stockdb index workspace."""
 
+import json
 from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from hashlib import sha256
 from threading import Lock
-from time import monotonic
 
 import httpx
 import numpy as np
@@ -48,6 +49,7 @@ class Snapshot:
     # Constituent index × session × OHLCV/amount/market cap.
     values: np.ndarray
     positions: dict
+    version: str = ""
     board_cache: dict = field(default_factory=dict)
     lock: Lock = field(default_factory=Lock)
 
@@ -105,6 +107,7 @@ class Snapshot:
 
 
 def _load_snapshot() -> Snapshot:
+    digest = sha256()
     with _client() as client:
         keys = _rd(client, "keys", "日k", k1="key:600519", k2="all:")
         dates = sorted(int(key.rsplit(":", 1)[-1]) for key in keys)
@@ -114,12 +117,16 @@ def _load_snapshot() -> Snapshot:
             dates = [date for date in dates if date >= start]
         if len(dates) < 2:
             raise StockDBError("本地 stockdb 中缺少可用的日 K 数据。")
+        raw_boards = _rd(client, "get", "板块*")
+        digest.update(json.dumps(raw_boards, ensure_ascii=False, separators=(",", ":")).encode())
         boards = {
-            board["code"]: board for _, board in _rd(client, "get", "板块*")
+            board["code"]: board for _, board in raw_boards
             if board["category"] in CATEGORIES.values()
         }
         factors = defaultdict(list)
-        for key, cumulative in _rd(client, "get", "复权*", ap="get.cum"):
+        raw_factors = _rd(client, "get", "复权*", ap="get.cum")
+        digest.update(json.dumps(raw_factors, separators=(",", ":")).encode())
+        for key, cumulative in raw_factors:
             _, code, date = key.split(":")
             if cumulative and cumulative > 0:
                 factors[code].append((int(date), cumulative))
@@ -127,6 +134,7 @@ def _load_snapshot() -> Snapshot:
         for prefix in ("0", "3", "6", "8", "9"):
             batch = _rd(client, "vals", "日k", k1=f"qz:{prefix}",
                         k2=f"fwd:{dates[0]},{dates[-1]}", ap=f"get.{BAR_FIELDS}")
+            digest.update(json.dumps(batch, ensure_ascii=False, separators=(",", ":")).encode())
             for row in batch:
                 if len(row) == 12 and all(row[3:7]) and row[0] and row[1]:
                     rows[row[1]].append(row)
@@ -160,21 +168,13 @@ def _load_snapshot() -> Snapshot:
             latest_name = name or code
         if latest_bar is not None:
             stocks[code] = {"name": latest_name, "latest": latest_bar, "bars": bars}
-    return Snapshot(dates, boards, stocks, values, positions)
-
-
-_snapshot_lock = Lock()
-_snapshot: Snapshot | None = None
-_expiry = 0.0
+    return Snapshot(dates, boards, stocks, values, positions, "v2-" + digest.hexdigest()[:24])
 
 
 def snapshot() -> Snapshot:
-    global _snapshot, _expiry
-    with _snapshot_lock:
-        if _snapshot is None or monotonic() >= _expiry:
-            _snapshot = _load_snapshot()
-            _expiry = monotonic() + CACHE_SECONDS
-        return _snapshot
+    from app.services.stockdb_cache import get_snapshot
+
+    return get_snapshot()
 
 
 def minutes(code: str, date: int) -> list:

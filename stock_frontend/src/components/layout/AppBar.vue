@@ -7,11 +7,21 @@
  */
 import NotificationBell from '@/components/layout/NotificationBell.vue'
 import UserMenu from '@/components/layout/UserMenu.vue'
+import { onBeforeUnmount, onMounted } from 'vue'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
 
 const theme = useThemeStore()
 const user = useUserStore()
+function prepareBlueprint() {
+  void import('@/api/stockdbCache').then(({ prepareStockDbHome }) => prepareStockDbHome())
+  void import('@/views/StockDbView.vue')
+}
+let prepareTimer: ReturnType<typeof setTimeout> | undefined
+onMounted(() => {
+  if (location.pathname !== '/stockdb') prepareTimer = setTimeout(prepareBlueprint, 1500)
+})
+onBeforeUnmount(() => clearTimeout(prepareTimer))
 </script>
 
 <template>
@@ -25,7 +35,7 @@ const user = useUserStore()
       <RouterLink to="/" class="appbar__link">行情</RouterLink>
       <RouterLink to="/ai" class="appbar__link">AI 策略</RouterLink>
       <RouterLink v-if="user.user?.username === 'root' && user.user.is_admin" to="/admin" class="appbar__link">管理后台</RouterLink>
-      <RouterLink to="/stockdb" class="appbar__link">指数蓝图</RouterLink>
+      <RouterLink to="/stockdb" class="appbar__link" @pointerenter="prepareBlueprint" @focus="prepareBlueprint">指数蓝图</RouterLink>
     </nav>
 
     <div class="appbar__right">
