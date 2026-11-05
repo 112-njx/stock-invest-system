@@ -20,7 +20,6 @@ const open = ref(false)
 const composing = ref(false)
 const loading = ref(false)
 const error = ref(false)
-const stale = ref(false)
 const adding = ref('')
 const active = ref(-1)
 const scrollTop = ref(0)
@@ -56,7 +55,6 @@ async function loadDirectory(force = false) {
               cached.items.every((s) => s.type === 'stock' && typeof s.code === 'string' && typeof s.name === 'string')) {
             directory.value = cached
             stocks.value = search.indexStocks(cached.items)
-            stale.value = true
           }
         } catch { /* An unavailable browser cache must not prevent the live request. */ }
       }
@@ -64,11 +62,10 @@ async function loadDirectory(force = false) {
       if (!alive) return
       if (directory.value?.version !== fresh.version) stocks.value = search.indexStocks(fresh.items)
       directory.value = fresh
-      stale.value = fresh.stale
       lastFetched = Date.now()
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(fresh)) } catch { /* Storage can be disabled. */ }
     } catch {
-      if (alive) { error.value = true; stale.value = stocks.value.length > 0 }
+      if (alive) error.value = true
     } finally {
       loading.value = false
       inflight = undefined
@@ -150,12 +147,6 @@ onUnmounted(() => { alive = false; document.removeEventListener('pointerdown', c
       @compositionstart="composing = true" @compositionend="composing = false"
     />
     <div v-if="open" class="stock-search__dropdown">
-      <div class="stock-search__summary">
-        <span>股票 {{ results.length }} / {{ stocks.length }}</span>
-        <span v-if="loading">更新中…</span>
-        <span v-else-if="stale" class="stock-search__warning">缓存目录 · 数据可能已更新</span>
-        <span v-else>按代码排序</span>
-      </div>
       <div v-if="error" class="stock-search__message" role="status">
         {{ stocks.length ? '本地服务暂不可用，正在使用缓存目录' : '无法加载股票目录，请确认 stockdb 已启动' }}
         <button type="button" class="stock-search__retry" @click="loadDirectory(true)">重试</button>
@@ -184,7 +175,6 @@ onUnmounted(() => { alive = false; document.removeEventListener('pointerdown', c
           </button>
         </div>
       </div>
-      <div v-if="directory" class="stock-search__footer">本地股票目录 · 最新交易日 {{ directory.latest_session }}</div>
     </div>
   </div>
 </template>
@@ -195,7 +185,6 @@ onUnmounted(() => { alive = false; document.removeEventListener('pointerdown', c
 .stock-search__input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .stock-search__input::placeholder { color: var(--text-muted); }
 .stock-search__dropdown { position: absolute; right: 0; top: calc(100% + 6px); z-index: 100; width: min(460px, calc(100vw - 32px)); background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 6px; box-shadow: var(--shadow); overflow: hidden; }
-.stock-search__summary { display: flex; justify-content: space-between; padding: 9px 12px; color: var(--text-secondary); font-size: 12px; border-bottom: 1px solid var(--border); }
 .stock-search__heading, .stock-search__row { display: grid; grid-template-columns: 38px 64px minmax(0, 1fr) 30px 48px; align-items: center; gap: 8px; padding: 0 12px; text-align: left; }
 .stock-search__heading { height: 28px; background: var(--bg-panel-2); color: var(--text-muted); font-size: 11px; }
 .stock-search__list { overflow-y: auto; overscroll-behavior: contain; }
@@ -206,6 +195,4 @@ onUnmounted(() => { alive = false; document.removeEventListener('pointerdown', c
 .stock-search__action, .stock-search__retry { color: var(--accent); font-size: 11px; }
 .stock-search__message { padding: 12px; color: var(--text-secondary); font-size: 12px; }
 .stock-search__retry { margin-left: 8px; }
-.stock-search__warning { color: #d99b32; }
-.stock-search__footer { padding: 7px 12px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border); }
 </style>
