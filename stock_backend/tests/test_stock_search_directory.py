@@ -1,4 +1,5 @@
 from datetime import date
+from threading import Event, Thread
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -7,6 +8,14 @@ from app.core.exceptions import ApiError
 from app.data_providers.base import ProviderError
 from app.services import stock_search_directory as search
 from app.services import user_service
+
+
+@pytest.fixture(autouse=True)
+def reset_directory_cache(monkeypatch):
+    monkeypatch.setattr(search, "_snapshot", None)
+    monkeypatch.setattr(search, "_expires", 0)
+    monkeypatch.setattr(search, "_stale", False)
+    monkeypatch.setattr(search, "_refreshing", False)
 
 
 def bar(code, name="测试股票", day=20261105):
@@ -72,3 +81,94 @@ def test_stock_identifier_rejects_code_not_in_local_directory(monkeypatch):
     monkeypatch.setattr(search, "get_directory", lambda: {"items": []})
     with pytest.raises(ApiError):
         user_service._resolve_symbol_id(Mock(), "stock:510300")
+
+
+def test_expired_cache_returns_during_slow_single_background_refresh(monkeypatch):
+    started, release = Event(), Event()
+    workers = []
+
+    def slow_build(_provider):
+        started.set()
+        assert release.wait(3)
+        return {"version": "new", "items": [bar("000002")]}
+
+    def worker_factory(**kwargs):
+        worker = Thread(**kwargs)
+        workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(search, "_snapshot", {"version": "old", "items": [bar("000001")]})
+    build = Mock(side_effect=slow_build)
+    monkeypatch.setattr(search, "build_directory", build)
+    monkeypatch.setattr(search, "Thread", worker_factory)
+    try:
+        result = search.get_directory()
+        assert started.wait(1)
+        assert result["version"] == "old" and result["stale"] is True
+        # Refresh remains blocked, but readers (including watchlist resolution) do not.
+        for _ in range(3):
+            assert search.get_directory()["version"] == "old"
+        assert build.call_count == 1
+    finally:
+        release.set()
+        for worker in workers:
+            worker.join(3)
+            assert not worker.is_alive()
+    assert search.get_directory() == {"version": "new", "items": [bar("000002")], "stale": False}
+
+
+def test_failed_cold_cache_backs_off_instead_of_retrying_each_request(monkeypatch):
+    build = Mock(side_effect=ProviderError("offline"))
+    monkeypatch.setattr(search, "build_directory", build)
+    for _ in range(3):
+        with pytest.raises(ApiError) as error:
+            search.get_directory()
+        assert error.value.status_code == 503
+    assert build.call_count == 1
+
+
+def test_cold_refresh_does_not_hold_state_lock(monkeypatch):
+    started, release = Event(), Event()
+    results = []
+
+    def slow_build(_provider):
+        started.set()
+        assert release.wait(3)
+        return {"version": "new", "items": [bar("000001")]}
+
+    monkeypatch.setattr(search, "build_directory", slow_build)
+    worker = Thread(target=lambda: results.append(search.get_directory()))
+    worker.start()
+    try:
+        assert started.wait(1)
+        with pytest.raises(ApiError) as error:
+            search.get_directory()
+        assert error.value.status_code == 503
+    finally:
+        release.set()
+        worker.join(3)
+        assert not worker.is_alive()
+    assert results[0]["version"] == "new"
+
+
+def test_stock_insert_conflict_reuses_concurrent_creator(monkeypatch):
+    monkeypatch.setattr(search, "get_directory", lambda: {
+        "items": [{"code": "000001", "name": "平安银行", "market": "SZSE"}],
+    })
+    db = Mock()
+    db.scalar.side_effect = [None, None, SimpleNamespace(id=102805)]
+    assert user_service._resolve_symbol_id(db, "stock:000001") == 102805
+    statement = str(db.scalar.call_args_list[1].args[0])
+    assert "ON CONFLICT (type, name) DO NOTHING" in statement
+    db.rollback.assert_not_called()
+
+
+def test_stock_name_conflict_is_not_mistaken_for_same_code(monkeypatch):
+    monkeypatch.setattr(search, "get_directory", lambda: {
+        "items": [{"code": "000001", "name": "平安银行", "market": "SZSE"}],
+    })
+    db = Mock()
+    db.scalar.side_effect = [None, None, None]
+    with pytest.raises(ApiError) as error:
+        user_service._resolve_symbol_id(db, "stock:000001")
+    assert error.value.status_code == 409

@@ -5,7 +5,7 @@ import json
 import logging
 import math
 import re
-from threading import Lock
+from threading import Lock, Thread
 from time import monotonic
 
 from app.core.exceptions import ApiError
@@ -17,6 +17,7 @@ _lock = Lock()
 _snapshot: dict | None = None
 _expires = 0.0
 _stale = False
+_refreshing = False
 STOCK_CODE = re.compile(r"(?:00\d{4}|30\d{4}|60\d{4}|68\d{4}|920\d{3}|(?:43|83|87)\d{4})\Z")
 
 
@@ -69,20 +70,48 @@ def build_directory(provider: StockDBProvider) -> dict:
             "total": len(items), "candidate_count": len(codes), "excluded": excluded, "items": items}
 
 
+def _refresh_directory() -> None:
+    """Build outside the state lock so existing readers never wait on StockDB."""
+    global _snapshot, _expires, _stale, _refreshing
+    try:
+        snapshot = build_directory(StockDBProvider())
+    except Exception as exc:
+        logger.warning("stock search directory refresh failed: %s", exc)
+        with _lock:
+            _stale = True
+            _expires = monotonic() + 30
+            _refreshing = False
+    else:
+        with _lock:
+            _snapshot = snapshot
+            _stale = False
+            _expires = monotonic() + 300
+            _refreshing = False
+
+
 def get_directory() -> dict:
-    global _snapshot, _expires, _stale
+    global _expires, _refreshing, _stale
     with _lock:
-        if monotonic() >= _expires:
-            try:
-                snapshot = build_directory(StockDBProvider())
-            except (ProviderError, ValueError, TypeError, KeyError) as exc:
-                logger.warning("stock search directory refresh failed: %s", exc)
-                if _snapshot is None:
-                    raise ApiError(status_code=503, msg="无法读取本地股票目录，请确认 stockdb 已启动") from exc
-                _stale = True
-                _expires = monotonic() + 30
-            else:
-                _snapshot = snapshot
-                _stale = False
-                _expires = monotonic() + 300
+        expired = monotonic() >= _expires
+        if _snapshot is not None:
+            if expired and not _refreshing:
+                _refreshing = True
+                worker = Thread(target=_refresh_directory, name="stock-directory-refresh", daemon=True)
+                try:
+                    worker.start()
+                except RuntimeError:
+                    _refreshing = False
+                    _stale = True
+                    _expires = monotonic() + 30
+                    logger.exception("could not start stock directory refresh")
+            return {**_snapshot, "stale": _stale or expired or _refreshing}
+        if _refreshing or not expired:
+            raise ApiError(status_code=503, msg="本地股票目录尚未就绪，请稍后重试")
+        _refreshing = True
+
+    # Only a cold cache waits for I/O; concurrent callers return promptly above.
+    _refresh_directory()
+    with _lock:
+        if _snapshot is None:
+            raise ApiError(status_code=503, msg="无法读取本地股票目录，请确认 stockdb 已启动")
         return {**_snapshot, "stale": _stale}

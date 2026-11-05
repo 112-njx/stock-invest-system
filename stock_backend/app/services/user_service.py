@@ -202,6 +202,7 @@ def _resolve_symbol_id(db: Session, symbol: str) -> int:
     """解析标的（代码或 id），不存在抛 400。"""
     if symbol.startswith("stock:"):
         from sqlalchemy import select
+        from sqlalchemy.dialects.postgresql import insert
 
         from app.services.stock_search_directory import get_directory
 
@@ -211,11 +212,16 @@ def _resolve_symbol_id(db: Session, symbol: str) -> int:
             raise ApiError(status_code=400, code=40002, msg="股票没有有效的本地日 K 数据")
         stock = db.scalar(select(Symbol).where(Symbol.type == "stock", Symbol.code == code))
         if stock is None:
-            if symbol_repo.get_by_name(db, item["name"], "stock") is not None:
+            stock_id = db.scalar(
+                insert(Symbol).values(code=code, name=item["name"], type="stock", market=item["market"], is_catalog=True)
+                .on_conflict_do_nothing(index_elements=[Symbol.type, Symbol.name]).returning(Symbol.id)
+            )
+            if stock_id is not None:
+                return stock_id
+            # A concurrent creator may have committed while this insert waited.
+            stock = db.scalar(select(Symbol).where(Symbol.type == "stock", Symbol.code == code))
+            if stock is None:
                 raise ApiError(status_code=409, msg="股票名称与现有目录冲突，请同步本地目录后重试")
-            stock = Symbol(code=code, name=item["name"], type="stock", market=item["market"], is_catalog=True)
-            db.add(stock)
-            db.flush()
         return stock.id
     sym = symbol_repo.get_by_code(db, symbol)
     if sym:

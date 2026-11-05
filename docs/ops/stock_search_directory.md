@@ -25,16 +25,18 @@
 - `GET /api/v1/stocks/search-directory` 返回股票目录、版本、数量、排除原因及最新数据日期。
 - 股票身份由本地证券目录与沪深北 A 股代码范围共同限定；再校验实际日 K 的代码、名称、日期和 OHLC。ETF、基金、官方指数及板块不纳入。
 - 批量检查最新交易日日 K；缺失或无效时读取该股票最近 20 条日 K，保留有有效历史记录的股票。
-- 后端进程缓存 5 分钟；成功生成完整新目录后原子替换。刷新失败保留旧目录并标记 stale；没有缓存时返回 503。
+- 后端进程缓存 5 分钟；过期时立即返回旧目录并标记 stale，单个后台线程生成完整新目录后原子替换。刷新期间读取和添加关注不等待 stockdb；刷新失败保留旧目录并退避 30 秒。
+- 首次没有缓存时仅一个请求执行初始化；并发请求和初始化失败后的退避期返回 503，避免重复查询数据源。
 - 前端预加载并缓存目录；拼音由随构建打包的离线词典生成，无在线拼音服务。中文、全拼、首字母、代码匹配均在浏览器即时完成。
 - 下拉框按代码排序、显示目录序号，固定行高虚拟滚动；中文输入法组合输入时 Enter 不触发关注。
 - 添加关注传入 `stock:代码`，后端重新验证目录，明确按 stock 类型查找，防止与同码指数混淆。
+- 新股票使用 PostgreSQL `ON CONFLICT (type, name) DO NOTHING` 原子创建；并发创建同一股票时复用已有记录，同名异码仍返回 409。
 
 ## 验证命令
 
 ```powershell
 cd stock_backend
-.venv/Scripts/python.exe -m pytest tests/test_stock_search_directory.py tests/test_watchlist.py -q
+.venv/Scripts/python.exe -m pytest tests/test_stock_search_directory.py tests/test_stock_search_concurrency.py tests/test_watchlist.py -q
 cd ../stock_frontend
 npm run build
 node scripts/verify-stock-search.mjs

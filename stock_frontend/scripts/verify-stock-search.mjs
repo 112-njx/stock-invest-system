@@ -22,7 +22,12 @@ await build({
       `export const ${path.includes('authModal') ? 'useAuthModalStore' : path.includes('wsStore') ? 'useWsStore' : path.includes('user') ? 'useUserStore' : 'useMarketStore'} = () => globalThis.fixture.store`
     }))
     builder.onLoad({ filter: /StockSearch\.vue$/ }, async ({ path }) => {
-      const { descriptor } = parse(await readFile(path, 'utf8'), { filename: path })
+      // Control module arrival without replacing the real matcher or component logic.
+      const source = (await readFile(path, 'utf8')).replace(
+        "await import('@/utils/stockSearch')",
+        "await globalThis.fixture.loadMatcher(() => import('@/utils/stockSearch'))",
+      )
+      const { descriptor } = parse(source, { filename: path })
       return { contents: compileScript(descriptor, { id: 'search-test', inlineTemplate: true }).content, loader: 'ts' }
     })
   } }], logLevel: 'error',
@@ -33,10 +38,12 @@ const item = (code, name) => ({ code, name, type: 'stock', market: 'SSE', latest
 const items = [item('000001', '平安银行'), item('601398', '工商银行'), item('600519', '贵州茅台'), item('000625', '长安汽车'), item('601127', '赛力斯')]
 for (let i = 0; i < 5000; i++) items.push(item(String(300000 + i), `测试股票${i}`))
 const directory = { version: 'v1', source: 'stockdb', items, latest_session: '20261105', stale: false }
-globalThis.fixture = {
+const fixture = {
   picked: [], fetch: async () => directory,
+  loadMatcher: load => load(),
   store: { token: 'test', watchlist: [{ code: '000001', type: 'stock' }], addWatchlistItem() {}, syncSubscriptions() {}, show() {} },
 }
+globalThis.fixture = fixture
 const { Search, createApp, nextTick, indexStocks, filterStocks } = await import(pathToFileURL(output).href)
 const indexed = indexStocks(items.slice(0, 5))
 for (const query of ['工商', 'gongshang', 'gsyh', 'ＧＳＹＨ', '6013', '601398']) assert.equal(filterStocks(indexed, query)[0].code, '601398', query)
@@ -64,6 +71,26 @@ assert.match(document.querySelector('.stock-search__dropdown').textContent, /未
 await type(''); assert.equal(document.querySelectorAll('[role=option]').length, 18)
 document.querySelector('#outside').dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true })); await nextTick()
 assert.equal(input.getAttribute('aria-expanded'), 'false')
+input.click(); await nextTick()
+const scrolledList = document.querySelector('[role=listbox]')
+scrolledList.scrollTop = 3600
+scrolledList.dispatchEvent(new dom.window.Event('scroll'))
+await nextTick()
+assert.ok(Number.parseInt(document.querySelector('[role=option]').style.top) > 0)
+for (const close of ['outside', 'Escape']) {
+  if (close === 'outside') document.querySelector('#outside').dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true }))
+  else input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await nextTick()
+  input.click(); await nextTick()
+  assert.equal(document.querySelector('[role=listbox]').scrollTop, 0)
+  assert.equal(document.querySelector('[role=option]').style.top, '0px', 'reopened viewport must contain its rendered rows')
+  // Calling show() during keyboard navigation must not reset the active selection.
+  for (let i = 0; i < 100; i++) {
+    input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+  }
+  assert.ok(document.querySelector('[role=listbox]').scrollTop > 0)
+}
 app.unmount()
 fixture.fetch = async () => { throw new Error('offline') }
 const offlineApp = createApp(Search); offlineApp.mount('#app'); await settle()
@@ -75,4 +102,16 @@ const emptyApp = createApp(Search); emptyApp.mount('#app'); await settle()
 document.querySelector('input').focus(); await settle()
 assert.match(document.querySelector('.stock-search__dropdown').textContent, /无法加载股票目录/)
 emptyApp.unmount()
-console.log('Stock search: Chinese/pinyin/code, IME, keyboard, typed watchlist, virtualization and offline states passed.')
+fixture.fetch = async () => directory
+let releaseMatcher
+fixture.loadMatcher = load => new Promise(resolve => { releaseMatcher = () => resolve(load()) })
+const earlyApp = createApp(Search); earlyApp.mount('#app'); await nextTick()
+const earlyInput = document.querySelector('input')
+earlyInput.focus(); await nextTick()
+assert.match(document.querySelector('.stock-search__summary').textContent, /0 \/ 0/)
+releaseMatcher(); await settle()
+assert.match(document.querySelector('.stock-search__summary').textContent, /5005 \/ 5005/)
+earlyInput.value = 'gsyh'; earlyInput.dispatchEvent(new dom.window.Event('input', { bubbles: true })); await nextTick()
+assert.match(document.querySelector('[role=option]').textContent, /工商银行/)
+earlyApp.unmount()
+console.log('Stock search: matching, IME, keyboard, watchlist, virtualization, offline states, early focus and scroll reopening passed.')

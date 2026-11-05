@@ -26,14 +26,14 @@ const active = ref(-1)
 const scrollTop = ref(0)
 const stocks = shallowRef<IndexedStock[]>([])
 const directory = shallowRef<StockDirectory>()
-let matcher: typeof import('@/utils/stockSearch') | undefined
+const matcher = shallowRef<typeof import('@/utils/stockSearch')>()
 let inflight: Promise<void> | undefined
 let lastFetched = 0
 let alive = true
 const CACHE_KEY = 'stock-search-directory-v1'
 const ROW_HEIGHT = 36
 const VIEW_HEIGHT = 324
-const results = computed(() => matcher ? matcher.filterStocks(stocks.value, query.value) : [])
+const results = computed(() => matcher.value ? matcher.value.filterStocks(stocks.value, query.value) : [])
 const start = computed(() => Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - 4))
 const visible = computed(() => results.value.slice(start.value, start.value + 18))
 const watched = computed(() => new Set(market.watchlist.filter((s) => s.type === 'stock').map((s) => s.code)))
@@ -46,21 +46,23 @@ async function loadDirectory(force = false) {
     loading.value = true
     error.value = false
     try {
-      matcher = await import('@/utils/stockSearch')
+      const search = await import('@/utils/stockSearch')
+      if (!alive) return
+      matcher.value = search
       if (!directory.value) {
         try {
           const cached = JSON.parse(localStorage.getItem(CACHE_KEY) ?? 'null') as StockDirectory | null
           if (cached?.source === 'stockdb' && Array.isArray(cached.items) && cached.items.length &&
               cached.items.every((s) => s.type === 'stock' && typeof s.code === 'string' && typeof s.name === 'string')) {
             directory.value = cached
-            stocks.value = matcher.indexStocks(cached.items)
+            stocks.value = search.indexStocks(cached.items)
             stale.value = true
           }
         } catch { /* An unavailable browser cache must not prevent the live request. */ }
       }
       const fresh = await fetchStockDirectory()
       if (!alive) return
-      if (directory.value?.version !== fresh.version) stocks.value = matcher.indexStocks(fresh.items)
+      if (directory.value?.version !== fresh.version) stocks.value = search.indexStocks(fresh.items)
       directory.value = fresh
       stale.value = fresh.stale
       lastFetched = Date.now()
@@ -76,6 +78,10 @@ async function loadDirectory(force = false) {
 }
 
 function show() {
+  if (!open.value) {
+    active.value = -1
+    scrollTop.value = 0
+  }
   open.value = true
   void loadDirectory()
 }
