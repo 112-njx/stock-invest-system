@@ -71,6 +71,13 @@ def kline_backfill_status(task_id: str) -> dict:
     return ok(data={"status": "loading"})
 
 
+@router.get("/stocks/search-directory")
+def stock_search_directory() -> dict:
+    from app.services.stock_search_directory import get_directory
+
+    return ok(data=get_directory())
+
+
 @router.get("/symbols")
 def list_symbols(
     type_: str | None = Query(None, alias="type", description="stock/etf/index"),

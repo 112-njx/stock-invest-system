@@ -200,6 +200,23 @@ def ensure_admins(db: Session) -> None:
 
 def _resolve_symbol_id(db: Session, symbol: str) -> int:
     """解析标的（代码或 id），不存在抛 400。"""
+    if symbol.startswith("stock:"):
+        from sqlalchemy import select
+
+        from app.services.stock_search_directory import get_directory
+
+        code = symbol.removeprefix("stock:")
+        item = next((row for row in get_directory()["items"] if row["code"] == code), None)
+        if item is None:
+            raise ApiError(status_code=400, code=40002, msg="股票没有有效的本地日 K 数据")
+        stock = db.scalar(select(Symbol).where(Symbol.type == "stock", Symbol.code == code))
+        if stock is None:
+            if symbol_repo.get_by_name(db, item["name"], "stock") is not None:
+                raise ApiError(status_code=409, msg="股票名称与现有目录冲突，请同步本地目录后重试")
+            stock = Symbol(code=code, name=item["name"], type="stock", market=item["market"], is_catalog=True)
+            db.add(stock)
+            db.flush()
+        return stock.id
     sym = symbol_repo.get_by_code(db, symbol)
     if sym:
         return sym.id
