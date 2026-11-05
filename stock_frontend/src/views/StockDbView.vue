@@ -40,6 +40,8 @@ const category = ref<Category>(screen.value?.category ?? 'sw1')
 const weight = ref<Weight>(screen.value?.weight ?? 'equal')
 const days = ref(preferences.days)
 const sort = ref<'price' | 'return'>(preferences.sort)
+interface IndexOrder { days: number; sort: 'price' | 'return' }
+const displayedOrder = ref<IndexOrder>({ days: preferences.days, sort: preferences.sort })
 const memberSort = ref<'return' | 'price' | 'code'>(preferences.memberSort)
 const memberAscending = ref(preferences.memberAscending)
 const custom = ref(readCustom())
@@ -47,7 +49,7 @@ const ready = ref(false)
 const loading = ref(false)
 const refreshing = ref(false)
 const error = ref('')
-const pinnedBoard = ref(Boolean(screen.value?.boardId))
+const pinnedBoard = ref(screen.value?.pinnedBoard ?? false)
 const cardScroll = ref(0)
 const cards = ref<HTMLElement | null>(null)
 const boardList = ref<HTMLElement | null>(null)
@@ -75,10 +77,17 @@ const stockBars = computed(() => detail.value?.stockBars ?? [])
 const date = computed(() => screen.value?.date)
 const currentBoard = computed(() => boards.value.find((board) => board.id === boardId.value))
 
-function rank(items: Board[]) {
-  return items.map((board) => ({ ...board, change: board.changes[String(days.value)] ?? null })).sort((a, b) =>
-    (b[sort.value === 'price' ? 'price' : 'change'] ?? -Infinity) -
-    (a[sort.value === 'price' ? 'price' : 'change'] ?? -Infinity) || a.name.localeCompare(b.name, 'zh-CN'),
+function sameOrder(left: IndexOrder, right: IndexOrder) {
+  return left.days === right.days && left.sort === right.sort
+}
+function viewportStart(group: Category, method: Weight, order: IndexOrder) {
+  return shownCategory.value === group && shownWeight.value === method && sameOrder(order, displayedOrder.value)
+    ? firstCard.value : 0
+}
+function rank(items: Board[], order = displayedOrder.value) {
+  return items.map((board) => ({ ...board, change: board.changes[String(order.days)] ?? null })).sort((a, b) =>
+    (b[order.sort === 'price' ? 'price' : 'change'] ?? -Infinity) -
+    (a[order.sort === 'price' ? 'price' : 'change'] ?? -Infinity) || a.name.localeCompare(b.name, 'zh-CN'),
   )
 }
 const ranked = computed(() => rank(boards.value))
@@ -107,11 +116,12 @@ function workspaceKey(group: Category, method: Weight) {
   return 'workspace:' + group + ':' + method + (group === 'custom' ? ':' + JSON.stringify(custom.value) : '')
 }
 function rememberWorkspace(value: Workspace) {
-  screen.value = value
+  const saved = { ...value, pinnedBoard: pinnedBoard.value }
+  screen.value = saved
   clearTimeout(persistTimer)
   persistTimer = setTimeout(() => {
-    putCache('last-workspace', value)
-    putCache(workspaceKey(value.category, value.weight), value)
+    putCache('last-workspace', saved)
+    putCache(workspaceKey(saved.category, saved.weight), saved)
   }, 150)
 }
 function versionQuery(version: string) { return new URLSearchParams({ version }) }
@@ -151,8 +161,9 @@ async function loadDetail(id: string, version: string) {
   )
 }
 
-async function buildWorkspace(group: Category, method: Weight): Promise<Workspace> {
-  if (group === 'sw1' && method === 'equal' && sort.value === 'price' && !pinnedBoard.value) {
+async function buildWorkspace(group: Category, method: Weight, order: IndexOrder): Promise<Workspace> {
+  if (group === 'sw1' && method === 'equal' && order.sort === 'price' && !pinnedBoard.value &&
+    viewportStart(group, method, order) === 0) {
     const home = await fetchStockDb<Home>('/home')
     for (const [id, bars] of Object.entries(home.charts)) putCache(`curve:${home.version}:equal:${id}`, bars)
     return { ...home, category: group, weight: method }
@@ -167,8 +178,7 @@ async function buildWorkspace(group: Category, method: Weight): Promise<Workspac
     const charts: Record<string, Bar[]> = {}
     let version = ''
     let sessionDate = 0
-    let firstDetail: Members | undefined
-    const wanted = ownIndex(boardId.value)?.id ?? custom.value[0]!.id
+    const details: Record<string, Members> = {}
     // User-created sets are evaluated only while this category is open.
     for (const item of custom.value) {
       const payload = await fetchStockDb<BoardDetail & { date: number; detail: Members }>(
@@ -181,22 +191,24 @@ async function buildWorkspace(group: Category, method: Weight): Promise<Workspac
       const changes: Record<string, number | null> = {}
       for (const [period] of windows) changes[String(period)] = barReturn(bars, period)
       localBoards.push({ id: item.id, name: item.name, count: item.codes.length, price: bars.at(-1)?.[4] ?? null, changes })
-      if (item.id === wanted) firstDetail = payload.detail
+      details[item.id] = payload.detail
     }
+    const wanted = pinnedBoard.value && ownIndex(boardId.value)
+      ? boardId.value : rank(localBoards, order)[0]!.id
     return {
       version, date: sessionDate, category: group, weight: method, boards: localBoards, charts,
-      boardId: wanted, detail: firstDetail!,
+      boardId: wanted, detail: details[wanted]!,
     }
   }
 
   const ranking = await fetchStockDb<Ranking>(
     '/ranking?' + new URLSearchParams({ category: group, weight: method }),
   )
-  const ordered = rank(ranking.boards)
+  const ordered = rank(ranking.boards, order)
   const selected = pinnedBoard.value && ranking.boards.some((board) => board.id === boardId.value)
     ? boardId.value : ordered[0]?.id ?? ''
   const selectedStock = selected === boardId.value ? stockCode.value : ''
-  const start = screen.value?.category === group && screen.value.weight === method ? firstCard.value : 0
+  const start = viewportStart(group, method, order)
   const [charts, detail] = await Promise.all([
     curves(ranking.version, method, ordered.slice(start, start + 10).map((board) => board.id)),
     selected ? cachedStockDb<Members>(bundlePath(selected, ranking.version, selectedStock))
@@ -211,23 +223,44 @@ async function loadWorkspace(retry = true) {
   stockRequest++
   const group = category.value
   const method = weight.value
+  const order: IndexOrder = { days: days.value, sort: sort.value }
   loading.value = true
   error.value = ''
   clearHover()
   try {
     const saved = await readCache<Workspace>(workspaceKey(group, method))
     if (request !== workspaceRequest || disposed) return
-    if (saved && rank(saved.boards).slice(0, 10).every((board) => saved.charts[board.id]) &&
+    if (saved && rank(saved.boards, order).slice(0, 10).every((board) => saved.charts[board.id]) &&
+      saved.boardId === (pinnedBoard.value ? boardId.value : rank(saved.boards, order)[0]?.id ?? '') &&
       (saved.category !== shownCategory.value || saved.weight !== shownWeight.value || !screen.value)) {
       cardScroll.value = 0
       cards.value?.scrollTo(0, 0)
       boardList.value?.scrollTo(0, 0)
       screen.value = saved
+      displayedOrder.value = order
     }
-    const value = await buildWorkspace(group, method)
+    const value = await buildWorkspace(group, method, order)
     if (request !== workspaceRequest || disposed) return
-    const changed = shownCategory.value !== group || shownWeight.value !== method
+    // Scrolling can continue while the next generation is being prepared.
+    // Fill the current window before publishing, even if it moved during the request.
+    if (group !== 'custom') {
+      let start = viewportStart(group, method, order)
+      while (true) {
+        const ids = rank(value.boards, order).slice(start, start + 10).map((board) => board.id)
+        const missing = ids.filter((id) => !value.charts[id])
+        if (missing.length) {
+          value.charts = { ...value.charts, ...await curves(value.version, method, missing) }
+        }
+        if (request !== workspaceRequest || disposed) return
+        const next = viewportStart(group, method, order)
+        if (next === start) break
+        start = next
+      }
+    }
+    const changed = shownCategory.value !== group || shownWeight.value !== method ||
+      !sameOrder(order, displayedOrder.value)
     const previous = screen.value
+    displayedOrder.value = order
     rememberWorkspace({
       ...value,
       charts: previous?.version === value.version && previous.weight === value.weight
@@ -252,14 +285,19 @@ async function loadWorkspace(retry = true) {
 
 async function selectBoard(id: string) {
   const current = screen.value
-  if (!current || current.boardId === id) return
-  if (loading.value && (current.category !== category.value || current.weight !== weight.value)) return
+  if (!current) return
+  if (loading.value && (current.category !== category.value || current.weight !== weight.value ||
+    !sameOrder({ days: days.value, sort: sort.value }, displayedOrder.value))) return
   const request = ++memberRequest
   workspaceRequest++
   loading.value = false
   stockRequest++
   pinnedBoard.value = true
   clearHover()
+  if (current.boardId === id) {
+    rememberWorkspace(current)
+    return
+  }
   try {
     const own = ownIndex(id)
     const next = own ? (await loadDetail(id, current.version)).detail
@@ -277,11 +315,14 @@ async function selectBoard(id: string) {
 
 async function selectStock(code: string) {
   const current = screen.value
-  if (!current || current.detail.stockCode === code) return
-  if (loading.value && (current.category !== category.value || current.weight !== weight.value)) return
+  if (!current) return
+  if (loading.value && (current.category !== category.value || current.weight !== weight.value ||
+    !sameOrder({ days: days.value, sort: sort.value }, displayedOrder.value))) return
   const request = ++stockRequest
+  memberRequest++
   workspaceRequest++
   loading.value = false
+  if (current.detail.stockCode === code) return
   try {
     const response = await cachedStockDb<{ bars: Bar[] }>('/stocks/' + code + '?' + versionQuery(current.version))
     if (request !== stockRequest || disposed || screen.value?.version !== current.version ||
@@ -318,10 +359,7 @@ watch([category, weight, custom], ([group], previous) => {
   void loadWorkspace()
 })
 watch([days, sort], () => {
-  cardScroll.value = 0
-  cards.value?.scrollTo(0, 0)
-  boardList.value?.scrollTo(0, 0)
-  void visibleCurves()
+  if (ready.value) void loadWorkspace()
 })
 watch(firstCard, () => { void visibleCurves() })
 watch([days, sort, memberSort, memberAscending], () => {
@@ -449,7 +487,7 @@ onMounted(async () => {
     screen.value = saved
     category.value = saved.category
     weight.value = saved.weight
-    pinnedBoard.value = Boolean(previous?.boardId)
+    pinnedBoard.value = previous?.pinnedBoard ?? false
   }
   await nextTick()
   ready.value = true

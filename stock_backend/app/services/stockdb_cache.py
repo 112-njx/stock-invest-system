@@ -101,7 +101,8 @@ def _rebuild(force: bool = False) -> None:
     owns_lease = False
     try:
         state = _state()
-        if state and not force and time() - state["built_at"] < rd.CACHE_SECONDS and _restore(state):
+        restored = bool(state and _restore(state))
+        if restored and not force and time() - state["built_at"] < rd.CACHE_SECONDS:
             warm_home(_snapshot)
             _last_error = ""
             return
@@ -136,7 +137,9 @@ def _rebuild(force: bool = False) -> None:
             )
             if not published:
                 return
-            if published and state and state["version"] != candidate.version and state.get("previous"):
+            if state and state["version"] != candidate.version and state.get("previous") not in (
+                None, candidate.version, previous,
+            ):
                 redis.delete(_namespace + ":snapshot:" + state["previous"])
         if _snapshot is None or _snapshot.version != candidate.version:
             _snapshot = candidate
@@ -186,6 +189,12 @@ def status() -> dict:
 
 
 def prepare() -> None:
+    state = _state()
+    if state and _restore(state):
+        warm_home(_snapshot)
+        if time() - state["built_at"] >= rd.CACHE_SECONDS:
+            refresh()
+        return
     _rebuild()
     # Other API processes may be constructing the first shared generation.
     for _ in range(150):

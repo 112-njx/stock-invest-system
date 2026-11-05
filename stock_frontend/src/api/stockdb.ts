@@ -26,6 +26,7 @@ export interface Workspace {
   boards: Board[]
   charts: Record<string, Bar[]>
   boardId: string
+  pinnedBoard?: boolean
   detail: Members
 }
 export interface Home extends Omit<Workspace, 'category' | 'weight'> {}
