@@ -55,7 +55,9 @@ def test_symbols_fixed_indices(client: TestClient):
     body = resp.json()
     assert body["code"] == 0
     data = body["data"]
-    assert len(data) == 42
+    assert len(data) == 36
+    assert not {row["code"] for row in data} & {"N225", "KS11", "DJI", "IXIC", "INX", "XAU"}
+    assert sum(row["sort_order"] <= 8 for row in data) == 8
     sorts = [d["sort_order"] for d in data]
     assert sorts == sorted(sorts)
 
@@ -64,7 +66,7 @@ def test_home_indices_combines_ordered_symbols_and_snapshots(client: TestClient)
     resp = client.get("/api/v1/market/home-indices")
     assert resp.status_code == 200
     rows = resp.json()["data"]
-    assert len(rows) == 42
+    assert len(rows) == 36
     assert [row["sort_order"] for row in rows] == sorted(row["sort_order"] for row in rows)
     assert all(row["type"] == "index" and "snapshot" in row for row in rows)
     assert all(
