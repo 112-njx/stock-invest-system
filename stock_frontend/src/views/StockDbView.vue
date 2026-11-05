@@ -438,13 +438,15 @@ function save() {
 function removeCustom() { persist(custom.value.filter((item) => item.id !== customId.value)) }
 
 onMounted(async () => {
-  const saved = screen.value ?? await readCache<Workspace>('last-workspace')
+  const previous = screen.value ?? await readCache<Workspace>('last-workspace')
+  const preparedHome = previous ? undefined : await readCache<Home>('api:/home')
+  const saved = previous ?? (preparedHome ? { ...preparedHome, category: 'sw1' as const, weight: 'equal' as const } : undefined)
   if (disposed) return
   if (saved && category.value === (screen.value?.category ?? 'sw1') && weight.value === (screen.value?.weight ?? 'equal')) {
     screen.value = saved
     category.value = saved.category
     weight.value = saved.weight
-    pinnedBoard.value = Boolean(saved.boardId)
+    pinnedBoard.value = Boolean(previous?.boardId)
   }
   await nextTick()
   ready.value = true
