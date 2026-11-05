@@ -49,7 +49,7 @@ def kline_init(self, symbol_id: int | None = None, days: int | None = None) -> d
 def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict:
     """关注 A 股的首次初始化或日 K 增量与缺口修复。"""
     from app.models.ops import SyncTask
-    from app.repositories import kline_repo, user_repo
+    from app.repositories import user_repo
     from app.services import kline_quality_service
     from app.utils import market_cache
 
@@ -74,13 +74,9 @@ def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict
             result = sync_service.run_kline_init(symbol_id=symbol_id)
         else:
             result = sync_service.run_kline_incremental(symbol_id=symbol_id)
-        latest = kline_repo.latest_ts(db, "1d", symbol_id)
-        expected = kline_quality_service.last_completed_mainland_day(db)
-        if latest is None or expected is None or latest.astimezone(kline_quality_service.settings.tz).date() < expected:
-            raise RuntimeError(f"关注股票最新日 K 未更新到已完成交易日 {expected}")
         quality = kline_quality_service.get_quality(db, symbol_id, "1d")
         if quality is None or quality.status != "complete":
-            raise RuntimeError(f"关注股票历史日 K 仍有缺口：{quality.missing_count if quality else '未核验'}")
+            raise RuntimeError(f"关注股票历史日 K 暂不可用：{quality.missing_count if quality else '未核验'}")
         db.refresh(row)
         if row.celery_task_id != self.request.id:
             return {"skipped": "superseded delivery"}
@@ -146,6 +142,7 @@ def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: s
             return {"fetched": 0, "added": 0}
         symbol_param, asset_type = _provider_params(sym)
         source_period = "1d" if period in ("1w", "1mon") else period
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 5000000000 + symbol_id})
         bars, confirmed_empty = get_provider().fetch_kline_checked(
             symbol_param, source_period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
         )
@@ -203,7 +200,7 @@ def kline_init_fixed_indices(self) -> dict:
         logger.exception("kline_init_fixed_indices failed")
         _log("kline_init", self.request.id, "failed", str(exc))
         redis.set('provider:fixed-indices-retry', '1', ex=120)
-        raise self.retry(exc=exc, countdown=120, max_retries=None)
+        raise self.retry(exc=exc, countdown=120, max_retries=3)
     finally:
         redis.delete('provider:presync:queued')
         lock_conn.execute(text("SELECT pg_advisory_unlock(4000000001)"))
@@ -283,3 +280,11 @@ def provider_probe() -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("provider_probe failed: %s", exc)
         return {"probed": [], "error": str(exc)[:120]}
+
+
+@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.local_market_sync",
+                 acks_late=True, reject_on_worker_lost=True, soft_time_limit=6900, time_limit=7200)
+def local_market_sync(self) -> dict:
+    from app.services import local_market_sync as service
+
+    return service.run(self.request.id)

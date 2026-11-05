@@ -14,7 +14,7 @@ interface ProviderRequest {
   started_at: string; updated_at: string
 }
 const queueNames: Record<string, { label: string; description: string }> = {
-  watchlist: { label: '重点关注股票', description: '同步关注股票的 K 线与历史缺口' },
+  watchlist: { label: '重点关注股票', description: '初始化关注股票的前复权 K 线' },
   fixed_indices: { label: '固定指数', description: '补齐大盘和行业指数的行情数据' },
   backfill: { label: '历史补拉', description: '处理用户请求的历史 K 线区间' },
   control: { label: '任务协调', description: '检查关注股任务并恢复中断的投递' },
@@ -36,6 +36,24 @@ const queueError = ref('')
 const activeRequests = ref<ProviderRequest[]>([])
 const activityError = ref('')
 const activityLoading = ref(true)
+interface LocalSync { status: string; task_id: string | null; error: string | null; progress: number; message: string }
+const localSync = ref<LocalSync | null>(null)
+const localSyncSubmitting = ref(false)
+const localSyncError = ref('')
+async function loadLocalSync() {
+  try {
+    localSync.value = await request<LocalSync>({ url: '/admin/local-market/sync', silent: true })
+    localSyncError.value = ''
+  } catch { localSyncError.value = '本地行情同步状态读取失败' }
+}
+async function syncLocalMarket() {
+  localSyncSubmitting.value = true
+  try {
+    await request({ url: '/admin/local-market/sync', method: 'post' })
+    await loadLocalSync()
+  } catch { localSyncError.value = '提交同步失败，请稍后重试' }
+  finally { localSyncSubmitting.value = false }
+}
 let activityTimer: ReturnType<typeof setInterval> | undefined
 let activityInFlight = false
 
@@ -108,7 +126,8 @@ async function save() {
 onMounted(() => {
   void load()
   void loadActivity()
-  activityTimer = setInterval(() => void loadActivity(), 3000)
+  void loadLocalSync()
+  activityTimer = setInterval(() => { void loadActivity(); void loadLocalSync() }, 3000)
 })
 onUnmounted(() => { if (activityTimer) clearInterval(activityTimer) })
 </script>
@@ -117,6 +136,16 @@ onUnmounted(() => { if (activityTimer) clearInterval(activityTimer) })
   <main class="admin">
     <header><h1>系统管理</h1><button @click="load">刷新指标</button></header>
     <p v-if="error" class="error">{{ error }}</p>
+    <section>
+      <h2>本地行情手动同步</h2>
+      <p>先手动运行数据更新.exe，等待 Free-StockDB 更新完成，再同步证券目录、固定指数和关注标的的前复权 K 线。</p>
+      <button :disabled="localSyncSubmitting || localSync?.status === 'queued' || localSync?.status === 'running'" @click="syncLocalMarket">
+        {{ localSyncSubmitting || localSync?.status === 'queued' ? '等待同步…' : localSync?.status === 'running' ? '同步中…' : '同步本地行情数据' }}
+      </button>
+      <p v-if="localSync">{{ localSync.message }} · {{ localSync.progress }}%</p>
+      <p v-if="localSync?.task_id">任务 {{ localSync.task_id }}</p>
+      <p v-if="localSyncError || localSync?.error" class="error">{{ localSyncError || localSync?.error }}</p>
+    </section>
     <section v-if="!data"><h2>基础指标</h2><p>{{ loading ? '正在读取基础指标…' : '暂无基础指标，请刷新重试' }}</p></section>
     <template v-if="data">
       <section><h2>外部行情调用 · {{ data.day }}</h2>

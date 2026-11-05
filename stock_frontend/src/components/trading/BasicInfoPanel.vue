@@ -75,15 +75,6 @@ const specialFields = computed(() => {
       { label: '市盈率 PE', value: formatPrice(e.pe as number) },
     ]
   }
-  if (s.type === 'etf') {
-    const items: { label: string; value: string }[] = []
-    if (e.nav != null) items.push({ label: '净值', value: formatPrice(e.nav as number) })
-    if (e.premium != null) items.push({ label: '溢价率', value: formatPct(e.premium as number) })
-    return items
-  }
-  if (s.type === 'index') {
-    return [{ label: '指数PE', value: formatPrice(e.pe as number) }]
-  }
   return []
 })
 </script>

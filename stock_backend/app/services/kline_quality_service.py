@@ -121,63 +121,14 @@ def quality_dict(row: KlineQuality | None) -> dict:
 
 
 def check_and_repair(db, symbol, provider, *, now: datetime | None = None, full_watchlist_repair: bool = False) -> dict:
-    """检查境内固定指数及已关注 A 股日 K；不使用工作日猜测交易日。"""
-    if not eligible(symbol):
-        return {"status": "unsupported", "added": 0}
+    """Record available history coverage without calendar gap scans or automatic repairs."""
     now = now or datetime.now(UTC)
-    window_start = (now - timedelta(days=settings.KLINE_INIT_DAYS)).astimezone(settings.tz).date()
-    calendar = _calendar(db, window_start, now.astimezone(settings.tz).date())
-    last_day = _last_completed(calendar, now) if calendar else None
-    rows = list(db.scalars(select(Kline1d.ts).where(Kline1d.symbol_id == symbol.id, Kline1d.ts >= datetime.combine(window_start, time(), UTC)).order_by(Kline1d.ts)))
-    actual = {market_cache.as_utc(ts).date() for ts in rows}
-    checked_from = min(actual) if actual else window_start
-    expected = [day for day in (calendar or []) if checked_from <= day <= last_day] if last_day else []
-    missing = [day for day in expected if day not in actual]
-    before = len(missing)
-    added = 0
-    if calendar and last_day and missing:
-        from app.services.sync_service import _provider_params
-
-        symbol_param, asset_type = _provider_params(symbol)
-        for first, last in _ranges(missing, expected):
-            # 含两端缓冲，兼容提供器日期边界及周末。
-            from app.utils.redis_client import get_redis_client
-
-            redis = get_redis_client()
-            cooldown_key = f'provider:gap-cooldown:{symbol.id}:{first}:{last}'
-            if not full_watchlist_repair and not redis.set(cooldown_key, '1', nx=True, ex=86400):
-                continue
-            try:
-                required = {day for day in missing if first <= day <= last}
-                if full_watchlist_repair:
-                    start = datetime.combine(first - timedelta(days=1), time(), UTC)
-                    end = datetime.combine(last + timedelta(days=1), time(), UTC)
-                    bars = [bar for bar in provider.fetch_kline_all(symbol_param, "1d", start, end, asset_type)
-                            if market_cache.as_utc(bar.ts).date() in required]
-                else:
-                    bars = _fetch_gap_bars(provider, symbol_param, asset_type, first, last, required)
-                added += kline_repo.upsert_bars(db, "1d", symbol.id, bars)
-                if not full_watchlist_repair and {market_cache.as_utc(bar.ts).date() for bar in bars} >= required:
-                    redis.delete(cooldown_key)
-            except Exception:
-                db.rollback()
-                added = 0
-                break
-        db.commit()
-        actual = {market_cache.as_utc(ts).date() for ts in db.scalars(
-            select(Kline1d.ts).where(Kline1d.symbol_id == symbol.id, Kline1d.ts >= datetime.combine(window_start, time(), UTC))
-        )}
-        missing = [day for day in expected if day not in actual]
-        if added:
-            from app.services.indicator_service import invalidate_indicator_cache
-            from app.ws.publisher import publish_kline_refresh
-
-            market_cache.invalidate_kline_cache(symbol.id, "1d")
-            invalidate_indicator_cache(symbol.id, "1d")
-            invalidate_indicator_cache(symbol.id, "1w")
-            invalidate_indicator_cache(symbol.id, "1mon")
-            publish_kline_refresh(symbol.id, "1d")
-    status = "unknown" if not calendar or not last_day else "partial" if missing else "complete"
+    dates = list(db.scalars(select(Kline1d.ts).where(Kline1d.symbol_id == symbol.id).order_by(Kline1d.ts)))
+    checked_from = dates[0].date() if dates else None
+    last_day = dates[-1].date() if dates else None
+    status = "complete" if dates else "unknown"
+    missing = []
+    before = added = 0
     quality = get_quality(db, symbol.id, "1d")
     if quality is None:
         quality = KlineQuality(symbol_id=symbol.id, period="1d", status=status, checked_at=now)
@@ -188,7 +139,7 @@ def check_and_repair(db, symbol, provider, *, now: datetime | None = None, full_
     quality.missing_before = before
     quality.recovered = before - len(missing)
     quality.missing_count = len(missing)
-    quality.missing_ranges = [[a.isoformat(), b.isoformat()] for a, b in _ranges(missing, expected)]
+    quality.missing_ranges = []
     quality.checked_at = now
-    db.commit()
+    db.flush()
     return {"status": status, "added": added, "missing_before": before, "recovered": quality.recovered, "missing_count": len(missing)}

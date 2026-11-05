@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -18,12 +18,12 @@ def _model(period: str):
 
 
 def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) -> int:
-    """幂等写入：按 (symbol_id, ts) 冲突忽略（重复同步不产生脏数据）。"""
+    """幂等写入：按 (symbol_id, ts) 更新变化记录（支持前复权历史刷新）。"""
     if not bars:
         return 0
     model = _model(period)
-    rows = [
-        {
+    rows = list({
+        b.ts: {
             "symbol_id": symbol_id,
             "ts": b.ts,
             "open": b.open,
@@ -34,11 +34,18 @@ def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) 
             "amount": b.amount,
         }
         for b in bars
-    ]
-    stmt = pg_insert(model).values(rows)
-    stmt = stmt.on_conflict_do_nothing(index_elements=["symbol_id", "ts"])
-    result = db.execute(stmt)
-    return result.rowcount or 0
+    }.values())
+    changed = 0
+    for offset in range(0, len(rows), 1000):
+        stmt = pg_insert(model).values(rows[offset:offset + 1000])
+        fields = ("open", "high", "low", "close", "volume", "amount")
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["symbol_id", "ts"],
+            set_={field: getattr(stmt.excluded, field) for field in fields},
+            where=or_(*(getattr(model, field).is_distinct_from(getattr(stmt.excluded, field)) for field in fields)),
+        )
+        changed += db.execute(stmt).rowcount or 0
+    return changed
 
 
 def get_bars(

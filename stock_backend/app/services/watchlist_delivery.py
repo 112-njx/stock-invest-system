@@ -58,12 +58,13 @@ def dispatch_watchlist_sync() -> dict:
     sent = 0
     try:
         now = datetime.now(UTC)
-        from app.services.kline_quality_service import last_completed_mainland_day
         from app.worker.celery_app import celery_app
 
         active = celery_app.control.inspect(timeout=1).active() or {}
         active_ids = {task["id"] for tasks in active.values() for task in tasks}
-        expected_day = last_completed_mainland_day(db, now)
+        from app.services import local_market_sync
+
+        local_market_sync.dispatch(active_ids, bool(active))
         watched = list(db.scalars(select(UserWatchlist.symbol_id).distinct()))
         for symbol_id in watched:
             sym = db.get(Symbol, symbol_id)
@@ -75,9 +76,7 @@ def dispatch_watchlist_sync() -> dict:
             if not is_a_share_stock(sym):
                 continue
             quality = db.get(KlineQuality, (symbol_id, "1d"))
-            if quality is not None and quality.status == "complete" and (
-                expected_day is None or quality.checked_to is not None and quality.checked_to >= expected_day
-            ):
+            if quality is not None and quality.status == "complete":
                 if db.scalar(select(UserWatchlist.id).where(UserWatchlist.symbol_id == symbol_id,
                                                           UserWatchlist.sync_status != "done").limit(1)):
                     user_repo.update_watchlist_sync_status(db, symbol_id, "done")

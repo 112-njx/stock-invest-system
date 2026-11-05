@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
-from app.api.deps import get_read_db
+from app.api.deps import get_db, get_read_db
 from app.core.response import ok
 from app.data_providers.factory import get_provider
 from app.models.user import User, UserWatchlist
@@ -157,3 +157,23 @@ def trigger_catalog_sync(current: User = Depends(get_current_admin)) -> dict:
     """手动触发全量标的目录同步，返回任务 ID（异步执行）。"""
     task = catalog_sync.delay()
     return ok(data={"task_id": task.id, "status": "queued"}, msg="目录同步已提交")
+
+
+@router.post("/local-market/sync")
+def trigger_local_market_sync(current: User = Depends(get_current_admin)) -> dict:
+    from app.services import local_market_sync
+
+    result = local_market_sync.request_sync()
+    # The control worker also retries unpublished durable requests.
+    try:
+        local_market_sync.dispatch(set(), False)
+    except Exception:
+        logger.exception("manual local-market task remains queued for delivery")
+    return ok(data=result, msg="本地行情同步已提交")
+
+
+@router.get("/local-market/sync")
+def local_market_sync_status(current: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> dict:
+    from app.services import local_market_sync
+
+    return ok(data=local_market_sync.status(db))

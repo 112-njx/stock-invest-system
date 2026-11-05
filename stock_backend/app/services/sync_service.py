@@ -69,6 +69,8 @@ def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetim
     for period in ALL_PERIODS:
         fetch = provider.fetch_kline_all if watched_a_share and period == "1d" else provider.fetch_kline
         bars = fetch(symbol_param, period, start, end, asset_type)
+        if period == "1d" and not bars:
+            raise RuntimeError(f"{sym.name} 的所有数据源均未返回日 K")
         counts[period] = _write_bars(db, period, sym.id, bars)
     return counts
 
@@ -83,20 +85,9 @@ def _mark_watchlist_synced(db, symbol_id: int, status: str) -> None:
 
 # ---- V0.2 1.1 启动预同步 / 缓存预热 ----
 def stale_fixed_index_count(db) -> tuple[int, int]:
-    """统计缺少最新已完成交易日日 K 的境内固定指数；海外指数保留宽限判断。"""
-    from app.services import kline_quality_service
-
     symbols = symbol_repo.list_fixed_indices(db)
-    latest_day = kline_quality_service.last_completed_mainland_day(db)
-    threshold = datetime.now(UTC) - timedelta(days=7)
-    stale = 0
-    for sym in symbols:
-        ts = market_cache.as_utc(kline_repo.latest_ts(db, "1d", sym.id))  # DB naive → UTC
-        if ts is None or (
-            kline_quality_service.eligible(sym) and latest_day is not None and ts.date() < latest_day
-        ) or (not kline_quality_service.eligible(sym) and ts < threshold):
-            stale += 1
-    return stale, len(symbols)
+    missing = sum(kline_repo.latest_ts(db, "1d", sym.id) is None for sym in symbols)
+    return missing, len(symbols)
 
 
 def maybe_presync_fixed_indices() -> dict:
@@ -104,16 +95,7 @@ def maybe_presync_fixed_indices() -> dict:
     db = get_session()
     try:
         stale, total = stale_fixed_index_count(db)
-        from app.services import kline_quality_service
-
-        incomplete_quality = 0
-        for sym in symbol_repo.list_fixed_indices(db):
-            if not kline_quality_service.eligible(sym):
-                continue
-            quality = kline_quality_service.get_quality(db, sym.id, "1d")
-            if quality is None or quality.status != "complete":
-                incomplete_quality += 1
-        if stale == 0 and incomplete_quality == 0:
+        if stale == 0:
             return {"triggered": False, "stale": 0, "total": total}
         from app.utils.redis_client import get_redis_client
 
@@ -132,7 +114,7 @@ def maybe_presync_fixed_indices() -> dict:
             "queued",
             0,
             total,
-            f"检测到 {stale} 个指数无/过期数据、{incomplete_quality} 个待核验/补洞，已触发预同步",
+            f"检测到 {stale} 个指数未初始化，已触发首次同步",
             started_at=datetime.now(UTC),
         )
         db.commit()
@@ -143,156 +125,58 @@ def maybe_presync_fixed_indices() -> dict:
 
 
 def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
-    """固定指数预同步：补齐固定大盘/行业指数全周期K线，进度写 sync_status（X/49）。
-
-    skip_existing=True（presync 默认）：只处理质量未完成或行情过期的标的；已有日 K
-    走缺口检查和修复，无日 K 才全量拉取。单个标的失败不影响其他标的。
-    skip_existing=False（/fetch-all 运维接口）：全部强制全量刷新。
-    数据源异常或全部被拉取标的 0 写入时收尾成 failed（而非无限 running），供前端降级展示库中已有数据。
-    """
+    """Initialize missing fixed symbols, or explicitly refresh their stored qfq history."""
     db = get_session()
     try:
-        provider = get_provider()
         symbols = symbol_repo.list_fixed_indices(db)
-        total = len(symbols)
-        if total == 0:
-            return {"synced": 0}
-        end = datetime.now(UTC)
-        start = end - timedelta(days=settings.KLINE_INIT_DAYS)
-        ensure_current_partitions(db)
-        ops_repo.upsert_sync_status(
-            db, "fixed_indices", "running", 0, total, "固定指数预同步开始", started_at=datetime.now(UTC)
-        )
+        ops_repo.upsert_sync_status(db, "fixed_indices", "running", 0, len(symbols), "固定指数同步开始")
         db.commit()
-        results: dict = {}
-        attempted = 0  # 实际发起拉取的标的数
-        written_total = 0  # 全部标的所有周期累计写入条数
-        incomplete = 0
-        from app.services import kline_quality_service
-
-        expected_day = kline_quality_service.last_completed_mainland_day(db)
-        for i, sym in enumerate(symbols, 1):
-            progress = int(i / total * 100)
-            latest = market_cache.as_utc(kline_repo.latest_ts(db, "1d", sym.id))
-            saved_quality = kline_quality_service.get_quality(db, sym.id, "1d")
-            complete = not kline_quality_service.eligible(sym) and latest is not None and latest >= end - timedelta(days=7)
-            complete = complete or saved_quality is not None and saved_quality.status == "complete" and (
-                expected_day is None or saved_quality.checked_to is not None and saved_quality.checked_to >= expected_day
-            ) and (latest is not None and (expected_day is None or latest.date() >= expected_day))
-            if skip_existing and complete:
-                results[sym.code or sym.name] = {"skipped": True}
+        result = {}
+        for number, sym in enumerate(symbols, 1):
+            if skip_existing and kline_repo.latest_ts(db, "1d", sym.id) is not None:
                 continue
-            attempted += 1
-            ops_repo.upsert_sync_task(db, "kline_init", sym.id, "running", datetime.now(UTC))
-            db.commit()
             try:
-                counts: dict = {}
-                if latest is None or not skip_existing:
-                    if sym.type == "index" and not sym.code:
-                        code = provider.resolve_index_code(sym.name)
-                        if code:
-                            symbol_repo.update_code(db, sym.id, code)
-                    for period in ALL_PERIODS:
-                        symbol_param, asset_type = _provider_params(sym)
-                        bars = provider.fetch_kline(symbol_param, period, start, end, asset_type)
-                        counts[period] = _write_bars(db, period, sym.id, bars)
-                        written_total += counts[period]
-                    db.commit()
-                quality = kline_quality_service.check_and_repair(db, sym, provider)
-                written_total += quality.get("added", 0)
-                refreshed = market_cache.as_utc(kline_repo.latest_ts(db, "1d", sym.id))
-                is_complete = (quality["status"] == "complete" if kline_quality_service.eligible(sym)
-                               else refreshed is not None and refreshed >= end - timedelta(days=7))
-                if not is_complete:
-                    incomplete += 1
-                ops_repo.upsert_sync_task(db, "kline_init", sym.id,
-                                          "success" if is_complete else "failed", datetime.now(UTC))
-                _mark_watchlist_synced(db, sym.id, "done" if is_complete else "failed")
-                snap = derive_snapshot_from_kline(db, sym)
-                if snap is not None:
-                    snap.extra["symbol_id"] = sym.id
-                    snapshot_repo.upsert_snapshot(db, snap)
-                    _cache_snapshot(sym.id, snap)
-                results[sym.code or sym.name] = counts | {"quality": quality["status"]}
+                result[str(sym.id)] = run_kline_init(symbol_id=sym.id)
             except Exception as exc:
-                db.rollback()
-                incomplete += 1
-                ops_repo.upsert_sync_task(db, "kline_init", sym.id, "failed", datetime.now(UTC))
-                results[sym.code or sym.name] = {"error": str(exc)[:200]}
-                logger.warning("fixed index sync failed: %s: %s", sym.name, exc)
-            ops_repo.upsert_sync_status(db, "fixed_indices", "running", progress, total,
-                                        f"已检查 {i}/{total}，仍缺 {incomplete} 个")
+                result[str(sym.id)] = {"error": str(exc)[:200]}
+            ops_repo.upsert_sync_status(db, "fixed_indices", "running", int(number / len(symbols) * 100),
+                                        len(symbols), f"已处理 {number}/{len(symbols)}")
             db.commit()
-        if attempted > 0 and written_total == 0 and incomplete:
-            # 数据源通但全部被拉取标的 0 写入（拉不到），收尾 failed 而非假 done
-            ops_repo.upsert_sync_status(
-                db,
-                "fixed_indices",
-                "failed",
-                100,
-                total,
-                "全量拉取失败：数据源未返回任何K线数据",
-                finished_at=datetime.now(UTC),
-            )
-            db.commit()
-            raise RuntimeError("fixed indices presync: data sources returned no K-line bars at all")
-        final_status = "partial" if incomplete else "done"
-        ops_repo.upsert_sync_status(
-            db, "fixed_indices", final_status, 100, total,
-            f"固定指数同步完成，{incomplete} 个境内指数数据不完整或未核验" if incomplete else "固定指数预同步完成",
-            finished_at=datetime.now(UTC),
-        )
+        failed = sum("error" in item for item in result.values())
+        ops_repo.upsert_sync_status(db, "fixed_indices", "partial" if failed else "done", 100, len(symbols),
+                                    f"固定指数同步结束，失败 {failed} 个", finished_at=datetime.now(UTC))
         db.commit()
-        return results
-    except Exception as exc:  # noqa: BLE001
-        # 收尾成 failed（前端据 failed 降级展示库中已有数据），失败原因由 Celery 任务层写 task_logs
-        try:
-            ops_repo.upsert_sync_status(
-                db,
-                "fixed_indices",
-                "failed",
-                0,
-                total if "total" in locals() else 0,
-                f"固定指数预同步失败: {exc}",
-                finished_at=datetime.now(UTC),
-            )
-            db.commit()
-        except Exception:  # noqa: BLE001 收尾失败不覆盖原始异常
-            logger.exception("failed to persist fixed_indices failed status")
-        raise
+        return result
     finally:
         db.close()
 
 
 # ---- V0.2 3.1 全量标的目录预同步 ----
-def run_catalog_sync() -> dict:
-    """全A股 + ETF 目录预同步：akshare 拉取 → 幂等 upsert symbols（is_catalog=True）。
-
-    数量校验：A股≥4800、ETF≥500，不达标返回 partial（调用方调度 1h 后重试）。
-    """
+def run_catalog_sync(force: bool = False) -> dict:
+    """Read the trusted local catalog first, falling back to the existing provider chain."""
     db = get_session()
     try:
         from app.utils.redis_client import get_redis_client
 
         redis = get_redis_client()
         daily_key = f'provider:catalog:done:{datetime.now(settings.tz):%Y%m%d}'
-        if redis.exists(daily_key):
+        if not force and redis.exists(daily_key):
             return {'status': 'done', 'skipped': 'already synced today'}
         provider = get_provider()
         ops_repo.upsert_sync_status(db, "catalog", "running", 0, 0, "全量目录同步开始", started_at=datetime.now(UTC))
         catalog = provider.fetch_catalog()
         stocks, etfs = catalog.get("stocks") or [], catalog.get("etfs") or []
-        added_stocks = symbol_repo.upsert_catalog_symbols(db, [(c, n, "stock", "SSE") for c, n in stocks])
-        added_etfs = symbol_repo.upsert_catalog_symbols(db, [(c, n, "etf", "SSE") for c, n in etfs])
+        added_stocks = symbol_repo.upsert_catalog_symbols(db, [(c, n, "stock", "SZSE" if c.startswith(("0", "3")) else "BSE" if c.startswith(("4", "8", "9")) else "SSE") for c, n in stocks])
+        added_etfs = symbol_repo.upsert_catalog_symbols(db, [(c, n, "etf", "SZSE" if c.startswith("1") else "SSE") for c, n in etfs])
         db.commit()
         # 搜索缓存失效：目录已更新
         market_cache.invalidate_search_cache()
         stock_count = symbol_repo.count_type(db, "stock")
         etf_count = symbol_repo.count_type(db, "etf")
-        partial = stock_count < 4800 or etf_count < 500
+        partial = not stocks and not etfs
         status = "partial" if partial else "done"
         message = f"A股 {stock_count} 只 / ETF {etf_count} 只，本次新增 stock={added_stocks} etf={added_etfs}" + (
-            "，未达标待 1h 后重试" if partial else ""
+            "，数据源未返回目录，待重试" if partial else ""
         )
         ops_repo.upsert_sync_status(
             db, "catalog", status, 100, stock_count + etf_count, message, finished_at=datetime.now(UTC)
@@ -313,11 +197,11 @@ def run_catalog_sync() -> dict:
 
 
 def maybe_catalog_sync() -> dict:
-    """启动检查：目录内 A 股 <4000 则触发 catalog_sync 任务（不阻塞启动）。"""
+    """首次启动时初始化空目录。"""
     db = get_session()
     try:
         count = symbol_repo.count_catalog_stocks(db)
-        if count >= 4000:
+        if count > 0:
             return {"triggered": False, "count": count}
         from app.worker.tasks.sync_tasks import catalog_sync
 
@@ -352,14 +236,14 @@ def warmup_fixed_indices_cache() -> dict:
 
 
 # ---- K线 ----
-def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dict:
+def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: datetime | None = None) -> dict:
     """首次全量历史K线：全标的多周期拉取并幂等入库；行业指数同步回填 code。"""
     db = get_session()
     try:
         from app.services import kline_quality_service
         provider = get_provider()
         days = days or settings.KLINE_INIT_DAYS
-        end = datetime.now(UTC)
+        end = end or datetime.now(UTC)
         start = end - timedelta(days=days)
         ensure_current_partitions(db)
         symbols: list[Symbol] = [db.get(Symbol, symbol_id)] if symbol_id else symbol_repo.list_kline_sync_symbols(db)
@@ -377,18 +261,36 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dic
                     symbol_repo.update_code(db, sym.id, code)
                     logger.info("backfill industry index code: %s -> %s", sym.name, code)
             watched_a_share = sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym)
-            counts = _sync_symbol_klines(db, provider, sym, start, end, watched_a_share)
+            from sqlalchemy import func, text
+            from app.models.kline import KLINE_MODELS
+
+            db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 5000000000 + sym.id})
+            oldest = [db.scalar(select(func.min(model.ts)).where(model.symbol_id == sym.id))
+                      for model in KLINE_MODELS.values()]
+            stored = [market_cache.as_utc(ts) for ts in oldest if ts is not None]
+            symbol_start = min([start, *stored])
+            counts = _sync_symbol_klines(db, provider, sym, symbol_start, end, watched_a_share)
             for period, added in counts.items():
                 logger.info("kline_init %s %s added=%d", sym.name, period, added)
-            quality = kline_quality_service.check_and_repair(db, sym, provider) if watched_a_share else {
-                "status": "unsupported"
-            }
+            quality = kline_quality_service.check_and_repair(db, sym, provider)
             complete = quality["status"] == "complete"
             ops_repo.upsert_sync_task(db, "kline_init", sym.id,
                                       "failed" if sym.id in watched_ids and not complete else "success", datetime.now(UTC))
             if sym.id in watched_ids:
                 _mark_watchlist_synced(db, sym.id, "done" if complete else "failed")
             db.commit()
+            from app.services.indicator_service import invalidate_indicator_cache
+            from app.ws.publisher import publish_kline_refresh
+
+            for user_id in db.scalars(select(UserWatchlist.user_id).where(UserWatchlist.symbol_id == sym.id).distinct()):
+                market_cache.invalidate_watchlist_cache(user_id)
+            # Readers may have refilled a cache before the import committed.
+            for period, changed in counts.items():
+                if changed:
+                    for affected in (("1d", "1w", "1mon") if period == "1d" else (period,)):
+                        market_cache.invalidate_kline_cache(sym.id, affected)
+                        invalidate_indicator_cache(sym.id, affected)
+                    publish_kline_refresh(sym.id, period)
             results[sym.code or sym.name] = counts
         return results
     finally:
@@ -396,56 +298,8 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None) -> dic
 
 
 def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> dict:
-    """每日收盘后增量：近 back_days 天多周期K线拉取并幂等入库。"""
-    db = get_session()
-    try:
-        from app.services import kline_quality_service
-        provider = get_provider()
-        end = datetime.now(UTC)
-        start = end - timedelta(days=back_days)
-        ensure_current_partitions(db)
-        symbols: list[Symbol] = [db.get(Symbol, symbol_id)] if symbol_id else symbol_repo.list_kline_sync_symbols(db)
-        from sqlalchemy import select
-
-        watched_ids = set(db.scalars(select(UserWatchlist.symbol_id).distinct()))
-        results: dict = {}
-        incomplete = 0
-        for sym in symbols:
-            if sym is None:
-                continue
-            ops_repo.upsert_sync_task(db, "kline_incremental", sym.id, "running", datetime.now(UTC))
-            db.commit()
-            watched_a_share = sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym)
-            counts = _sync_symbol_klines(db, provider, sym, start, end, watched_a_share)
-            db.commit()
-            quality = kline_quality_service.check_and_repair(
-                db, sym, provider,
-                full_watchlist_repair=watched_a_share,
-            ) if (
-                sym.is_fixed_index or sym.id in watched_ids
-            ) else {"status": "unsupported"}
-            ops_repo.upsert_sync_task(
-                db, "kline_incremental", sym.id,
-                "failed" if sym.id in watched_ids and quality["status"] != "complete" else "success",
-                datetime.now(UTC),
-            )
-            if sym.id in watched_ids:
-                _mark_watchlist_synced(db, sym.id, "done" if quality["status"] == "complete" else "failed")
-            db.commit()
-            if sym.is_fixed_index and quality["status"] in ("partial", "unknown"):
-                incomplete += 1
-            results[sym.code or sym.name] = counts
-        if symbol_id is None:
-            ops_repo.upsert_sync_status(
-                db, "fixed_indices", "partial" if incomplete else "done", 100,
-                len([s for s in symbols if s.is_fixed_index]),
-                f"每日同步完成，{incomplete} 个境内指数数据不完整或未核验",
-                finished_at=datetime.now(UTC),
-            )
-            db.commit()
-        return results
-    finally:
-        db.close()
+    """Compatibility entry point for explicitly requested watchlist refreshes."""
+    return run_kline_init(symbol_id=symbol_id)
 
 
 # ---- 实时快照 ----
@@ -462,18 +316,7 @@ def run_realtime_poll(symbol_id: int | None = None) -> dict:
         req = [RealtimeSymbol(code=sym.code, name=sym.name, asset_type=_provider_params(sym)[1]) for sym in symbols]
         quotes = provider.fetch_realtime(req)
 
-        # 指数 PE：乐咕 best-effort（仅覆盖可取 A 股指数，其余 None 留空），失败不阻塞主链路
-        index_names = [
-            sym.name
-            for sym, q in zip(symbols, quotes, strict=True)
-            if _provider_params(sym)[1] == "index" and q.available
-        ]
-        index_pe: dict[str, float | None] = {}
-        if index_names:
-            try:
-                index_pe = provider.fetch_index_pe(index_names) or {}
-            except Exception:  # noqa: BLE001
-                logger.warning("fetch_index_pe failed, skip index PE this round")
+        index_pe = {}
 
         synced = 0
         for sym, quote in zip(symbols, quotes, strict=True):

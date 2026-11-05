@@ -12,7 +12,7 @@ from app.core.exceptions import ApiError
 from app.core.response import ok
 from app.models.symbol import Symbol
 from app.models.user import User
-from app.repositories import ops_repo, user_repo
+from app.repositories import kline_repo, ops_repo, user_repo
 from app.schemas.market import KlineBarOut, SnapshotOut, SymbolOut, SymbolSearchOut
 from app.services import market_service, sync_service
 from app.utils import market_cache
@@ -143,6 +143,10 @@ def get_kline_quality(
     if period != "1d" or not kline_quality_service.eligible(sym):
         return ok(data={"status": "unsupported", "missing_count": 0, "missing_ranges": [], "checked_at": None})
     data = kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period))
+    latest = kline_repo.latest_ts(db, period, sym.id)
+    data.update(status="complete" if latest else "unchecked", missing_count=0, missing_ranges=[])
+    if latest:
+        data["checked_to"] = latest.date().isoformat()
     tasks = [ops_repo.latest_sync_task(db, kind, sym.id) for kind in ('kline_incremental', 'kline_init')]
     symbol_syncing = any(
         task is not None and task.status in {'queued', 'running'} and task.last_run_at is not None

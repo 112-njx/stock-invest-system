@@ -97,10 +97,17 @@ def upsert_catalog_symbols(db: Session, items: list[tuple[str, str, str, str]]) 
         key = (type_, name)
         if key in seen:
             continue
-        existing = db.scalar(select(Symbol).where(Symbol.type == type_, Symbol.name == name))
+        existing = db.scalar(select(Symbol).where(Symbol.type == type_, Symbol.code == code))
+        if existing is None:
+            existing = db.scalar(select(Symbol).where(Symbol.type == type_, Symbol.name == name))
         if existing:
-            if not existing.name:
+            conflict = db.scalar(select(Symbol.id).where(Symbol.type == type_, Symbol.name == name,
+                                                          Symbol.id != existing.id))
+            if conflict is None:
                 existing.name = name
+            existing.market = market
+            if not existing.code:
+                existing.code = code
             seen.add(key)
             continue
         db.add(Symbol(code=code, name=name, type=type_, market=market or "SSE", is_catalog=True))

@@ -1,6 +1,6 @@
 """数据源工厂：优先级链 + 独立熔断（行情源可插拔）。
 
-- 有序 Provider 链（默认 eastmoney → sina → ths），顺序/启用由 `DATA_PROVIDER_PRIORITY` 配置。
+- 有序 Provider 链（默认 stockdb → eastmoney → sina → ths），顺序/启用由 `DATA_PROVIDER_PRIORITY` 配置。
 - 每个 Provider 独立熔断：连续失败 N 次熔断 M 秒，熔断期内跳过，半开探测自动恢复，互不影响。
 - 业务代码仍通过 `get_provider()` 获取工厂实例，`fetch_kline/fetch_realtime/resolve_index_code/fetch_index_pe`
   调用方式与单 Provider 一致，不影响现有同步链路。
@@ -19,10 +19,12 @@ from .request_activity import kline_scope, realtime_scope
 from .eastmoney import EastMoneyProvider
 from .sina import SinaProvider
 from .ths import THSProvider
+from .stockdb import StockDBProvider
 
 logger = logging.getLogger(__name__)
 
 PROVIDER_REGISTRY: dict[str, type[BaseDataProvider]] = {
+    "stockdb": StockDBProvider,
     "eastmoney": EastMoneyProvider,
     "sina": SinaProvider,
     "ths": THSProvider,
@@ -158,34 +160,8 @@ class DataProviderFactory:
         return [], confirmed and attempted
 
     def fetch_kline_all(self, symbol: str, period: str, start, end, asset_type: str = "stock") -> list:
-        """关注股日 K：股票仅请求首个适用来源；其他资产合并可用来源。"""
-        merged = {}
-        for p in self._providers:
-            if not p.can_fetch_kline(asset_type, period):
-                continue
-            circuit = self._circuits[p.name]
-            now = time.time()
-            with self._lock:
-                allowed = circuit.allow(now)
-            if not allowed:
-                if asset_type == "stock":
-                    break
-                continue
-            try:
-                with kline_scope(symbol, period, start, end, asset_type):
-                    bars = p.fetch_kline(symbol, period, start, end, asset_type)
-                if bars:
-                    with self._lock:
-                        circuit.record_success(now)
-                    for bar in bars:
-                        merged.setdefault(bar.ts, bar)
-            except Exception as exc:  # noqa: BLE001
-                with self._lock:
-                    circuit.record_failure(now)
-                logger.warning("[provider] %s watchlist fetch failed: %s", p.name, str(exc)[:120])
-            if asset_type == "stock":
-                break
-        return [merged[ts] for ts in sorted(merged)]
+        """Use the same local-first fallback for watchlist initialization and history reads."""
+        return self.fetch_kline(symbol, period, start, end, asset_type)
 
     def fetch_realtime(self, symbols) -> list:
         """实时快照：按资产类型分组逐类型走优先级链（首个含 available 结果的 Provider 覆盖该类型）。
@@ -319,6 +295,11 @@ class DataProviderFactory:
                 continue
             try:
                 end = datetime.now(UTC)
+                if p.name == "stockdb":
+                    latest = p.latest_day()
+                    if latest is None:
+                        continue
+                    end = datetime.combine(latest, datetime.max.time(), UTC)
                 start = end - timedelta(days=5)
                 with kline_scope(p.probe_symbol, "1d", start, end, p.probe_asset_type):
                     bars = p.fetch_kline(p.probe_symbol, "1d", start, end, p.probe_asset_type)

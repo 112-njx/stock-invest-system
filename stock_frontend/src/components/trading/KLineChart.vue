@@ -113,8 +113,8 @@ const qualityWarning = computed(() => {
     const ranges = quality.value.missing_ranges.slice(0, 2).map((r) => r.join('～')).join('、')
     return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${retryRemaining.value > 0 ? `${retryRemaining.value} 秒后同步` : quality.value.sync_status === 'syncing' ? '更新中' : '暂未同步'}`
   }
-  if (quality.value?.status === 'unknown') return '交易日历不可用，历史数据未能核验'
-  if (quality.value?.status === 'unchecked') return '历史数据尚未核验'
+  if (quality.value?.status === 'unknown') return '暂无可用历史数据，请在管理后台同步'
+  if (quality.value?.status === 'unchecked') return '历史数据尚未初始化'
   return ''
 })
 const currentPrice = computed(() => props.symbol ? market.snapshots[props.symbol.id]?.price : null)
