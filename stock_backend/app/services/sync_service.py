@@ -68,6 +68,72 @@ def _write_bars(db, period: str, symbol_id: int, bars) -> int:
     return added
 
 
+def _validate_qfq_coverage(db, period, sym, bars):
+    from app.services.market_policy import history_storage_enabled
+    if sym.type not in {'stock', 'etf'} or (bars and bars[0].source == 'akshare' and not history_storage_enabled()):
+        return
+    from sqlalchemy import func, select
+    from app.models.kline import KLINE_MODELS
+
+    model = KLINE_MODELS[period]
+    first, last = db.execute(select(func.min(model.ts), func.max(model.ts)).where(
+        model.symbol_id == sym.id, model.source == (bars[0].source if bars else "stockdb")
+    )).one()
+    def boundary(ts):
+        stamp = market_cache.as_utc(ts)
+        if period == '1w':
+            return (stamp - timedelta(days=stamp.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        if period == '1mon':
+            return stamp.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return stamp
+    # A qfq refresh must replace the whole stored range in one transaction.
+    # A stale local source must never rebase the prefix while leaving a newer tail.
+    if first is not None and (not bars or
+            min(boundary(bar.ts) for bar in bars) > boundary(first) or
+            max(boundary(bar.ts) for bar in bars) < boundary(last)):
+        logger.warning("qfq coverage_rejected symbol=%s period=%s stored=%s..%s",
+                       sym.code, period, first, last)
+        raise RuntimeError(
+            f"{sym.name} 的 {period} 数据未覆盖库中已有历史，已阻止覆盖以保护前复权基准；"
+            "请先运行数据更新.exe 更新 Free-StockDB 后重试"
+        )
+
+
+def prepare_history_window(db, sym, period, start, end, *, initial=False):
+    """Prepare a worker window atomically, refreshing the complete stored qfq range."""
+    from sqlalchemy import func, select, text
+    from app.models.kline import KLINE_MODELS
+    from app.services import market_policy, source_history
+
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 5000000000 + sym.id})
+    model = KLINE_MODELS[period]
+    sources = ['stockdb', 'akshare'] if market_policy.history_storage_enabled() else ['stockdb']
+    first, last = db.execute(select(func.min(model.ts), func.max(model.ts)).where(
+        model.symbol_id == sym.id, model.source.in_(sources))).one()
+    start = min(start, market_cache.as_utc(first)) if first is not None else start
+    end = max(end, market_cache.as_utc(last)) if last is not None else end
+    code, asset = _provider_params(sym)
+    provider = get_provider()
+    bars, confirmed = provider.fetch_kline_checked(code, period, start, end, asset)
+    if not bars and initial:
+        # A recent empty window does not imply that a suspended/delisted security
+        # has no older history. Only initial chart loading expands this far.
+        bars, confirmed = provider.fetch_kline_checked(code, period, source_history.FIRST, end, asset)
+    if not bars and not confirmed:
+        raise RuntimeError('历史行情源不可用，请检查本地行情服务')
+    _validate_qfq_coverage(db, period, sym, bars)
+    added = _write_bars(db, period, sym.id, bars)
+    db.commit()
+    if bars:
+        # A query may have cached an empty/old series before this transaction committed.
+        from app.services.indicator_service import invalidate_indicator_cache
+        from app.ws.publisher import publish_kline_refresh
+        market_cache.invalidate_kline_cache(sym.id, period)
+        invalidate_indicator_cache(sym.id, period)
+        publish_kline_refresh(sym.id, period)
+    return {'fetched': len(bars), 'added': added, 'confirmed_empty': confirmed if not bars else False}
+
+
 def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetime,
                         watched_a_share: bool) -> dict[str, int]:
     symbol_param, asset_type = _provider_params(sym)
@@ -79,33 +145,7 @@ def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetim
             raise RuntimeError(f"{sym.name} 的所有数据源均未返回日 K")
         if asset_type in {'stock', 'etf', 'sw_index'} and period in {'1w', '1mon'} and not bars:
             raise RuntimeError(f'{sym.name} 的 {period} 数据获取失败，未完成同步，请检查数据源后重试')
-        from app.services.market_policy import history_storage_enabled
-        if asset_type in {"stock", "etf"} and not (bars and bars[0].source == 'akshare' and not history_storage_enabled()):
-            from sqlalchemy import func, select
-            from app.models.kline import KLINE_MODELS
-
-            model = KLINE_MODELS[period]
-            first, last = db.execute(select(func.min(model.ts), func.max(model.ts)).where(
-                model.symbol_id == sym.id, model.source == (bars[0].source if bars else "stockdb")
-            )).one()
-            def boundary(ts):
-                stamp = market_cache.as_utc(ts)
-                if period == '1w':
-                    return (stamp - timedelta(days=stamp.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-                if period == '1mon':
-                    return stamp.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                return stamp
-            # A qfq refresh must replace the whole stored range in one transaction.
-            # A stale local source must never rebase the prefix while leaving a newer tail.
-            if first is not None and (not bars or
-                    min(boundary(bar.ts) for bar in bars) > boundary(first) or
-                    max(boundary(bar.ts) for bar in bars) < boundary(last)):
-                logger.warning("qfq coverage_rejected symbol=%s period=%s stored=%s..%s",
-                               sym.code, period, first, last)
-                raise RuntimeError(
-                    f"{sym.name} 的 {period} 数据未覆盖库中已有历史，已阻止覆盖以保护前复权基准；"
-                    "请先运行数据更新.exe 更新 Free-StockDB 后重试"
-                )
+        _validate_qfq_coverage(db, period, sym, bars)
         fetched[period] = bars
     # Validate both periods before publishing or writing either of them.
     return {period: _write_bars(db, period, sym.id, bars) for period, bars in fetched.items()}

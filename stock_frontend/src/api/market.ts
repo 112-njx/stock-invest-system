@@ -145,7 +145,7 @@ export function fetchKLine(params: {
   return request<KLineBar[]>({ url: '/kline', params })
 }
 
-export function requestKlineBackfill(params: { symbol_id: number; period: Period; start: string; end: string; retry?: boolean }) {
+export function requestKlineBackfill(params: { symbol_id: number; period: Period; start: string; end: string; retry?: boolean; initial?: boolean }) {
   return request<{ task_id: string }>({ url: '/kline/backfill', method: 'post', data: params, silent: true })
 }
 

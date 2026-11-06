@@ -220,6 +220,89 @@ def test_backtest_worker_prepares_cold_window_using_source_policy(history, monke
     assert count == (len(bars) if source == 'stockdb' else 0)
 
 
+@pytest.mark.parametrize('period', ['1d', '1w', '1mon'])
+def test_backtest_rebases_entire_existing_local_range_under_lock(history, period):
+    from sqlalchemy import text
+    from app.services import backtest_service
+    db, symbol, bars, provider, policy = history
+    first = datetime(2020, 1, 31, tzinfo=UTC)
+    last = datetime(2020, 3, 31, tzinfo=UTC)
+    old = KlineBar(last, 100, 100, 100, 100, 1, 1, 'stockdb')
+    kline_repo.upsert_bars(db, period, symbol.id, [old]); db.commit()
+    refreshed = [KlineBar(ts, 50, 50, 50, 50, 1, 1, 'stockdb') for ts in (first, last)]
+    def fetch(code, requested_period, start, end, asset):
+        assert (requested_period, start, end) == (period, first, last)
+        with get_session() as other:
+            assert other.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),
+                                {'key': 5000000000 + symbol.id}) is False
+        return refreshed, True
+    provider.fetch_kline_checked.side_effect = fetch
+    task = SimpleNamespace(symbol_id=symbol.id, period=period, start_ts=first, end_ts=first)
+    rows = backtest_service._load_backtest_bars(db, task, symbol)
+    assert len(rows) == 1 and float(rows[0].close) == 50
+    assert float(kline_repo.latest_bars(db, period, symbol.id, 1)[0].close) == 50
+
+
+def test_window_rejects_incomplete_qfq_refresh_without_changing_stored_prices(history):
+    db, symbol, bars, provider, policy = history
+    old = KlineBar(bars[-1].ts, 100, 100, 100, 100, 1, 1, 'stockdb')
+    kline_repo.upsert_bars(db, '1d', symbol.id, [old]); db.commit()
+    provider.fetch_kline_checked.return_value = ([KlineBar(bars[0].ts, 50, 50, 50, 50, 1, 1, 'stockdb')], True)
+    with pytest.raises(RuntimeError, match='未覆盖库中已有历史'):
+        sync_service.prepare_history_window(db, symbol, '1d', bars[0].ts, bars[0].ts)
+    db.rollback()
+    assert float(kline_repo.latest_bars(db, '1d', symbol.id, 1)[0].close) == 100
+
+
+@pytest.mark.parametrize('source', ['stockdb', 'akshare'])
+@pytest.mark.parametrize('confirmed', [True, False])
+@pytest.mark.parametrize('period', ['1d', '1w', '1mon'])
+def test_initial_empty_window_finds_long_inactive_history(history, source, confirmed, period):
+    from app.worker.tasks.sync_tasks import kline_backfill
+    from app.utils.market_cache import as_utc
+    db, symbol, bars, provider, policy = history
+    old = [KlineBar(datetime(2010, 1, 4, tzinfo=UTC), 5, 6, 4, 5, 1, 1, source)]
+    provider.fetch_kline_checked.side_effect = lambda code, period, start, end, asset, **kw: (
+        ([bar for bar in old if start <= bar.ts <= end], True) if start == source_history.FIRST else ([], confirmed))
+    job = kline_backfill.apply(kwargs=dict(symbol_id=symbol.id, period=period,
+                                          start_iso=bars[0].ts.isoformat(), end_iso=bars[-1].ts.isoformat(), initial=True))
+    assert job.successful(), job.result
+    result = job.result
+    assert result['fetched'] == 1 and result['confirmed_empty'] is False
+    loaded = kline_repo.latest_bars(db, period, symbol.id)
+    assert len(loaded) == 1 and as_utc(loaded[0].ts) == old[0].ts
+    assert indicator_service.compute_indicators(db, str(symbol.id), period, ['macd'])
+    from app.models.kline import KLINE_MODELS
+    model = KLINE_MODELS[period]
+    count = db.scalar(select(func.count()).select_from(model).where(model.symbol_id == symbol.id))
+    assert count == (1 if source == 'stockdb' else 0)
+
+
+def test_ordinary_empty_page_does_not_expand_to_all_history(history):
+    db, symbol, bars, provider, policy = history
+    provider.fetch_kline_checked.return_value = ([], True)
+    result = sync_service.prepare_history_window(db, symbol, '1d', bars[0].ts, bars[-1].ts)
+    assert result['confirmed_empty'] is True
+    assert provider.fetch_kline_checked.call_count == 1
+
+
+def test_initial_backfill_is_distinct_and_forwards_mode_to_worker(history, client, monkeypatch):
+    from app.worker.tasks.sync_tasks import kline_backfill
+    db, symbol, bars, provider, policy = history
+    dispatch = Mock()
+    monkeypatch.setattr(kline_backfill, 'apply_async', dispatch)
+    payload = dict(symbol_id=symbol.id, period='1d', start='2010-01-01T00:00:00+00:00', end='2010-02-01T00:00:00+00:00')
+    keys = [f"kline-backfill:{symbol.id}:1d:{payload['start']}:{payload['end']}{suffix}" for suffix in ('', ':initial')]
+    try:
+        first = client.post('/api/v1/kline/backfill', json=payload)
+        second = client.post('/api/v1/kline/backfill', json={**payload, 'initial': True})
+        assert first.status_code == second.status_code == 200
+        assert first.json()['data']['task_id'] != second.json()['data']['task_id']
+        assert dispatch.call_args.kwargs['kwargs'] == {'initial': True}
+    finally:
+        get_redis_client().delete(*keys)
+
+
 def test_cache_write_failure_prevents_task_completion(history, monkeypatch):
     from app.worker.tasks.sync_tasks import watchlist_stock_sync
     from app.models.ops import SyncTask

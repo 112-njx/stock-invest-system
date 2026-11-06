@@ -31,6 +31,7 @@ class KlineBackfillRequest(BaseModel):
     period: str
     start: datetime
     end: datetime
+    initial: bool = False
 
 
 @router.post("/kline/backfill")
@@ -47,6 +48,8 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
     from app.worker.tasks.sync_tasks import kline_backfill
 
     key = f"kline-backfill:{payload.symbol_id}:{payload.period}:{payload.start.isoformat()}:{payload.end.isoformat()}"
+    if payload.initial:
+        key += ":initial"
     redis = get_redis_client()
     # 同一历史窗口复用任务；失败时 worker 清理该键，允许重新请求。
     task_id = str(uuid4())
@@ -55,6 +58,7 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
     try:
         kline_backfill.apply_async(
             args=(payload.symbol_id, payload.period, payload.start.isoformat(), payload.end.isoformat()),
+            kwargs={"initial": payload.initial},
             task_id=task_id,
         )
     except Exception:

@@ -809,7 +809,7 @@ async function loadInitialMissing(version: number, symbolId: number, period: Per
   try {
     const retry = retryBackfill
     retryBackfill = false
-    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry })
+    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry, initial: true })
     for (let attempt = 0; attempt < 45; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
       if (version !== loadVersion) return
@@ -837,7 +837,7 @@ async function fillInitialPeriod(version: number, symbolId: number, period: '1w'
   for (let attempt = 0; attempt < 12 && loadedBars.length < target; attempt++) {
     const start = new Date(end.getTime() - 90 * 86400_000)
     try {
-      const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString() })
+      const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), initial: loadedBars.length === 0 })
       let status: Awaited<ReturnType<typeof fetchKlineBackfillStatus>> | null = null
       for (let poll = 0; poll < 45; poll++) {
         await new Promise((resolve) => setTimeout(resolve, 2000))

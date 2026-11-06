@@ -1,4 +1,4 @@
-"""行情同步 Celery 任务：kline_init / kline_incremental / realtime_poll。
+"""行情同步 Celery 任务：历史初始化、历史补拉和手动/定时同步。
 
 任务内只做薄编排：调用同步服务，状态与全链路日志写 sync_tasks / task_logs。
 """
@@ -135,31 +135,22 @@ def local_market_after_close():
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_backfill",
                  acks_late=True, reject_on_worker_lost=True,
                  soft_time_limit=900, time_limit=1200)
-def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: str) -> dict:
+def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: str, initial: bool = False) -> dict:
     """按用户请求的历史窗口补取，结果供前端轮询。"""
     from datetime import datetime
 
-    from app.data_providers.factory import get_provider
     from app.models.symbol import Symbol
-    from app.services.sync_service import _provider_params, _write_bars
+    from app.services.sync_service import prepare_history_window
 
     db = get_session()
     try:
         sym = db.get(Symbol, symbol_id)
         if sym is None:
             return {"fetched": 0, "added": 0}
-        symbol_param, asset_type = _provider_params(sym)
-        source_period = period
-        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 5000000000 + symbol_id})
-        bars, confirmed_empty = get_provider().fetch_kline_checked(
-            symbol_param, source_period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
-        )
-        if not bars and not confirmed_empty:
-            raise RuntimeError("historical providers unavailable")
-        added = _write_bars(db, source_period, symbol_id, bars)
-        db.commit()
-        _log("kline_backfill", self.request.id, "success", f"symbol_id={symbol_id} fetched={len(bars)}")
-        return {"fetched": len(bars), "added": added, "confirmed_empty": confirmed_empty if not bars else False}
+        result = prepare_history_window(db, sym, period, datetime.fromisoformat(start_iso),
+                                        datetime.fromisoformat(end_iso), initial=initial)
+        _log("kline_backfill", self.request.id, "success", f"symbol_id={symbol_id} fetched={result['fetched']}")
+        return result
     except Exception as exc:
         db.rollback()
         if self.request.retries < 2:
@@ -167,6 +158,8 @@ def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: s
         from app.utils.redis_client import get_redis_client
 
         key = f"kline-backfill:{symbol_id}:{period}:{start_iso}:{end_iso}"
+        if initial:
+            key += ":initial"
         redis = get_redis_client()
         if redis.get(key) == self.request.id:
             redis.delete(key)

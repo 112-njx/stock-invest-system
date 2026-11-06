@@ -161,14 +161,8 @@ def _load_backtest_bars(db, task, symbol):
     bars = kline_repo.get_bars(db, task.period, task.symbol_id, task.start_ts, task.end_ts, limit=_KLINE_LIMIT)
     if not bars and kline_repo.use_transient_source(db, KLINE_MODELS[task.period], task.symbol_id,
                                                   task.start_ts, task.end_ts):
-        from app.data_providers.factory import get_provider
-        from app.services.sync_service import _provider_params, _write_bars
-        code, asset = _provider_params(symbol)
-        fetched, confirmed = get_provider().fetch_kline_checked(code, task.period, task.start_ts, task.end_ts, asset)
-        if not fetched and not confirmed:
-            raise BacktestFatalError('历史行情源不可用，请检查本地行情服务')
-        _write_bars(db, task.period, task.symbol_id, fetched)
-        db.commit()
+        from app.services.sync_service import prepare_history_window
+        prepare_history_window(db, symbol, task.period, task.start_ts, task.end_ts)
         bars = kline_repo.get_bars(db, task.period, task.symbol_id, task.start_ts, task.end_ts, limit=_KLINE_LIMIT)
     return bars
 
