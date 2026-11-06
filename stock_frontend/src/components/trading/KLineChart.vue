@@ -9,6 +9,7 @@
  * - 双击 emit，由父级决定是否进入详情页
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useChartIndicators } from '@/composables/useChartIndicators'
 import { useSyntheticWicks } from '@/composables/useSyntheticWicks'
 import { displaySyntheticCandle } from '@/utils/syntheticWicks'
 import {
@@ -38,7 +39,6 @@ import {
   fetchSupportResistance,
   requestKlineBackfill,
   removeSupportResistance,
-  type IndicatorRow,
   type KLineBar,
   type KlineQuality,
   type SupportResistanceItem,
@@ -131,7 +131,6 @@ const PRICE_MAS = [
   { key: 'ma30', label: 'MA30', color: '#a78bfa' },
 ] as const
 const priceMaSeries = new Map<string, ISeriesApi<'Line'>>()
-let indicatorRequest = 0
 let srLines: IPriceLine[] = []
 let lastBar: KLineBar | null = null
 /** G32：买卖点标记插件（v5 独立插件 API） */
@@ -278,6 +277,9 @@ function toggleIndicator(key: IndicatorKey) {
   const visibleRange = chart?.timeScale().getVisibleLogicalRange()
   rebuildIndicatorPanes()
   setIndicatorData()
+  if (next.size && !indicatorRows.value.length && props.symbol) {
+    void refreshIndicators(loadVersion, props.symbol.id, market.period)
+  }
   if (visibleRange && chart) {
     // 延迟一帧恢复，确保 series 数据已设置
     requestAnimationFrame(() => {
@@ -625,8 +627,9 @@ function reasonText(t: BacktestTrade): string {
 }
 
 /* ---------- 数据 ---------- */
-const indicatorRows = ref<IndicatorRow[]>([])
-watch(indicatorRows, (rows) => {
+const indicators = useChartIndicators(fetchIndicators)
+const { indicatorRows, priceMaRows, indicatorError, priceMaError } = indicators
+watch(priceMaRows, (rows) => {
   const times = new Set(loadedBars.map(bar => toUtcSeconds(bar.ts)))
   for (const ma of PRICE_MAS) {
     priceMaSeries.get(ma.key)?.setData(rows.filter(row => times.has(toUtcSeconds(row.ts))).map(row => {
@@ -643,6 +646,16 @@ const selectedIndicatorIndex = computed(() => {
   return rows.findIndex((row) => toUtcSeconds(row.ts) === hoveredIndicatorTime.value)
 })
 const selectedIndicator = computed(() => indicatorRows.value[selectedIndicatorIndex.value] ?? null)
+
+watch(indicatorRows, rows => {
+  if (rows.length) setIndicatorData()
+  else for (const pane of indicatorPanes.values()) for (const series of pane.series) series.setData([])
+}, { flush: 'sync' })
+const selectedPriceMa = computed(() => {
+  const rows = priceMaRows.value
+  if (hoveredIndicatorTime.value == null) return rows[rows.length - 1] ?? null
+  return rows.find(row => toUtcSeconds(row.ts) === hoveredIndicatorTime.value) ?? null
+})
 
 const selectedVolumeAverages = computed(() => ({
   ma5: selectedIndicator.value?.volume_ma5 ?? null,
@@ -744,7 +757,6 @@ function beforePeriod(ts: string, period: Period): Date {
   return new Date(date.getTime() - 1)
 }
 
-const indicatorError = ref('')
 function reloadIndicatorEngine() {
   if (props.symbol) void refreshIndicators(loadVersion, props.symbol.id, market.period)
 }
@@ -752,23 +764,12 @@ onMounted(() => window.addEventListener('indicator-settings-changed', reloadIndi
 onBeforeUnmount(() => window.removeEventListener('indicator-settings-changed', reloadIndicatorEngine))
 
 async function refreshIndicators(version: number, symbolId: number, period: Period) {
-  const requestId = ++indicatorRequest
   if (!loadedBars.length) return
-  try {
-    const rows = await fetchIndicators({
-      symbol: symbolId, period, names: props.showIndicators && enabledList.value.length ? 'ma,macd,kdj,volume,amount' : 'ma',
-      start: loadedBars[0].ts, end: loadedBars[loadedBars.length - 1].ts,
-    })
-    if (version !== loadVersion || requestId !== indicatorRequest) return
-    indicatorRows.value = rows
-    indicatorError.value = ''
-    setIndicatorData()
-  } catch {
-    if (version !== loadVersion || requestId !== indicatorRequest) return
-    indicatorError.value = '技术指标获取失败，请检查 SDK 服务或后台计算设置'
-    indicatorRows.value = []
-    for (const pane of indicatorPanes.values()) for (const series of pane.series) series.setData([])
-  }
+  await indicators.load({
+    symbol: symbolId, period,
+    start: loadedBars[0].ts, end: loadedBars[loadedBars.length - 1].ts,
+  }, props.showIndicators && enabledList.value.length > 0,
+  () => version === loadVersion && props.symbol?.id === symbolId && market.period === period)
 }
 
 async function loadOlder() {
@@ -987,7 +988,7 @@ async function loadKline() {
     historyCursor = bars[0]?.ts ?? ''
     candleSeries?.setData(toCandleData(bars))
     if (!bars.length) {
-      indicatorRows.value = []
+      indicators.reset()
       if (period === '1w' || period === '1mon') showInitialPeriodRange(period, 1)
       void loadInitialMissing(version, symbolId, period)
       return
@@ -1100,7 +1101,7 @@ watch(() => props.symbol, (newSym, oldSym) => {
     lastBar = null
     candleSeries?.setData([])
     clearSRLines()
-    indicatorRows.value = []
+    indicators.reset()
     barRange = null
     markersPlugin?.setMarkers([])
     hoverTip.value = null
@@ -1110,7 +1111,7 @@ watch(() => props.symbol, (newSym, oldSym) => {
   // V0.2：无闪烁——切换标的时保留旧 K 线直到新数据返回，不清空
   clearSRLines()
   if (oldSym && newSym && oldSym.id !== newSym.id) {
-    indicatorRows.value = []
+    indicators.reset()
     if (props.showIndicators) removeAllIndicatorPanes()
   }
   loadKline()
@@ -1120,7 +1121,7 @@ watch(() => props.symbol, (newSym, oldSym) => {
 watch(() => market.period, () => {
   hoveredCandle.value = null
   hoveredIndicatorTime.value = null
-  indicatorRows.value = []
+  indicators.reset()
   initialViewport = true
   historyState.value = ''
   loadedBars = []
@@ -1169,7 +1170,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   loadVersion++
-  indicatorRequest++
+  indicators.reset()
   cancelAnimationFrame(paneLayoutFrame)
   chartResizeObserver?.disconnect()
   window.removeEventListener('mousemove', onIndicatorDrag, true)
@@ -1257,6 +1258,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
 <template>
   <div class="kline-chart">
+    <p v-if="priceMaError" class="notice danger" role="alert">{{ priceMaError }}</p>
     <p v-if="indicatorError" class="notice danger" role="alert">{{ indicatorError }}</p>
     <header class="kline-chart__header">
       <div class="kline-chart__header-left">
@@ -1299,7 +1301,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
     <div ref="container" class="kline-chart__body">
       <div ref="chartHost" class="kline-chart__canvas" />
       <div v-if="props.symbol" class="kline-chart__ma-legend">
-        <span v-for="ma in PRICE_MAS" :key="ma.key" :style="{ color: ma.color }">{{ ma.label }}:{{ indicatorNumber(selectedIndicator?.[ma.key]) }}</span>
+        <span v-for="ma in PRICE_MAS" :key="ma.key" :style="{ color: ma.color }">{{ ma.label }}:{{ indicatorNumber(selectedPriceMa?.[ma.key]) }}</span>
       </div>
       <svg v-if="showIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
         <circle

@@ -195,6 +195,25 @@ def test_sdk_failure_does_not_invoke_pandas(client, monkeypatch, _indicator_data
     assert result.status_code == 503
 
 
+def test_pandas_panels_survive_unavailable_sdk_ma(client, monkeypatch, _indicator_data):
+    from app.services import indicator_service, indicator_policy, sdk_indicators
+    from app.core.exceptions import ApiError
+    monkeypatch.setattr(indicator_policy, 'read', lambda: {'pandas_enabled':True,'revision':987654323})
+    monkeypatch.setattr(indicator_service, '_get_cache', lambda key: None)
+    def unavailable(*args):
+        raise ApiError(503, 50331, 'SDK unavailable')
+    monkeypatch.setattr(sdk_indicators, 'calculate', unavailable)
+    base = {'symbol':str(_indicator_data.id)}
+    ma = client.get('/api/v1/indicators', params={**base,'names':'ma'})
+    panels = client.get('/api/v1/indicators', params={**base,'names':'macd,kdj,volume,amount'})
+    assert ma.status_code == 503
+    assert panels.status_code == 200
+    rows = panels.json()['data']
+    assert len(rows) == 40
+    for name in ('macd_hist', 'kdj_k', 'volume_ma5', 'volume_ma10', 'volume', 'amount'):
+        assert rows[-1][name] is not None
+
+
 @pytest.mark.parametrize('params', [{'macd':{'fast':0}}, {'kdj':{'n':True}}, {'macd':{'bad':12}}, {'macd':[]}])
 def test_invalid_engine_parameters(client, _indicator_data, params):
     import json
