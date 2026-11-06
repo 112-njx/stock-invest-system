@@ -30,6 +30,22 @@ class MarketSourcePolicy(BaseModel):
     auto_sync_enabled: bool = False
 
 
+class IndicatorSettings(BaseModel):
+    pandas_enabled: bool = False
+
+
+@router.get('/indicator-settings')
+def get_indicator_settings(current: User = Depends(get_current_admin)):
+    from app.services import indicator_policy
+    return ok(data=indicator_policy.read())
+
+
+@router.put('/indicator-settings')
+def update_indicator_settings(payload: IndicatorSettings, current: User = Depends(get_current_admin)):
+    from app.services import indicator_policy
+    return ok(data=indicator_policy.save(payload.pandas_enabled))
+
+
 class MarketDisplaySettings(BaseModel):
     synthetic_wick_factor: float = Field(ge=0, le=1, allow_inf_nan=False)
 

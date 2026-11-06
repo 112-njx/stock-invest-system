@@ -9,7 +9,7 @@
  * 纯基础设施，无 UI 依赖。
  */
 
-export type WsMessageType = 'kline' | 'kline_refresh' | 'ping' | 'pong' | 'error' | 'notification'
+export type WsMessageType = 'kline' | 'kline_refresh' | 'indicator_settings_changed' | 'ping' | 'pong' | 'error' | 'notification'
 
 
 export interface WsKlineMessage {
@@ -40,6 +40,7 @@ export interface WsNotificationMessage {
 }
 
 export type WsMessage =
+  | { type: 'indicator_settings_changed' }
   | WsKlineMessage
   | WsKlineRefreshMessage
   | WsNotificationMessage

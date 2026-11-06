@@ -59,6 +59,7 @@ await build({
 })
 const fixtureCode = `
 const replies={
+ indicatorSettings:{pandas_enabled:false,revision:1},
  services:{stockdb:{state:'online',latest_date:'20261105'},sdk:{state:'online'},date_scope:'600519'},
  policy:{akshare_enabled:false,history_storage_enabled:false,auto_sync_enabled:false},
  traffic:{day:'20261106',interval_seconds:2,retry_interval_seconds:10,daily_budget:2000,providers:[{name:'eastmoney',used:0,health:{state:'disabled',failures:0,last_success_at:null}}]},
@@ -66,7 +67,7 @@ const replies={
  sync:{status:'idle',task_id:null,error:null,progress:0,message:'尚未同步本地行情'},display:{synthetic_wick_factor:.5},
  requests:{requests:[{id:'1',task_id:'test-task',queue:'fixed_indices',provider:'stockdb',interface:'日k',symbol:'600519',symbol_name:'贵州茅台',symbols:[],period:'1d',phase:'requesting',attempt:1,attempts:1,started_at:'2026-11-06T00:00:00Z',updated_at:'2026-11-06T00:00:00Z'}]},
 };
-const fixture={calls:[],failSave:false,reply:replies,route:null,async call(key,data){this.calls.push(key);if(key.startsWith('save')){if(this.failSave)throw Error('save failed');if(key==='savePolicy')return this.reply.policy={...data};if(key==='saveLimits')return this.reply.traffic={...this.reply.traffic,...data};return this.reply.display={...data}}if(key==='startSync'){this.reply.sync={status:'queued',task_id:'new-task',error:null,progress:0,message:'等待同步'};return this.reply.sync}return structuredClone(this.reply[key])}};
+const fixture={calls:[],failSave:false,reply:replies,route:null,async call(key,data){this.calls.push(key);if(key.startsWith('save')){if(this.failSave)throw Error('save failed');if(key==='saveIndicatorSettings')return this.reply.indicatorSettings={...data,revision:2};if(key==='savePolicy')return this.reply.policy={...data};if(key==='saveLimits')return this.reply.traffic={...this.reply.traffic,...data};return this.reply.display={...data}}if(key==='startSync'){this.reply.sync={status:'queued',task_id:'new-task',error:null,progress:0,message:'等待同步'};return this.reply.sync}return structuredClone(this.reply[key])}};
 globalThis.adminFixture=fixture;
 `
 if (process.argv.includes('--preview')) {
@@ -134,7 +135,15 @@ await settle()
 assert.match(document.body.textContent, /本地数据服务/)
 await navigate('sources')
 const inputs = [...document.querySelectorAll('input[type=checkbox]')]
-assert.equal(inputs.length, 3)
+assert.equal(inputs.length, 4)
+assert.equal(inputs[3].checked, false, 'SDK must be the default')
+inputs[3].click()
+await nextTick()
+assert.equal(fixture.calls.filter(c => c === 'saveIndicatorSettings').length, 0)
+const indicatorForm = inputs[3].closest('form')
+indicatorForm.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }))
+await settle()
+assert.equal(fixture.reply.indicatorSettings.pandas_enabled, true)
 inputs[0].click()
 await nextTick()
 assert.equal(fixture.calls.filter((c) => c === 'savePolicy').length, 0)
@@ -151,7 +160,7 @@ assert.equal(inputs[0].checked, true)
 fixture.failSave = false
 await submit(form)
 assert.equal(fixture.reply.policy.akshare_enabled, true)
-assert.equal(document.querySelectorAll('input[type=checkbox]').length, 3, 'enabling AkShare must not duplicate policy switches')
+assert.equal(document.querySelectorAll('input[type=checkbox]').length, 4, 'enabling AkShare must not duplicate policy switches')
 const limitsForm = document.querySelector('input[type=number]').closest('form')
 assert.equal(limitsForm.querySelectorAll('input[type=checkbox]').length, 0, 'request protection must not contain policy controls')
 inputs[2].click()

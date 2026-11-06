@@ -1,5 +1,7 @@
 import { request } from './http'
 
+export interface IndicatorSettings { pandas_enabled: boolean; revision: number }
+
 export interface SourcePolicy {
   akshare_enabled: boolean
   history_storage_enabled: boolean
@@ -68,6 +70,8 @@ const put = <T>(path: string, data: unknown) =>
   request<T>({ url: `/admin/${path}`, method: 'put', data, silent: true })
 export const adminApi = {
   services: () => read<LocalServices>('local-services'),
+  indicatorSettings: () => read<IndicatorSettings>('indicator-settings'),
+  saveIndicatorSettings: (data: { pandas_enabled: boolean }) => put<IndicatorSettings>('indicator-settings', data),
   policy: () => read<SourcePolicy>('market-source-policy'),
   traffic: () => read<Traffic>('traffic'),
   queues: () => read<TaskQueues>('task-queues'),

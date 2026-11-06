@@ -222,17 +222,111 @@ class QueryService:
         return snapshot
 
 
+def calculate_indicator_rows(sdk_dir, payload):
+    """Native calculations only; never fetch an independently based price series."""
+    import math
+    sys.path.insert(0, sdk_dir)
+    from zhibiao import zb
+    rows, names, params = payload['rows'], payload['names'], payload.get('params') or {}
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 100000:
+        raise ValueError('invalid history length')
+    if not isinstance(names, list) or not names or any(n not in {'ma', 'macd', 'kdj', 'volume', 'amount'} for n in names):
+        raise ValueError('unsupported indicator')
+    if not isinstance(params, dict):
+        raise ValueError('invalid parameters')
+    def parameters(name, defaults):
+        chosen = params.get(name) or {}
+        if not isinstance(chosen, dict) or chosen.keys() - defaults.keys():
+            raise ValueError('invalid indicator parameters')
+        values = {**defaults, **chosen}
+        if any(type(v) is not int or not 1 <= v <= 10000 for v in values.values()):
+            raise ValueError('period parameters must be integers from 1 to 10000')
+        return list(values.values())
+    def array(field):
+        values = [float(row[field]) for row in rows]
+        if not all(math.isfinite(v) for v in values):
+            raise ValueError('nonfinite input')
+        return values
+    output = [dict(row) for row in rows]
+    def append(fields, series):
+        for field, values in zip(fields, series, strict=True):
+            if len(values) != len(rows):
+                raise ValueError('native output length mismatch')
+            for row, value in zip(output, values):
+                row[field] = float(value) if math.isfinite(value) else None
+    if 'ma' in names:
+        append(tuple(f'ma{n}' for n in (5, 10, 20, 30)),
+               tuple(zb.MA(array('close'), n) for n in (5, 10, 20, 30)))
+    if 'macd' in names:
+        append(('macd_dif', 'macd_dea', 'macd_hist'), zb.MACD(array('close'), *parameters('macd', {'fast':12,'slow':26,'signal':9})))
+    if 'kdj' in names:
+        append(('kdj_k', 'kdj_d', 'kdj_j'), zb.KDJ(array('close'), array('high'), array('low'), *parameters('kdj', {'n':9,'m1':3,'m2':3})))
+    if 'volume' in names:
+        append(('volume_ma5', 'volume_ma10'), (zb.MA(array('volume'), 5), zb.MA(array('volume'), 10)))
+    return output
+
+
+def _indicator_worker(connection, sdk_dir, payload):
+    try:
+        connection.send((True, calculate_indicator_rows(sdk_dir, payload)))
+    except Exception as exc:
+        connection.send((False, str(exc)))
+    finally:
+        connection.close()
+
+
+def sdk_indicators(sdk_dir, payload):
+    context = multiprocessing.get_context('spawn')
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(target=_indicator_worker, args=(sender, sdk_dir, payload))
+    process.start()
+    sender.close()
+    try:
+        if not receiver.poll(35):
+            raise TimeoutError('SDK indicator computation timed out')
+        success, result = receiver.recv()
+        if not success:
+            raise ValueError(result)
+        return result
+    finally:
+        receiver.close()
+        process.join(2)
+        if process.is_alive():
+            process.terminate()
+            process.join()
+
+
 def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
     service = service or QueryService(lambda *key: sdk_query(sdk_dir, *key))
     logger = logging.getLogger('stockdb.bridge')
+    indicator_lock = Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
-            if self.path != '/refresh':
+            if self.path == '/refresh':
+                service.refresh()
+                self.respond(b'{"status":"cleared"}', 200)
+                return
+            if self.path != '/indicators/calculate':
                 self.send_error(404)
                 return
-            service.refresh()
-            self.respond(b'{"status":"cleared"}', 200)
+            if not indicator_lock.acquire(timeout=5):
+                self.respond(b'{"error":"indicator engine busy; retry later"}', 503)
+                return
+            try:
+                size = int(self.headers.get('Content-Length', '0'))
+                if not 0 < size <= 32 * 1024 * 1024:
+                    raise ValueError('invalid request size')
+                self.connection.settimeout(10)
+                payload = json.loads(self.rfile.read(size))
+                result = sdk_indicators(sdk_dir, payload)
+                self.respond(json.dumps(result, allow_nan=False).encode(), 200)
+            except ValueError as exc:
+                self.respond(json.dumps({'error': str(exc)}).encode(), 400)
+            except Exception as exc:
+                self.respond(json.dumps({'error': str(exc)}).encode(), 503)
+            finally:
+                indicator_lock.release()
 
         def respond(self, encoded, status):
             self.send_response(status)
@@ -251,6 +345,17 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
                 query = {k: v[0] for k, v in parse_qs(url.query).items()}
                 if url.path == '/health':
                     encoded = b'{"status":"ok"}'
+                elif url.path == '/indicators/ready':
+                    probe = {'rows': [dict(ts=str(i), close=float(i+1)) for i in range(12)], 'names': ['macd']}
+                    if not indicator_lock.acquire(timeout=5):
+                        raise TimeoutError('indicator engine busy')
+                    try:
+                        rows = sdk_indicators(sdk_dir, probe)
+                        if len(rows) != 12 or rows[-1].get('macd_hist') is None:
+                            raise ValueError('indicator engine probe failed')
+                        encoded = b'{"status":"ok"}'
+                    finally:
+                        indicator_lock.release()
                 elif url.path == '/metrics':
                     encoded = json.dumps(service.metrics()).encode('utf-8')
                 elif url.path in {'/kline', '/ready'}:

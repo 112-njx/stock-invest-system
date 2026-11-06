@@ -124,6 +124,14 @@ const currentPrice = computed(() => props.symbol ? market.quotes[props.symbol.id
 
 let chart: IChartApi | null = null
 let candleSeries: ISeriesApi<'Candlestick'> | null = null
+const PRICE_MAS = [
+  { key: 'ma5', label: 'MA5', color: '#d4a72c' },
+  { key: 'ma10', label: 'MA10', color: '#db61a2' },
+  { key: 'ma20', label: 'MA20', color: '#38bdf8' },
+  { key: 'ma30', label: 'MA30', color: '#a78bfa' },
+] as const
+const priceMaSeries = new Map<string, ISeriesApi<'Line'>>()
+let indicatorRequest = 0
 let srLines: IPriceLine[] = []
 let lastBar: KLineBar | null = null
 /** G32：买卖点标记插件（v5 独立插件 API） */
@@ -387,6 +395,14 @@ function initChart() {
     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
   })
 
+  priceMaSeries.clear()
+  for (const ma of PRICE_MAS) {
+    priceMaSeries.set(ma.key, chart.addSeries(LineSeries, {
+      color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    }, 0))
+  }
+
   // 优化7：window capture 阶段拦截 wheel，达到最大放大（≤15条）时阻止继续放大，可无限缩小
   window.addEventListener('wheel', onWheel, { capture: true, passive: false })
 
@@ -610,6 +626,16 @@ function reasonText(t: BacktestTrade): string {
 
 /* ---------- 数据 ---------- */
 const indicatorRows = ref<IndicatorRow[]>([])
+watch(indicatorRows, (rows) => {
+  const times = new Set(loadedBars.map(bar => toUtcSeconds(bar.ts)))
+  for (const ma of PRICE_MAS) {
+    priceMaSeries.get(ma.key)?.setData(rows.filter(row => times.has(toUtcSeconds(row.ts))).map(row => {
+      const value = row[ma.key]
+      const time = toUtcSeconds(row.ts)
+      return value != null && Number.isFinite(value) ? { time, value } : { time }
+    }))
+  }
+}, { flush: 'sync' })
 const selectedIndicatorIndex = computed(() => {
   const rows = indicatorRows.value
   if (!rows.length) return -1
@@ -618,14 +644,9 @@ const selectedIndicatorIndex = computed(() => {
 })
 const selectedIndicator = computed(() => indicatorRows.value[selectedIndicatorIndex.value] ?? null)
 
-function movingAverage(rows: IndicatorRow[], index: number, count: number): number | null {
-  if (index < count - 1) return null
-  return rows.slice(index - count + 1, index + 1).reduce((sum, row) => sum + row.volume, 0) / count
-}
-
 const selectedVolumeAverages = computed(() => ({
-  ma5: movingAverage(indicatorRows.value, selectedIndicatorIndex.value, 5),
-  ma10: movingAverage(indicatorRows.value, selectedIndicatorIndex.value, 10),
+  ma5: selectedIndicator.value?.volume_ma5 ?? null,
+  ma10: selectedIndicator.value?.volume_ma10 ?? null,
 }))
 
 const selectedMacdCrosses = computed(() => {
@@ -723,17 +744,31 @@ function beforePeriod(ts: string, period: Period): Date {
   return new Date(date.getTime() - 1)
 }
 
+const indicatorError = ref('')
+function reloadIndicatorEngine() {
+  if (props.symbol) void refreshIndicators(loadVersion, props.symbol.id, market.period)
+}
+onMounted(() => window.addEventListener('indicator-settings-changed', reloadIndicatorEngine))
+onBeforeUnmount(() => window.removeEventListener('indicator-settings-changed', reloadIndicatorEngine))
+
 async function refreshIndicators(version: number, symbolId: number, period: Period) {
-  if (!props.showIndicators || !enabledList.value.length || !loadedBars.length) return
+  const requestId = ++indicatorRequest
+  if (!loadedBars.length) return
   try {
     const rows = await fetchIndicators({
-      symbol: symbolId, period, names: 'macd,kdj,volume,amount',
+      symbol: symbolId, period, names: props.showIndicators && enabledList.value.length ? 'ma,macd,kdj,volume,amount' : 'ma',
       start: loadedBars[0].ts, end: loadedBars[loadedBars.length - 1].ts,
     })
-    if (version !== loadVersion) return
+    if (version !== loadVersion || requestId !== indicatorRequest) return
     indicatorRows.value = rows
+    indicatorError.value = ''
     setIndicatorData()
-  } catch { /* 指标失败不阻塞 K 线 */ }
+  } catch {
+    if (version !== loadVersion || requestId !== indicatorRequest) return
+    indicatorError.value = '技术指标获取失败，请检查 SDK 服务或后台计算设置'
+    indicatorRows.value = []
+    for (const pane of indicatorPanes.values()) for (const series of pane.series) series.setData([])
+  }
 }
 
 async function loadOlder() {
@@ -894,8 +929,8 @@ function setIndicatorData() {
         color: r.close >= r.open ? c.up : c.down,
       })))
       for (const [seriesIndex, count] of [[1, 5], [2, 10]]) {
-        ref.series[seriesIndex].setData(rows.map((r, i) => {
-          const value = movingAverage(rows, i, count)
+        ref.series[seriesIndex].setData(rows.map((r) => {
+          const value = r[`volume_ma${count}` as 'volume_ma5' | 'volume_ma10']
           return value == null ? { time: toUtcSeconds(r.ts) } : { time: toUtcSeconds(r.ts), value }
         }))
       }
@@ -952,6 +987,7 @@ async function loadKline() {
     historyCursor = bars[0]?.ts ?? ''
     candleSeries?.setData(toCandleData(bars))
     if (!bars.length) {
+      indicatorRows.value = []
       if (period === '1w' || period === '1mon') showInitialPeriodRange(period, 1)
       void loadInitialMissing(version, symbolId, period)
       return
@@ -1126,11 +1162,14 @@ onMounted(() => {
       hoveredCandle.value = null
       lastBar = bar
       candleSeries?.update(toCandleData([bar])[0]!)
+      void refreshIndicators(loadVersion, symbolId, period)
     }
   })
 })
 
 onBeforeUnmount(() => {
+  loadVersion++
+  indicatorRequest++
   cancelAnimationFrame(paneLayoutFrame)
   chartResizeObserver?.disconnect()
   window.removeEventListener('mousemove', onIndicatorDrag, true)
@@ -1145,6 +1184,7 @@ onBeforeUnmount(() => {
   chart?.unsubscribeCrosshairMove(onCrosshairMove)
   chart?.remove()
   chart = null
+  priceMaSeries.clear()
   candleSeries = null
   srLines = []
   indicatorPanes.clear()
@@ -1217,6 +1257,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
 <template>
   <div class="kline-chart">
+    <p v-if="indicatorError" class="notice danger" role="alert">{{ indicatorError }}</p>
     <header class="kline-chart__header">
       <div class="kline-chart__header-left">
         <span class="kline-chart__symbol">{{ symbolTitle }}</span>
@@ -1257,6 +1298,9 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
     <div ref="container" class="kline-chart__body">
       <div ref="chartHost" class="kline-chart__canvas" />
+      <div v-if="props.symbol" class="kline-chart__ma-legend">
+        <span v-for="ma in PRICE_MAS" :key="ma.key" :style="{ color: ma.color }">{{ ma.label }}:{{ indicatorNumber(selectedIndicator?.[ma.key]) }}</span>
+      </div>
       <svg v-if="showIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
         <circle
           v-for="(point, index) in macdCrossPoints"
@@ -1512,6 +1556,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   position: relative;
 }
 .kline-chart__canvas { position: absolute; inset: 0; z-index: 0; }
+.kline-chart__ma-legend { position: absolute; top: 4px; left: 8px; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px 12px; max-width: calc(100% - 70px); font-size: 11px; pointer-events: none; }
 .kline-chart__crosses { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; overflow: hidden; pointer-events: none; }
 .kline-chart__indicator-legend {
   position: absolute;

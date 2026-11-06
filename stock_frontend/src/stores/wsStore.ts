@@ -37,6 +37,8 @@ export const useWsStore = defineStore('ws', {
       wsClient.onMessage((msg) => {
         if (msg.type === 'kline') {
           this.handleKline(msg as WsKlineMessage)
+        } else if (msg.type === 'indicator_settings_changed') {
+          window.dispatchEvent(new Event('indicator-settings-changed'))
         } else if (msg.type === 'kline_refresh') {
           const refresh = msg as WsKlineRefreshMessage
           this._klineHandler?.(refresh.symbol_id, refresh.period, null)

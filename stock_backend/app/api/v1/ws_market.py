@@ -156,6 +156,9 @@ def dispatch_market_payload(loop: asyncio.AbstractEventLoop, payload: dict) -> N
 async def _dispatch(loop: asyncio.AbstractEventLoop, payload: dict) -> None:
     symbol_id = payload.get("symbol_id")
     kind = payload.get("type")
+    if kind == "indicator_settings_changed":
+        await manager.broadcast_all({"type": "indicator_settings_changed"})
+        return
     if symbol_id is None:
         return
     if kind == "kline":
