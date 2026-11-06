@@ -514,6 +514,7 @@ onBeforeUnmount(() => {
       <div class="categories__list">
         <button v-for="[id, label] in categories" :key="id" :class="{ active: shownCategory === id }"
           :aria-pressed="shownCategory === id" @click="category = id">{{ label }}</button>
+        <RouterLink to="/stockdb/trends" class="trend-entry">波段追踪</RouterLink>
       </div>
     </aside>
 
@@ -663,6 +664,8 @@ button:hover, .active { background: var(--blueprint-active); color: var(--bluepr
 .categories__list { display: grid; padding: 6px 8px; gap: 5px; }
 .categories__list button { padding: 10px; text-align: left; }
 .categories__list .active { font-weight: 700; }
+.trend-entry { padding: 10px; color: var(--blueprint-link); border-radius: 4px; text-decoration: none; }
+.trend-entry:hover { background: var(--blueprint-active); }
 .rows { overflow: auto; min-height: 0; flex: 1; }
 .board-row, .stock-row { display: grid; align-items: center; text-align: left; gap: 8px; width: 100%; padding: 0 10px; }
 .boards .rows { padding: 6px 7px; }

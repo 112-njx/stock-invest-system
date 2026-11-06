@@ -45,6 +45,11 @@ const router = createRouter({
       name: 'stockdb',
       component: () => import('@/views/StockDbView.vue'),
     },
+    {
+      path: '/stockdb/trends',
+      name: 'stockdb-trends',
+      component: () => import('@/views/TrendView.vue'),
+    },
     // 独立页（不显示顶部导航/公告条）
     {
       path: '/login',
