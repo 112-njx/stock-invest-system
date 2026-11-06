@@ -21,6 +21,15 @@ def request_sync() -> dict:
     db = get_session()
     try:
         db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK_KEY})
+        import os
+        if os.environ.get('STOCKDB_CONTROL_DIR'):
+            from .stockdb_files import ensure_available
+            from .stockdb_update import directory
+            from fastapi import HTTPException
+            try:
+                ensure_available(directory())
+            except RuntimeError as exc:
+                raise HTTPException(409, str(exc)) from exc
         row = db.scalar(select(SyncTask).where(SyncTask.task_type == TASK_TYPE).with_for_update())
         if row and row.status in {"queued", "running"}:
             return {"task_id": row.celery_task_id, "status": row.status}

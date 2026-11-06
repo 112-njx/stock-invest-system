@@ -11,6 +11,10 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${ROOT_DIR}"
 
+if command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "${SCRIPT_DIR}/start_stockdb_update_agent.ps1")"
+fi
+
 echo "[start] 清理开发容器残留..."
 CLEAN_ARGS=()
 if [[ "${1:-}" == "--clean-data" ]]; then CLEAN_ARGS=(-f); fi

@@ -28,6 +28,7 @@ x-backend-env: &backend_env
   CELERY_RESULT_BACKEND: redis://redis:6379/2
   STOCKDB_SDK_URL: ${STOCKDB_SDK_URL:-http://stockdb-local:7900}
   STOCKDB_URL: ${STOCKDB_URL:-http://stockdb-local:7899}
+  STOCKDB_CONTROL_DIR: /stockdb-control
   MEMORY_DIR: /app/data/memory
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
   DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
@@ -48,7 +49,12 @@ services:
     init: true
     mem_limit: ${STOCKDB_MEMORY_LIMIT:-2g}
     stop_grace_period: 30s
+    environment:
+      STOCKDB_CONTROL_DIR: /stockdb-control
+      STOCKDB_CACHE_DIR: /var/cache/stockdb
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control:ro
+      - ../stock_backend/data/stockdb-cache:/var/cache/stockdb
       - type: bind
         source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data
         target: /opt/stockdb/data
@@ -150,6 +156,7 @@ services:
       RUN_MIGRATIONS: "1"
       STOCKDB_URL: ${STOCKDB_URL:-http://stockdb-local:7899}
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       # 热挂载后端源码（数据/memory 等随宿主 stock_backend/data 落盘，与本地开发一致）
       - ../stock_backend:/app
       - ../docs/sql:/docs/sql:ro
@@ -179,6 +186,7 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest,sync,ai,backup", "--pool=solo", "--concurrency=1", "-n", "worker@%h"]
     environment: *backend_env
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - ../stock_backend:/app
       - pgwal:/wal-archive:ro  # G05：备份任务检查 WAL 归档状态
     depends_on:
@@ -193,7 +201,7 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "watchlist", "--pool=prefork", "--concurrency=1", "-n", "watchlist@%h"]
     environment: *backend_env
-    volumes: ["../stock_backend:/app"]
+    volumes: ["../stock_backend:/app", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -211,7 +219,7 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "control", "--pool=prefork", "--concurrency=1", "-n", "control@%h"]
     environment: *backend_env
-    volumes: ["../stock_backend:/app"]
+    volumes: ["../stock_backend:/app", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -229,7 +237,7 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "fixed_indices", "--pool=prefork", "--concurrency=1", "-n", "fixed@%h"]
     environment: *backend_env
-    volumes: ["../stock_backend:/app"]
+    volumes: ["../stock_backend:/app", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -247,7 +255,7 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backfill", "--pool=prefork", "--concurrency=1", "-n", "backfill@%h"]
     environment: *backend_env
-    volumes: ["../stock_backend:/app"]
+    volumes: ["../stock_backend:/app", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -269,6 +277,7 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "beat", "--schedule=/tmp/celerybeat-schedule"]
     environment: *backend_env
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - ../stock_backend:/app
     depends_on:
       db: { condition: service_healthy }

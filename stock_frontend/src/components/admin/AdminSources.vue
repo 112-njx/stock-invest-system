@@ -48,18 +48,45 @@ function policyChanged() {
   </section>
   <section class="admin-card">
     <div class="card-title">
+      <div><h2>一键更新原始数据</h2><p>步骤一：更新 D 盘 StockDB 数据文件，并恢复本地读取服务</p></div>
+      <span class="badge" :class="{ danger: s.update.data?.status === 'failed' }">{{ stateLabel(s.update.data?.status || 'idle') }}</span>
+    </div>
+    <div class="notice">
+      此操作会暂停本地源读取，停止 StockDB 服务，运行本机“数据更新.exe”下载原始文件，
+      按清单校验后生成新的数据版本，再启动服务并检查真实查询。不会创建备份，也不会自动导入项目数据库。
+      原有项目库历史仍可查看，需要补拉的数据暂不可用。
+    </div>
+    <p>请等待正在执行的行情同步结束，再更新原始数据。更新成功后，点击下方“同步本地行情”完成第二步。</p>
+    <AdminNotice :resource="s.update" />
+    <p v-if="s.update.data && !s.update.data.helper_online" class="notice danger">本机更新助手未连接，暂时无法从页面更新原始文件。</p>
+    <template v-if="s.update.data">
+      <p class="sync-message">{{ s.update.data.message }}</p>
+      <progress :value="s.update.data.progress" max="100" />
+      <p v-if="s.update.data.error" class="notice danger">{{ s.update.data.error }}</p>
+      <small v-if="s.update.data.data_version">当前数据版本 {{ s.update.data.data_version }}</small>
+    </template>
+    <div class="form-actions">
+      <button class="primary" :disabled="!s.update.data?.helper_online || controller.busyUpdate.value || controller.busySync.value || (s.update.data.maintenance && !s.update.data.can_retry)" @click="controller.startUpdate">
+        {{ controller.busyUpdate.value ? '原始数据更新中…' : s.update.data?.can_retry ? '重试原始数据更新' : '一键更新原始数据' }}
+      </button>
+      <span class="success" role="status">{{ s.feedback.update }}</span>
+      <span class="danger" role="alert">{{ s.saveError.update }}</span>
+    </div>
+  </section>
+  <section class="admin-card">
+    <div class="card-title">
       <div>
         <h2>本地行情同步</h2>
-        <p>同步 StockDB 行情；AkShare 是否入库由下方独立开关控制</p>
+        <p>步骤二：将本地数据导入项目数据库；AkShare 是否入库由下方独立开关控制</p>
       </div>
       <span class="badge" :class="{ danger: s.sync.data?.status === 'failed' }">{{
         s.sync.data ? stateLabel(s.sync.data.status) : '等待读取'
       }}</span>
     </div>
     <div class="notice">
-      先运行本机“数据更新.exe”，等待 stockdb
-      更新完成后再同步。此操作同步证券目录、受支持的固定指数和关注标的行情，不负责下载 stockdb
-      数据文件。
+      原始数据更新成功、StockDB 服务恢复后再执行。此操作读取证券目录、受支持的固定指数和关注标的行情，
+      校验后写入项目数据库，并刷新相关图表与指标缓存。它不会运行“数据更新.exe”、下载原始文件或重启 StockDB。
+      重试同步会复用同一数据版本下已成功计算的行业结果；失败计算不会缓存。
     </div>
     <AdminNotice :resource="s.sync" />
     <template v-if="s.sync.data"
@@ -74,7 +101,7 @@ function policyChanged() {
     <div class="form-actions">
       <button
         class="primary"
-        :disabled="!s.sync.data || controller.busySync.value"
+        :disabled="!s.sync.data || controller.busySync.value || controller.sourceBlocked.value"
         @click="controller.startSync"
       >
         {{ controller.busySync.value ? '同步任务处理中…' : '同步本地行情' }}</button

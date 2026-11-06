@@ -59,6 +59,7 @@ await build({
 })
 const fixtureCode = `
 const replies={
+ update:{status:'idle',phase:'idle',helper_online:true,maintenance:false,can_retry:false,data_version:'test-v1',progress:0,message:'尚未更新',error:null,task_id:null},
  indicatorSettings:{pandas_enabled:false,revision:1},
  services:{stockdb:{state:'online',latest_date:'20261105'},sdk:{state:'online'},date_scope:'600519'},
  policy:{akshare_enabled:false,history_storage_enabled:false,auto_sync_enabled:false},
@@ -67,7 +68,7 @@ const replies={
  sync:{status:'idle',task_id:null,error:null,progress:0,message:'尚未同步本地行情'},display:{synthetic_wick_factor:.5},
  requests:{requests:[{id:'1',task_id:'test-task',queue:'fixed_indices',provider:'stockdb',interface:'日k',symbol:'600519',symbol_name:'贵州茅台',symbols:[],period:'1d',phase:'requesting',attempt:1,attempts:1,started_at:'2026-11-06T00:00:00Z',updated_at:'2026-11-06T00:00:00Z'}]},
 };
-const fixture={calls:[],failSave:false,reply:replies,route:null,async call(key,data){this.calls.push(key);if(key.startsWith('save')){if(this.failSave)throw Error('save failed');if(key==='saveIndicatorSettings')return this.reply.indicatorSettings={...data,revision:2};if(key==='savePolicy')return this.reply.policy={...data};if(key==='saveLimits')return this.reply.traffic={...this.reply.traffic,...data};return this.reply.display={...data}}if(key==='startSync'){this.reply.sync={status:'queued',task_id:'new-task',error:null,progress:0,message:'等待同步'};return this.reply.sync}return structuredClone(this.reply[key])}};
+const fixture={calls:[],failSave:false,reply:replies,route:null,async call(key,data){this.calls.push(key);if(key.startsWith('save')){if(this.failSave)throw Error('save failed');if(key==='saveIndicatorSettings')return this.reply.indicatorSettings={...data,revision:2};if(key==='savePolicy')return this.reply.policy={...data};if(key==='saveLimits')return this.reply.traffic={...this.reply.traffic,...data};return this.reply.display={...data}}if(key==='startUpdate'){this.reply.update={...this.reply.update,status:'queued',maintenance:true,task_id:'update-task'};return this.reply.update}if(key==='startSync'){this.reply.sync={status:'queued',task_id:'new-task',error:null,progress:0,message:'等待同步'};return this.reply.sync}return structuredClone(this.reply[key])}};
 globalThis.adminFixture=fixture;
 `
 if (process.argv.includes('--preview')) {
@@ -134,6 +135,23 @@ const navigate = async (section) => {
 await settle()
 assert.match(document.body.textContent, /本地数据服务/)
 await navigate('sources')
+assert.match(document.body.textContent, /不会创建备份，也不会自动导入项目数据库/)
+assert.match(document.body.textContent, /不会运行“数据更新.exe”、下载原始文件或重启 StockDB/)
+const updateButton = [...document.querySelectorAll('button')].find(b => b.textContent.includes('一键更新原始数据'))
+const syncButton = [...document.querySelectorAll('button')].find(b => b.textContent.includes('同步本地行情'))
+assert.ok(updateButton && !updateButton.disabled)
+updateButton.click(); await settle()
+assert.equal(fixture.calls.filter(c => c === 'startUpdate').length, 1)
+assert.ok(syncButton.disabled, 'manual sync must be blocked during raw-file maintenance')
+fixture.reply.update = {...fixture.reply.update, status:'success', maintenance:false, progress:100}
+await navigate('overview'); await navigate('sources')
+assert.equal(syncButton.isConnected, false)
+assert.ok(![...document.querySelectorAll('button')].find(b => b.textContent.includes('同步本地行情')).disabled)
+fixture.reply.update.helper_online = false
+await navigate('overview'); await navigate('sources')
+assert.ok([...document.querySelectorAll('button')].find(b => b.textContent.includes('一键更新原始数据')).disabled)
+fixture.reply.update.helper_online = true
+await navigate('overview'); await navigate('sources')
 const inputs = [...document.querySelectorAll('input[type=checkbox]')]
 assert.equal(inputs.length, 4)
 assert.equal(inputs[3].checked, false, 'SDK must be the default')

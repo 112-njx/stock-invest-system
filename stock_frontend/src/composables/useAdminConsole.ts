@@ -4,6 +4,7 @@ import {
   type DisplaySettings,
   type LocalServices,
   type LocalSync,
+  type LocalUpdate,
   type ProviderRequest,
   type SourcePolicy,
   type TaskQueues,
@@ -68,15 +69,16 @@ export function useAdminConsole(section: Ref<AdminSection>) {
     traffic: resource<Traffic>(),
     queues: resource<TaskQueues>(),
     sync: resource<LocalSync>(),
+    update: resource<LocalUpdate>(),
     requests: resource<{ requests: ProviderRequest[] }>(),
     display: resource<DisplaySettings>(),
     policyForm: { akshare_enabled: false, history_storage_enabled: false, auto_sync_enabled: false },
     limitsForm: { interval_seconds: 2, retry_interval_seconds: 10, daily_budget: 2000 },
     displayForm: { synthetic_wick_factor: 0.5 },
     dirty: { policy: false, limits: false, display: false },
-    saving: { policy: false, limits: false, display: false, sync: false },
-    feedback: { policy: '', limits: '', display: '', sync: '' },
-    saveError: { policy: '', limits: '', display: '', sync: '' },
+    saving: { policy: false, limits: false, display: false, sync: false, update: false },
+    feedback: { policy: '', limits: '', display: '', sync: '', update: '' },
+    saveError: { policy: '', limits: '', display: '', sync: '', update: '' },
   })
   let alive = true
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -112,6 +114,7 @@ export function useAdminConsole(section: Ref<AdminSection>) {
     services: () => load(state.services, adminApi.services),
     queues: () => load(state.queues, adminApi.queues),
     sync: () => load(state.sync, adminApi.sync),
+    update: () => load(state.update, adminApi.update),
     requests: () => load(state.requests, adminApi.requests),
     policy: () =>
       load(state.policy, adminApi.policy, (value) => {
@@ -131,6 +134,8 @@ export function useAdminConsole(section: Ref<AdminSection>) {
         if (!state.dirty.display && !state.saving.display) Object.assign(state.displayForm, value)
       }),
   }
+  const busyUpdate = computed(() => state.saving.update || ['queued', 'running'].includes(state.update.data?.status ?? ''))
+  const sourceBlocked = computed(() => busyUpdate.value || !!state.update.data?.maintenance || (!!state.update.data && !state.update.data.data_version))
   const busySync = computed(
     () => state.saving.sync || ['queued', 'running'].includes(state.sync.data?.status ?? '')
   )
@@ -139,8 +144,8 @@ export function useAdminConsole(section: Ref<AdminSection>) {
   )
   async function refresh() {
     const keys = {
-      overview: ['services', 'policy', 'queues', 'sync'],
-      sources: ['services', 'policy', 'traffic', 'sync'],
+      overview: ['services', 'policy', 'queues', 'sync', 'update'],
+      sources: ['services', 'policy', 'traffic', 'sync', 'update'],
       tasks: ['queues'],
       requests: ['requests'],
       display: ['display'],
@@ -207,7 +212,7 @@ export function useAdminConsole(section: Ref<AdminSection>) {
     }
   }
   async function startSync() {
-    if (busySync.value) return
+    if (busySync.value || sourceBlocked.value) return
     state.saving.sync = true
     state.saveError.sync = ''
     state.feedback.sync = ''
@@ -231,13 +236,33 @@ export function useAdminConsole(section: Ref<AdminSection>) {
       state.saving.sync = false
     }
   }
+  async function startUpdate() {
+    if (busyUpdate.value || busySync.value || !state.update.data?.helper_online) return
+    state.saving.update = true
+    state.saveError.update = ''
+    state.feedback.update = ''
+    invalidate(state.update)
+    try {
+      state.update.data = await adminApi.startUpdate()
+      invalidate(state.update)
+      state.update.error = ''
+      state.feedback.update = '已提交原始数据更新；完成后请再同步本地行情'
+    } catch (error: unknown) {
+      const e = error as { response?: { data?: { msg?: string } } }
+      state.saveError.update = e.response?.data?.msg || '提交失败，请刷新检查更新助手和同步任务状态'
+    } finally {
+      state.saving.update = false
+    }
+  }
   async function poll() {
     if (!alive || document.hidden) return
     if (section.value === 'requests') await loaders.requests()
     else if (section.value === 'tasks') await loaders.queues()
     else if (['overview', 'sources'].includes(section.value)) {
       const wasBusy = busySync.value
-      await loaders.sync()
+      const updateWasBusy = busyUpdate.value
+      await Promise.all([loaders.sync(), loaders.update()])
+      if (updateWasBusy && !busyUpdate.value) await loaders.services()
       if (wasBusy && !busySync.value) await Promise.all([loaders.services(), loaders.queues()])
     }
   }
@@ -252,7 +277,7 @@ export function useAdminConsole(section: Ref<AdminSection>) {
           schedule()
         }
       },
-      section.value === 'requests' || busySync.value ? 3000 : 10000
+      section.value === 'requests' || busySync.value || busyUpdate.value ? 3000 : 10000
     )
   }
   function visibility() {
@@ -277,6 +302,6 @@ export function useAdminConsole(section: Ref<AdminSection>) {
     state.dirty[kind] = true
     state.feedback[kind] = ''
   }
-  return { state, busySync, refreshing, refresh, save, startSync, edit }
+  return { state, busySync, busyUpdate, sourceBlocked, refreshing, refresh, save, startSync, startUpdate, edit }
 }
 export type AdminConsole = ReturnType<typeof useAdminConsole>

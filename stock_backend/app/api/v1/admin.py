@@ -21,6 +21,18 @@ from app.worker.tasks.sync_tasks import catalog_sync
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 logger = logging.getLogger(__name__)
+
+
+@router.get('/local-market/update')
+def get_local_update(current: User = Depends(get_current_admin)):
+    from app.services.stockdb_update import status
+    return ok(data=status())
+
+
+@router.post('/local-market/update')
+def start_local_update(current: User = Depends(get_current_admin)):
+    from app.services.stockdb_update import request_update
+    return ok(data=request_update())
 QUEUE_NAMES = ("watchlist", "fixed_indices", "backfill", "control", "sync", "backtest", "ai", "backup")
 
 

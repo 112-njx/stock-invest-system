@@ -21,6 +21,7 @@ x-backend-env: &backend_env
   CELERY_RESULT_BACKEND: redis://redis:6379/2
   STOCKDB_SDK_URL: ${STOCKDB_SDK_URL:-http://stockdb-local:7900}
   STOCKDB_URL: ${STOCKDB_URL:-http://stockdb-local:7899}
+  STOCKDB_CONTROL_DIR: /stockdb-control
   MEMORY_DIR: /app/data/memory
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
   DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
@@ -42,7 +43,12 @@ services:
     init: true
     mem_limit: ${STOCKDB_MEMORY_LIMIT:-2g}
     stop_grace_period: 30s
+    environment:
+      STOCKDB_CONTROL_DIR: /stockdb-control
+      STOCKDB_CACHE_DIR: /var/cache/stockdb
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control:ro
+      - ../stock_backend/data/stockdb-cache:/var/cache/stockdb
       - type: bind
         source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data
         target: /opt/stockdb/data
@@ -140,6 +146,7 @@ services:
       <<: *backend_env
       RUN_MIGRATIONS: "1"
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - backenddata:/app/data
     depends_on:
       db: { condition: service_healthy }
@@ -152,6 +159,7 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     environment: *backend_env
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - backenddata:/app/data
       - pgwal:/wal-archive:ro  # G05：只读挂载 WAL 归档卷，/metrics 可读归档文件数
     depends_on:
@@ -197,7 +205,7 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "watchlist", "--pool=prefork", "--concurrency=1", "-n", "watchlist@%h"]
     environment: *backend_env
-    volumes: ["backenddata:/app/data"]
+    volumes: ["backenddata:/app/data", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
@@ -216,7 +224,7 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "control", "--pool=prefork", "--concurrency=1", "-n", "control@%h"]
     environment: *backend_env
-    volumes: ["backenddata:/app/data"]
+    volumes: ["backenddata:/app/data", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
@@ -235,7 +243,7 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "fixed_indices", "--pool=prefork", "--concurrency=1", "-n", "fixed@%h"]
     environment: *backend_env
-    volumes: ["backenddata:/app/data"]
+    volumes: ["backenddata:/app/data", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
@@ -254,7 +262,7 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backfill", "--pool=prefork", "--concurrency=1", "-n", "backfill@%h"]
     environment: *backend_env
-    volumes: ["backenddata:/app/data"]
+    volumes: ["backenddata:/app/data", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
@@ -289,6 +297,7 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "ai", "--pool=solo", "--concurrency=1", "-n", "ai@%h"]
     environment: *backend_env
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - backenddata:/app/data
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -304,6 +313,7 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "beat"]
     environment: *backend_env
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - backenddata:/app/data
     depends_on:
       db: { condition: service_healthy }

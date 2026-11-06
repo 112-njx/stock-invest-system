@@ -9,6 +9,7 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 TZ=Asia/Shanghai
 COPY deploy/stockdb/LICENSE.stockdb /opt/stockdb/LICENSE
 COPY deploy/stockdb/stockdb.conf /opt/stockdb/stockdb.conf
 COPY deploy/stockdb/supervise.py deploy/stockdb/healthcheck.py /opt/
+COPY stock_backend/app/services/stockdb_files.py /opt/stockdb_files.py
 COPY scripts/stockdb_sdk_bridge.py /opt/stockdb_sdk_bridge.py
 EXPOSE 7899 7900
 ENTRYPOINT ["python", "/opt/supervise.py"]

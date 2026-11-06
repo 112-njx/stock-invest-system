@@ -21,6 +21,7 @@ class StockDBProvider(BaseDataProvider):
     probe_asset_type = "stock"
 
     def query(self, command: str, table: str, **params):
+        self._check_maintenance()
         try:
             with httpx.Client(base_url=get_settings().STOCKDB_URL, timeout=self.timeout, trust_env=False) as client:
                 response = client.get("/", params={"cmd": command, "t": table, "json": 1, **params})
@@ -32,6 +33,16 @@ class StockDBProvider(BaseDataProvider):
         except (httpx.HTTPError, ValueError) as exc:
             logger.warning("[stockdb] connection_or_response_error table=%s: %s", table, exc)
             raise ProviderError(f"StockDB 本地查询失败: {exc}") from exc
+
+    @staticmethod
+    def _check_maintenance():
+        import os
+        if os.environ.get('STOCKDB_CONTROL_DIR'):
+            from app.services.stockdb_files import ensure_available
+            try:
+                ensure_available(os.environ['STOCKDB_CONTROL_DIR'])
+            except RuntimeError as exc:
+                raise ProviderError(str(exc)) from exc
 
     def can_fetch_kline(self, asset_type: str, period: str) -> bool:
         # Bare index codes collide with stock codes in the local dataset.
@@ -113,6 +124,7 @@ class StockDBProvider(BaseDataProvider):
         return sorted(output, key=lambda bar: bar.ts)
 
     def _sdk_kline(self, symbol, period, start, end):
+        self._check_maintenance()
         settings = get_settings()
         frequency = "1M" if period == "1mon" else period
         # Ask the SDK for complete containing periods, then filter by returned labels.

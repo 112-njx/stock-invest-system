@@ -5,6 +5,8 @@ Run with the Python version matching stockdb.pyd. No market calculations live he
 import argparse
 import json
 import logging
+import os
+import sqlite3
 from concurrent.futures import Future
 from collections import Counter
 import re
@@ -104,11 +106,56 @@ def sdk_query(sdk_dir, code, frequency, start, end):
             process.join()
 
 
+try:
+    from stockdb_files import FullResultCache, data_version, ensure_available
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'stock_backend'))
+    from app.services.stockdb_files import FullResultCache, data_version, ensure_available
+
+
+class IndustryQuery:
+    def __init__(self, sdk_dir, control, cache):
+        self.sdk_dir, self.control, self.cache = sdk_dir, control, cache
+
+    def lookup(self, code, frequency, start, end):
+        if not code.endswith('.SL'):
+            return None
+        version = data_version(self.control)
+        try:
+            rows = self.cache.get(code + '@' + end, frequency, version)
+        except (OSError, ValueError, sqlite3.DatabaseError):
+            logging.getLogger('stockdb.bridge').exception('persistent cache read failed; using SDK')
+            return None
+        if rows is None:
+            return None
+        return [row for row in rows if str(row['date']) >= start], {'persistent_hit': 1}
+
+    def __call__(self, code, frequency, start, end):
+        if not code.endswith('.SL'):
+            return sdk_query(self.sdk_dir, code, frequency, start, end)
+        cached = self.lookup(code, frequency, start, end)
+        if cached is not None:
+            return cached
+        version = data_version(self.control)
+        # End is part of the snapshot identity: partial weeks/months must not
+        # be answered by truncating a later period result.
+        rows, timings = sdk_query(self.sdk_dir, code, frequency, '20000101', end)
+        if data_version(self.control) != version:
+            raise RuntimeError('数据版本已切换，请重新查询')
+        try:
+            self.cache.put(code + '@' + end, frequency, version, rows)
+        except (OSError, sqlite3.DatabaseError):
+            logging.getLogger('stockdb.bridge').exception('persistent cache write failed; serving SDK result')
+        return [row for row in rows if str(row['date']) >= start], {**timings, 'persistent_hit': 0}
+
+
 class QueryService:
     """Short cache lock, independent native execution lock, one Future per key/version."""
 
-    def __init__(self, query, ttl=300, capacity=32):
+    def __init__(self, query, ttl=300, capacity=32, version_provider=None):
         self.query = query
+        self.version_provider = version_provider
+        self.memory_limit = 16 * 1024 * 1024
         self.ttl, self.capacity = ttl, capacity
         self.state_lock, self.sdk_lock = Lock(), Lock()
         self.cache, self.inflight = {}, {}
@@ -126,14 +173,16 @@ class QueryService:
             self.cache.clear()
             self.counts['refreshes'] += 1
 
-    def get(self, key, trace):
+    def get(self, key, trace, probe=False):
+        version = self.version_provider(probe) if self.version_provider else None
+        cache_key = (version, key)
         with self.state_lock:
-            cached = self.cache.get(key)
+            cached = self.cache.get(cache_key)
             if cached and monotonic() - cached[0] < self.ttl:
                 self.counts['cache_hits'] += 1
                 trace['source'] = 'cache'
                 return cached[1]
-            token = (self.generation, key)
+            token = (self.generation, version, key)
             future = self.inflight.get(token)
             owner = future is None
             if owner:
@@ -152,29 +201,41 @@ class QueryService:
         trace['source'] = 'sdk'
         try:
             begun = monotonic()
-            with self.sdk_lock:
-                trace['queue_ms'] = (monotonic() - begun) * 1000
+            cached_disk = self.query.lookup(*key) if hasattr(self.query, 'lookup') else None
+            if cached_disk is not None:
+                rows, timings = cached_disk
+                trace.update(timings)
                 with self.state_lock:
-                    self.counts['sdk_calls'] += 1
-                begun = monotonic()
-                try:
-                    rows, timings = self.query(*key)
-                    trace.update(timings)
-                except SDKQueryError as exc:
-                    trace.update(exc.timings)
-                    raise
-                finally:
-                    # Includes spawn, IPC, child cleanup and any lazy SDK initialization.
-                    trace['sdk_total_ms'] = (monotonic() - begun) * 1000
+                    self.counts['disk_hits'] += 1
+            else:
+                with self.sdk_lock:
+                    trace['queue_ms'] = (monotonic() - begun) * 1000
+                    begun = monotonic()
+                    try:
+                        rows, timings = self.query(*key)
+                        trace.update(timings)
+                    except SDKQueryError as exc:
+                        trace.update(exc.timings)
+                        raise
+                    finally:
+                        trace['sdk_total_ms'] = (monotonic() - begun) * 1000
+                        with self.state_lock:
+                            self.counts['disk_hits' if trace.get('persistent_hit') else 'sdk_calls'] += 1
+            if trace.get('persistent_hit'):
+                trace['source'] = 'disk'
             begun = monotonic()
             encoded = json.dumps(rows, ensure_ascii=False, allow_nan=False).encode('utf-8')
             trace['serialize_ms'] = (monotonic() - begun) * 1000
             trace['rows'] = len(rows)
+            if self.version_provider and self.version_provider(probe) != version:
+                raise RuntimeError('数据版本已切换，请重新查询')
             with self.state_lock:
-                if token[0] == self.generation:
+                if token[0] == self.generation and len(encoded) <= self.memory_limit:
                     if len(self.cache) >= self.capacity:
                         self.cache.pop(next(iter(self.cache)))
-                    self.cache[key] = (monotonic(), encoded)
+                    self.cache[cache_key] = (monotonic(), encoded)
+                    while sum(len(value[1]) for value in self.cache.values()) > self.memory_limit:
+                        self.cache.pop(next(iter(self.cache)))
                 self.last_success = time()
             future.set_result(encoded)
             return encoded
@@ -207,6 +268,8 @@ class QueryService:
             snapshot = {'counts': dict(self.counts),
                         'cache_hit_ratio': self.counts['cache_hits'] / lookups if lookups else 0,
                         'cache_entries': sum(now-t < self.ttl for t, _ in self.cache.values()),
+                        'memory_cache_bytes': sum(len(value[1]) for value in self.cache.values()),
+                        'memory_cache_limit_bytes': self.memory_limit,
                         'inflight': len(self.inflight), 'generation': self.generation,
                         'last_success_unix': self.last_success,
                         'durations': {k: dict(v) for k, v in self.durations.items()}}
@@ -297,7 +360,17 @@ def sdk_indicators(sdk_dir, payload):
 
 
 def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
-    service = service or QueryService(lambda *key: sdk_query(sdk_dir, *key))
+    if service is None:
+        control = os.environ.get('STOCKDB_CONTROL_DIR')
+        if control:
+            cache = FullResultCache(os.environ.get('STOCKDB_CACHE_DIR', '/var/cache/stockdb'))
+            def version(probe):
+                if not probe:
+                    ensure_available(control)
+                return data_version(control)
+            service = QueryService(IndustryQuery(sdk_dir, control, cache), version_provider=version)
+        else:
+            service = QueryService(lambda *key: sdk_query(sdk_dir, *key))
     logger = logging.getLogger('stockdb.bridge')
     indicator_lock = Lock()
 
@@ -371,7 +444,7 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
                     if not re.fullmatch(r'\d{8}(?:\d{6})?', start) or not re.fullmatch(r'N|\d{8}(?:\d{6})?', end):
                         raise ValueError('invalid date')
                     trace.update(code=code, frequency=frequency, start=start, end=end, path=url.path)
-                    encoded = service.get((code, frequency, start, end), trace)
+                    encoded = service.get((code, frequency, start, end), trace, probe=url.path == '/ready')
                     if url.path == '/ready':
                         rows = json.loads(encoded)
                         if not isinstance(rows, list) or not rows or not all('close' in row for row in rows):

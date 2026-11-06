@@ -42,6 +42,13 @@ export interface LocalSync {
   progress: number
   message: string
 }
+export interface LocalUpdate extends LocalSync {
+  helper_online: boolean
+  maintenance: boolean
+  can_retry: boolean
+  phase: string
+  data_version: string | null
+}
 export interface DisplaySettings {
   synthetic_wick_factor: number
 }
@@ -76,6 +83,8 @@ export const adminApi = {
   traffic: () => read<Traffic>('traffic'),
   queues: () => read<TaskQueues>('task-queues'),
   sync: () => read<LocalSync>('local-market/sync'),
+  update: () => read<LocalUpdate>('local-market/update'),
+  startUpdate: () => request<LocalUpdate>({url: '/admin/local-market/update', method: 'post', silent: true}),
   display: () => read<DisplaySettings>('market-display'),
   requests: () => read<{ requests: ProviderRequest[] }>('provider-requests'),
   savePolicy: (data: SourcePolicy) => put<SourcePolicy>('market-source-policy', data),
