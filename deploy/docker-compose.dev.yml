@@ -26,8 +26,8 @@ x-backend-env: &backend_env
   REDIS_URL: redis://redis:6379/0
   CELERY_BROKER_URL: redis://redis:6379/1
   CELERY_RESULT_BACKEND: redis://redis:6379/2
-  STOCKDB_SDK_URL: ${STOCKDB_SDK_URL:-http://host.docker.internal:7900}
-  STOCKDB_URL: ${STOCKDB_URL:-http://host.docker.internal:7899}
+  STOCKDB_SDK_URL: ${STOCKDB_SDK_URL:-http://stockdb-local:7900}
+  STOCKDB_URL: ${STOCKDB_URL:-http://stockdb-local:7899}
   MEMORY_DIR: /app/data/memory
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
   DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
@@ -40,6 +40,40 @@ x-backend-env: &backend_env
   RCLONE_REMOTE: ${RCLONE_REMOTE:-}  # 对象存储远端；为空=模拟模式（不真同步）
 
 services:
+  stockdb-local:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: deploy/stockdb/Dockerfile
+    init: true
+    mem_limit: ${STOCKDB_MEMORY_LIMIT:-2g}
+    stop_grace_period: 30s
+    volumes:
+      - type: bind
+        source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data
+        target: /opt/stockdb/data
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data1
+        target: /opt/stockdb/data1
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data_app
+        target: /opt/stockdb/data_app
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/mydb
+        target: /opt/stockdb/mydb
+        bind: { create_host_path: false }
+    healthcheck:
+      test: ["CMD", "python", "/opt/healthcheck.py"]
+      interval: 60s
+      timeout: 180s
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
   wal-init:
     # G05：WAL 归档卷由 Docker 以 root 创建，postgres(uid 999) 写不进去 → archive_command 会持续失败。
     # 用一次性 sidecar 先把目录属主改成 postgres，db 再启动。
@@ -114,7 +148,7 @@ services:
     environment:
       <<: *backend_env
       RUN_MIGRATIONS: "1"
-      STOCKDB_URL: ${STOCKDB_URL:-http://host.docker.internal:7899}
+      STOCKDB_URL: ${STOCKDB_URL:-http://stockdb-local:7899}
     volumes:
       # 热挂载后端源码（数据/memory 等随宿主 stock_backend/data 落盘，与本地开发一致）
       - ../stock_backend:/app
@@ -123,7 +157,10 @@ services:
       - pgwal:/wal-archive:ro
     ports:
       - "${DEV_API_PORT:-127.0.0.1:8000}:8000"
-    depends_on: [db, redis]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
     # dev 为 --reload 多进程：healthcheck 用较长 interval/retries 容忍 reload 子进程重启，避免误判 unhealthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
@@ -144,7 +181,10 @@ services:
     volumes:
       - ../stock_backend:/app
       - pgwal:/wal-archive:ro  # G05：备份任务检查 WAL 归档状态
-    depends_on: [db, redis]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
     healthcheck: { disable: true }
     restart: unless-stopped
     networks: [backend]
@@ -154,7 +194,10 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "watchlist", "--pool=prefork", "--concurrency=1", "-n", "watchlist@%h"]
     environment: *backend_env
     volumes: ["../stock_backend:/app"]
-    depends_on: [db, redis]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d watchlist@$$HOSTNAME | grep -q pong"]
       interval: 30s
@@ -169,7 +212,10 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "control", "--pool=prefork", "--concurrency=1", "-n", "control@%h"]
     environment: *backend_env
     volumes: ["../stock_backend:/app"]
-    depends_on: [db, redis]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d control@$$HOSTNAME | grep -q pong"]
       interval: 30s
@@ -184,7 +230,10 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "fixed_indices", "--pool=prefork", "--concurrency=1", "-n", "fixed@%h"]
     environment: *backend_env
     volumes: ["../stock_backend:/app"]
-    depends_on: [db, redis]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d fixed@$$HOSTNAME | grep -q pong"]
       interval: 30s
@@ -199,7 +248,10 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backfill", "--pool=prefork", "--concurrency=1", "-n", "backfill@%h"]
     environment: *backend_env
     volumes: ["../stock_backend:/app"]
-    depends_on: [db, redis]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d backfill@$$HOSTNAME | grep -q pong"]
       interval: 30s
@@ -218,7 +270,10 @@ services:
     environment: *backend_env
     volumes:
       - ../stock_backend:/app
-    depends_on: [db, redis]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
     healthcheck: { disable: true }
     restart: unless-stopped
     networks: [backend]

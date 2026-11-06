@@ -1,4 +1,4 @@
-"""Windows-only local HTTP transport for the installed Free-StockDB official SDK.
+"""Local HTTP transport for the installed Free-StockDB official SDK.
 
 Run with the Python version matching stockdb.pyd. No market calculations live here.
 """

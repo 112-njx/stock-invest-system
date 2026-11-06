@@ -11,17 +11,22 @@
 回测冷启动和图表历史补拉共用后台历史准备流程：取得证券级事务锁，查询范围包含库中已有历史，校验返回数据覆盖完整已有区间后再原子写入，避免新旧前复权基准拼接。提交后再次失效图表和指标缓存。空图首次补拉携带 `initial=true`；近期窗口没有记录时，在后台扩大到供应商可用历史，支持长期停牌、退市标的。普通向左分页不启用这一全历史探测；两类任务分别去重。
 
 
-Windows 上先启动 `D:\Free_stockdb\stockdb\stockdb.exe`，再启动官方 SDK 查询桥：
+Docker Compose 默认运行 `stockdb-local`，同容器内启动 Linux stockdb 和现有 SDK 查询桥，不再需要打开 Windows stockdb 或手动启动 7900 桥。
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\stock-invest-system\deploy\start_stockdb_sdk_bridge.ps1
+docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d --build
 ```
 
-脚本默认使用 `D:\Pycharm\python\python.exe` 和 `D:\Free_stockdb\stockdb\pybao`，可通过 `-Python`、`-SdkDirectory` 指定。Python 版本须匹配 `stockdb.pyd`。Git Bash 的 `deploy/start_dev.sh` 会启动查询桥；单独执行 Docker Compose 时需要先执行上面的命令。
-
-- RD 地址：`STOCKDB_URL`，Docker 默认 `http://host.docker.internal:7899`。
-- 官方 SDK 查询桥：`STOCKDB_SDK_URL`，Docker 默认 `http://host.docker.internal:7900`。`/health` 可检查服务。
-- 本地更新仍由用户运行 `数据更新.exe`，完成后点击管理后台“同步本地行情数据”。
+- RD：`STOCKDB_URL=http://stockdb-local:7899`；SDK 桥：`STOCKDB_SDK_URL=http://stockdb-local:7900`。仅容器内网可访问，不发布宿主端口。
+- `STOCKDB_HOST_DIR=D:/Free_stockdb/stockdb` 下的 `data`、`data1`、`data_app`、`mydb` 分别绑定挂载到 `/opt/stockdb/` 对应目录；源目录必须存在，数据不进入镜像。
+- 使用固定 SHA-256 的 v0.3.5 manylinux-x64 包及 Python 3.12；MIT 声明随镜像保留。SDK 查询、缓存、子进程隔离逻辑保持不变。
+- 初始缓存配置为 256 MiB，容器总内存上限由 `STOCKDB_MEMORY_LIMIT` 控制，默认 2 GiB；缓存配置不是整个进程的内存上限。
+- 服务端配置 `readonly: yes` 禁止协议写入，但 LevelDB 打开、恢复、锁文件仍可能需要文件写权限，绑定挂载不设置只读。
+- **禁止 Windows 服务、另一套 Compose 服务或更新器同时打开同一数据集。**不要依赖跨 Windows/Linux 文件锁互斥。
+- 更新数据：先 `docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml stop stockdb-local`，确认退出后运行 Windows 更新工具；更新工具退出后 `up -d stockdb-local`，再在管理员页手动同步。
+- `/health` 仅探测桥进程；Docker 健康检查使用 `/opt/healthcheck.py`，通过桥发起真实 SDK 查询，验证 7899、SDK 和数据均可用。关键子进程退出会导致整个容器失败并重启。
+- 回退：先停止 `stockdb-local`，恢复两个 URL 为 `host.docker.internal`，启动 Windows stockdb 与 `deploy/start_stockdb_sdk_bridge.ps1`，再重建后端容器以加载环境变量。生产和开发 Compose 不可同时使用同一数据目录。
+- 真实数据复验：运行 `scripts/verify_stockdb_container.py --base-url URL --output result.json [--compare baseline.json]`。服务仅内网可见时可把脚本复制进容器运行；脚本对比股票、ETF、申万一级指数的日期、条数、字段和值，并验证缓存结果。
 
 股票、ETF 的日 K 与 15 分钟 K 沿用本地适配器。周 K、月 K 分别调用官方 SDK 的 `frequency=1w/1M`、`fq=qfq`，直接保存返回记录；行情、指标与回测均读取各自周期表。没有项目内日 K 聚合周月 K 的逻辑。未结束周/月的 SDK 日期标签前移时替换同周期旧标签；原生指数在同周期返回多个日期时保留最后一条原值，不聚合 OHLC。
 
