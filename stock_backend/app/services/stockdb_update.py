@@ -53,7 +53,17 @@ def request_update():
             write_json(root / 'status.json', {'task_id': task_id, 'status': 'queued', 'phase': 'queued',
                        'progress': 0, 'message': '等待本机助手更新原始文件；不会自动导入项目数据库', 'error': None})
             write_json(root / 'request.json', {'task_id': task_id, 'operation': 'update', 'created_at': time.time()})
-        except Exception:
+        except Exception as exc:
+            # No queued status may survive without a job for the helper to claim.
+            # Remove the job before publishing a retryable terminal state.
+            (root / 'request.json').unlink(missing_ok=True)
+            try:
+                write_json(root / 'status.json', {'task_id': task_id, 'status': 'failed', 'phase': 'failed',
+                           'progress': 0, 'message': '更新请求提交失败，尚未执行更新，请重试', 'error': str(exc)})
+            except OSError:
+                # A full/unwritable disk can also prevent writing the failure state.
+                # Falling back to idle is preferable to an unrecoverable queued job.
+                (root / 'status.json').unlink(missing_ok=True)
             (root / 'maintenance.json').unlink(missing_ok=True)
             raise
         db.commit()

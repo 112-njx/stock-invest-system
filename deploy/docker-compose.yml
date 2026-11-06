@@ -190,6 +190,7 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "sync,backup", "--pool=solo", "--concurrency=1", "-n", "sync@%h"]
     environment: *backend_env
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - backenddata:/app/data
       - pgwal:/wal-archive:ro  # G05：备份任务检查 WAL 归档状态
     depends_on:
@@ -282,6 +283,7 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest", "--pool=solo", "--concurrency=1", "-n", "backtest@%h"]
     environment: *backend_env
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - backenddata:/app/data
     depends_on:
       migrate: { condition: service_completed_successfully }

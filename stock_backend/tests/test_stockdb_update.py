@@ -69,3 +69,33 @@ def test_update_routes_require_admin(control):
             assert result.json()['data']['status'] == 'queued'
     finally:
         app.dependency_overrides.pop(get_current_admin, None)
+
+
+@pytest.mark.parametrize('recovery_write_fails', [False, True])
+def test_queue_write_failure_is_retryable_without_orphan_files(control, monkeypatch, recovery_write_fails):
+    root, _ = control
+
+    def fail_submission(path, value):
+        if path.name == 'request.json':
+            # Include cleanup of any residual published request.
+            write_json(path, value)
+            raise OSError('simulated queue write failure')
+        if recovery_write_fails and value.get('status') == 'failed':
+            raise OSError('simulated full disk during recovery')
+        write_json(path, value)
+
+    monkeypatch.setattr(update, 'write_json', fail_submission)
+    with pytest.raises(OSError, match='queue write failure'):
+        update.request_update()
+    state = update.status()
+    assert state['status'] == ('idle' if recovery_write_fails else 'failed')
+    assert not state['maintenance']
+    assert not (root / 'request.json').exists()
+    if not recovery_write_fails:
+        assert state['can_retry']
+        assert 'queue write failure' in state['error']
+
+    monkeypatch.setattr(update, 'write_json', write_json)
+    retried = update.request_update()
+    assert retried['status'] == 'queued'
+    assert read_json(root / 'request.json')['task_id'] == retried['task_id']
