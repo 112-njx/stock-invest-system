@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import TrendView from '@/views/TrendView.vue'
 import StockDbChart from '@/components/stockdb/StockDbChart.vue'
 import {
   algorithms, barReturn, categories, percent,
@@ -8,8 +10,12 @@ import {
 } from '@/api/stockdb'
 import { cachedStockDb, fetchStockDb, peekCache, putCache, readCache, StockDbHttpError } from '@/api/stockdbCache'
 
+const trendMode = ref(useRoute()?.query.view === 'trends')
+function selectCategory(id: Category) { trendMode.value = false; category.value = id; clearHover() }
+function openTrends() { trendMode.value = true; category.value = 'sw1'; clearHover(); drawer.value?.close() }
+
 function supportedWorkspace(value: Workspace | undefined) {
-  return value && categories.some(([id]) => id === value.category) ? value : undefined
+  return value && categories.some(([id]) => id === value.category) && (!trendMode.value || value.category === 'sw1') ? value : undefined
 }
 const screen = shallowRef(supportedWorkspace(peekCache<Workspace>('last-workspace')))
 function readPreferences() {
@@ -420,13 +426,16 @@ onBeforeUnmount(() => {
 })
 </script>
 <template>
-  <div class="blueprint">
+  <div class="blueprint" :class="{ 'blueprint--trends': trendMode }">
     <aside class="panel categories">
       <header class="panel-head"><strong>分类</strong></header>
       <div class="categories__list">
-        <button v-for="[id, label] in categories" :key="id" :class="{ active: shownCategory === id }"
-          :aria-pressed="shownCategory === id" @click="category = id">{{ label }}</button>
-        <RouterLink to="/stockdb/trends" class="trend-entry">波段追踪</RouterLink>
+        <template v-for="[id, label] in categories" :key="id">
+          <button :class="{ active: !trendMode && shownCategory === id }"
+            :aria-pressed="!trendMode && shownCategory === id" @click="selectCategory(id)">{{ label }}</button>
+          <button v-if="id === 'sw1'" class="trend-entry" :class="{ active: trendMode }"
+            :aria-pressed="trendMode" @click="openTrends">└ 波段追踪</button>
+        </template>
       </div>
     </aside>
 
@@ -434,7 +443,7 @@ onBeforeUnmount(() => {
       <header class="panel-head"><strong>{{ categoryName }}</strong><small>{{ boards.length }} 个板块</small></header>
       <div ref="boardList" class="rows">
         <button v-for="board in ranked" :key="board.id" class="board-row" :class="{ active: boardId === board.id }"
-          :aria-pressed="boardId === board.id" :title="board.name" @click="selectBoard(board.id)" @dblclick="compare(board)">
+          :aria-pressed="boardId === board.id" :title="board.name" @click="selectBoard(board.id)" @dblclick="!trendMode && compare(board)">
           <span class="ellipsis">{{ board.name }}</span><small>{{ board.count }}</small>
           <strong :class="color(board.change)">{{ formatReturn(board.change) }}</strong>
         </button>
@@ -442,7 +451,10 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <section class="panel indices">
+    <TrendView v-if="trendMode && shownCategory === 'sw1' && boardId" class="embedded-trends"
+      embedded :industry="boardId" />
+    <section v-else-if="trendMode" class="embedded-trends empty">正在准备申万一级行业…</section>
+    <section v-else class="panel indices">
       <header class="panel-head index-toolbar">
         <div class="algorithms"><strong>⚡ 指数算法</strong>
           <div class="segmented" aria-label="指数算法">
@@ -467,7 +479,7 @@ onBeforeUnmount(() => {
               <header class="card-head">
                 <span class="rank" :class="`rank--${firstCard + i + 1}`">TOP {{ firstCard + i + 1 }}</span>
                 <button class="card-name ellipsis" :class="{ selected: boardId === board.id }" :title="board.name"
-                  @click="selectBoard(board.id)" @dblclick="compare(board)">{{ board.name }}</button>
+                  @click="selectBoard(board.id)" @dblclick="!trendMode && compare(board)">{{ board.name }}</button>
                 <span class="weight-label">{{ weightName }}{{ shownWeight === 'equal' ? '' : '加权' }}</span>
                 <button class="compare" :aria-label="`${board.name}五维对比`" @click="compare(board)">五维</button>
                 <strong class="quote">{{ board.price?.toFixed(2) ?? '—' }}</strong>
@@ -480,7 +492,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <aside class="panel constituents">
+    <aside v-if="!trendMode" class="panel constituents">
       <header class="panel-head"><strong class="ellipsis">{{ currentBoard?.name ?? '板块股票' }}</strong>
         <small v-if="detail">{{ detail.members.length }}/{{ detail.count }} 只</small>
       </header>
@@ -560,7 +572,7 @@ button:hover, .active { background: var(--blueprint-active); color: var(--bluepr
 .categories__list { display: grid; padding: 6px 8px; gap: 5px; }
 .categories__list button { padding: 10px; text-align: left; }
 .categories__list .active { font-weight: 700; }
-.trend-entry { padding: 10px; color: var(--blueprint-link); border-radius: 4px; text-decoration: none; }
+.categories__list .trend-entry { padding: 6px 10px 10px 24px; text-align: left; font-size: 12px; color: var(--blueprint-link); border-radius: 4px; text-decoration: none; }
 .trend-entry:hover { background: var(--blueprint-active); }
 .rows { overflow: auto; min-height: 0; flex: 1; }
 .board-row, .stock-row { display: grid; align-items: center; text-align: left; gap: 8px; width: 100%; padding: 0 10px; }
@@ -618,5 +630,12 @@ dialog::backdrop { background: #23344950; }.compare-dialog { width: min(96vw, 16
   .categories { flex: none; }.categories__list { display: flex; flex-wrap: wrap; }
   .boards { flex: none; max-height: 230px; }.indices { flex: none; height: 550px; }.constituents { flex: none; height: 440px; }
   .index-toolbar { padding: 0 4px; }.segmented button, .ranking button, .ranking select { padding-inline: 3px; }
+}
+</style>
+
+<style scoped>
+.embedded-trends { grid-column: 3 / -1; min-width: 0; min-height: 0; overflow: hidden; }
+@media (max-width: 1080px) {
+  .blueprint.blueprint--trends { grid-template-rows: minmax(510px, 1fr); }
 }
 </style>

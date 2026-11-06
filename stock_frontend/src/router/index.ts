@@ -48,7 +48,7 @@ const router = createRouter({
     {
       path: '/stockdb/trends',
       name: 'stockdb-trends',
-      component: () => import('@/views/TrendView.vue'),
+      redirect: '/stockdb?view=trends',
     },
     // 独立页（不显示顶部导航/公告条）
     {

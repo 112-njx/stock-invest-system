@@ -44,6 +44,10 @@ await build({
           export class StockDbHttpError extends Error {}
         `,
       }))
+      builder.onResolve({ filter: /TrendView[.]vue$/ }, () => ({ path: 'trend', namespace: 'fixture' }))
+      builder.onLoad({ filter: /^trend$/, namespace: 'fixture' }, () => ({
+        contents: 'export default { props: ["industry", "embedded"], template: "<div />" }',
+      }))
       builder.onResolve({ filter: /StockDbChart[.]vue$/ }, () => ({ path: 'chart', namespace: 'fixture' }))
       builder.onLoad({ filter: /^chart$/, namespace: 'fixture' }, () => ({
         resolveDir: root,

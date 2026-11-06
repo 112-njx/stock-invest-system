@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { cachedStockDb, fetchStockDb, peekCache, putCache, readCache, StockDbHttpError } from '@/api/stockdbCache'
 import type { Bar } from '@/api/stockdb'
 import type { TrendCell, TrendColumn, TrendHover, TrendOverview, TrendScreen } from '@/api/trend'
 import StockDbChart from '@/components/stockdb/StockDbChart.vue'
 
+const props = defineProps<{ embedded?: boolean; industry?: string }>()
 const pageSize = 12
-const screen = shallowRef(peekCache<TrendScreen>('trend:last-screen'))
-const requested = ref(screen.value?.overview.industry ?? 'all')
+const screen = shallowRef(peekCache<TrendScreen>(props.embedded ? 'trend:screen:' + props.industry : 'trend:last-screen'))
+const requested = ref(props.industry ?? screen.value?.overview.industry ?? 'all')
 const busy = ref(false)
 const message = ref('')
 const stage = ref('正在连接本地数据服务')
@@ -90,10 +91,10 @@ async function load(industry: string, position = 0, retry = true) {
 }
 async function move(position: number) {
   const current = screen.value
-  if (!current) return
+  if (!current || (props.embedded && current.overview.industry !== props.industry)) return
   const offset = Math.max(0, Math.min(maxStart.value, Math.round(position)))
-  if (offset === current.start) return
   const ticket = ++requestId
+  if (offset === current.start) { busy.value = false; return }
   clearHover()
   busy.value = true
   try {
@@ -192,7 +193,7 @@ async function refresh() {
 
 onMounted(async () => {
   const ticket = requestId
-  const saved = screen.value ?? await readCache<TrendScreen>('trend:last-screen')
+  const saved = screen.value ?? await readCache<TrendScreen>(props.embedded ? 'trend:screen:' + props.industry : 'trend:last-screen')
   if (disposed) return
   if (ticket === requestId) {
     if (saved) { screen.value = saved; requested.value = saved.overview.industry }
@@ -200,6 +201,7 @@ onMounted(async () => {
   }
   if (!disposed) schedule()
 })
+watch(() => props.industry, industry => { if (industry) void load(industry) })
 onBeforeUnmount(() => {
   disposed = true
   clearTimeout(timer)
@@ -209,7 +211,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="trend-page">
-    <aside class="industry-nav">
+    <aside v-if="!embedded" class="industry-nav">
       <RouterLink to="/stockdb" class="back-link">‹ 指数蓝图</RouterLink>
       <strong class="nav-title">申万一级行业</strong>
       <div class="industry-list">
