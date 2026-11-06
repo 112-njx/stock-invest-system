@@ -3,7 +3,7 @@ import json
 import math
 from datetime import datetime
 from hashlib import sha256
-from threading import Lock
+from threading import Lock, Thread
 from time import time
 from zoneinfo import ZoneInfo
 
@@ -13,6 +13,8 @@ from app.services import stockdb_service as rd
 from app.utils.redis_client import get_redis_client
 
 _lock = Lock()
+_schedule_lock = Lock()
+_worker: Thread | None = None
 _cached = None
 _checked = 0.0
 _candidate = ("", 0.0)
@@ -84,19 +86,12 @@ def load(now):
     raise rd.StockDBError('最新收盘数据覆盖不足，等待本地数据同步完成')
 
 
-def snapshot():
+def _refresh():
     global _cached, _checked, _candidate
     with _lock:
         if _cached and time() - _checked < 60:
             return _cached
         redis = get_redis_client()
-        if _cached is None:
-            try:
-                saved = redis.get(_key)
-                if saved:
-                    _cached = json.loads(saved)
-            except (RedisError, ValueError):
-                pass
         try:
             now = datetime.now(ZoneInfo('Asia/Shanghai'))
             result = load(now)
@@ -129,3 +124,27 @@ def snapshot():
         finally:
             _checked = time()
         return _cached
+
+
+def snapshot():
+    """Serve published data immediately; serialize only refresh scheduling."""
+    global _cached, _worker
+    if _cached is None:
+        with _schedule_lock:
+            if _cached is None:
+                try:
+                    saved = get_redis_client().get(_key)
+                    if saved:
+                        _cached = json.loads(saved)
+                except (RedisError, ValueError):
+                    pass
+    if _cached is not None:
+        published = _cached
+        if time() - _checked >= 60:
+            with _schedule_lock:
+                if time() - _checked >= 60 and (_worker is None or not _worker.is_alive()):
+                    _worker = Thread(target=_refresh, name='heatmap-refresh', daemon=True)
+                    _worker.start()
+        return published
+    # With no usable memory or persisted snapshot, only the initial request waits.
+    return _refresh()
