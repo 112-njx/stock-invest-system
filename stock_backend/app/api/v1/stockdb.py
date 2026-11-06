@@ -16,6 +16,15 @@ Weight = Literal["equal", "float_mv", "amount", "volume", "total_mv"]
 Code = Annotated[str, StringConstraints(pattern=r"^[0-9]{6}$")]
 
 
+@router.get("/heatmap")
+def heatmap() -> dict:
+    from app.services.heatmap_service import snapshot
+    try:
+        return snapshot()
+    except rd.StockDBError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 class Constituents(BaseModel):
     codes: list[Code] = Field(min_length=1, max_length=1000)
 
