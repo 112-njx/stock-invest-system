@@ -1,7 +1,6 @@
-"""Probe the bridge, native SDK and stored data, not just the HTTP listener."""
+"""Readiness probes real SDK data and reuses the normal short-lived cache."""
 import json
 from urllib.request import urlopen
 
-with urlopen('http://127.0.0.1:7900/kline?code=600519&frequency=1d&start=20240102&end=20240105', timeout=180) as response:
-    rows = json.load(response)
-assert isinstance(rows, list) and rows and all('close' in row for row in rows), rows
+with urlopen('http://127.0.0.1:7900/ready', timeout=180) as response:
+    assert json.load(response)['status'] == 'ready'

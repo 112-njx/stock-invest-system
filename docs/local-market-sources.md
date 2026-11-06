@@ -24,7 +24,7 @@ docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d --b
 - 服务端配置 `readonly: yes` 禁止协议写入，但 LevelDB 打开、恢复、锁文件仍可能需要文件写权限，绑定挂载不设置只读。
 - **禁止 Windows 服务、另一套 Compose 服务或更新器同时打开同一数据集。**不要依赖跨 Windows/Linux 文件锁互斥。
 - 更新数据：先 `docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml stop stockdb-local`，确认退出后运行 Windows 更新工具；更新工具退出后 `up -d stockdb-local`，再在管理员页手动同步。
-- `/health` 仅探测桥进程；Docker 健康检查使用 `/opt/healthcheck.py`，通过桥发起真实 SDK 查询，验证 7899、SDK 和数据均可用。关键子进程退出会导致整个容器失败并重启。
+- `/health` 仅探测桥进程；Docker 健康检查使用 `/opt/healthcheck.py` 调用 `/ready`，通过桥发起真实 SDK 查询并优先复用正常缓存，验证 7899、SDK 和数据；`/metrics` 提供耗时、缓存、共享请求及内存指标。关键子进程退出会导致整个容器失败并重启。
 - 回退：先停止 `stockdb-local`，恢复两个 URL 为 `host.docker.internal`，启动 Windows stockdb 与 `deploy/start_stockdb_sdk_bridge.ps1`，再重建后端容器以加载环境变量。生产和开发 Compose 不可同时使用同一数据目录。
 - 真实数据复验：运行 `scripts/verify_stockdb_container.py --base-url URL --output result.json [--compare baseline.json]`。服务仅内网可见时可把脚本复制进容器运行；脚本对比股票、ETF、申万一级指数的日期、条数、字段和值，并验证缓存结果。
 
@@ -47,3 +47,5 @@ K 线主键包含 `source`，区分 `stockdb` 和 `akshare`。默认最新页优
 服务依赖：股票、ETF 日 K 和 15 分钟 K 读取 RD 7899；行情页股票、ETF 周月 K，以及申万行业指数日/周/月 K 读取 SDK 桥 7900。指数蓝图从 RD 读取成分股并在后端合成，不经过 SDK 桥。7900 不在线时既有入库数据仍可展示，需补拉的周期会明确失败，不能视作空区间或同步成功。
 
 迁移 0030 移除已无调用方的缺口修补交易日日历缓存表并失效旧行情缓存，不删除任何 K 线记录。`stock_backend/scripts/sync_fixed_indices.py` 仅同步历史 K 线并遵守当前数据源策略，不再保留快照参数或绕过策略直接访问新浪。旧快照诊断脚本、新鲜度 Grafana 面板及其运行配置已清理；历史迁移与历史设计文档中的旧表名保留，用于迁移重放和历史记录。
+
+SDK 桥第一阶段采用独立缓存锁与 SDK 执行锁，同参数并发请求合并，缓存命中不再排队等待长计算。缓存刷新采用版本隔离，旧请求不会回填新缓存。观测口径与验证限制见 `docs/ops/stockdb_bridge_stage1.md`。
