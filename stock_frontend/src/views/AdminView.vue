@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { request } from '@/api/http'
+import { syntheticWickFactor } from '@/composables/useSyntheticWicks'
 
 interface Provider { name: string; used: number; health: { state: string; failures: number; last_success_at: string | null } }
 interface QueueState { ready: number; active: number; delayed: number; reserved: number; abnormal: number }
@@ -36,6 +37,32 @@ const queueError = ref('')
 const activeRequests = ref<ProviderRequest[]>([])
 const activityError = ref('')
 const activityLoading = ref(true)
+const displayFactor = ref(0.5)
+const displayLoaded = ref(false)
+const displaySaving = ref(false)
+const displayError = ref('')
+async function loadDisplaySettings() {
+  try {
+    const value = await request<{ synthetic_wick_factor: number }>({ url: '/admin/market-display' })
+    displayFactor.value = value.synthetic_wick_factor
+    syntheticWickFactor.value = value.synthetic_wick_factor
+    displayLoaded.value = true
+  } catch { displayError.value = '显示设置读取失败' }
+}
+async function saveDisplaySettings() {
+  if (!Number.isFinite(displayFactor.value) || displayFactor.value < 0 || displayFactor.value > 1) {
+    displayError.value = '请输入 0 到 1 之间的系数'
+    return
+  }
+  displaySaving.value = true
+  displayError.value = ''
+  try {
+    const value = await request<{ synthetic_wick_factor: number }>({ url: '/admin/market-display', method: 'put', data: { synthetic_wick_factor: displayFactor.value } })
+    syntheticWickFactor.value = value.synthetic_wick_factor
+    displayFactor.value = value.synthetic_wick_factor
+  } catch { displayError.value = '显示设置保存失败' }
+  finally { displaySaving.value = false }
+}
 const sourcePolicy = ref({ akshare_enabled: false, snapshots_enabled: false })
 const sourcePolicyLoaded = ref(false)
 const sourcePolicySaving = ref(false)
@@ -145,6 +172,7 @@ async function save() {
 onMounted(() => {
   void load()
   void loadActivity()
+  void loadDisplaySettings()
   void loadSourcePolicy()
   void loadLocalSync()
   activityTimer = setInterval(() => { void loadActivity(); void loadLocalSync() }, 3000)
@@ -156,6 +184,13 @@ onUnmounted(() => { if (activityTimer) clearInterval(activityTimer) })
   <main class="admin">
     <header><h1>系统管理</h1><button @click="load">刷新指标</button></header>
     <p v-if="error" class="error">{{ error }}</p>
+    <section>
+      <h2>合成指数影线显示</h2>
+      <p>行情页行业指数与指数蓝图共用。默认 0.5；0 隐藏影线，1 显示原影线。仅改变图形及图上高低值，不改变原始行情、指标或策略计算。</p>
+      <label>影线系数<input v-model.number="displayFactor" type="number" min="0" max="1" step="0.05" :disabled="!displayLoaded || displaySaving"></label>
+      <button :disabled="!displayLoaded || displaySaving" @click="saveDisplaySettings">{{ displaySaving ? '保存中…' : '保存显示设置' }}</button>
+      <p v-if="displayError" class="error">{{ displayError }}</p>
+    </section>
     <section>
       <h2>行情数据源</h2>
       <p>默认仅使用 Free-StockDB；实时快照需要同时开启 AkShare。</p>

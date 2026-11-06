@@ -9,6 +9,8 @@
  * - 双击 emit，由父级决定是否进入详情页
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useSyntheticWicks } from '@/composables/useSyntheticWicks'
+import { displaySyntheticCandle } from '@/utils/syntheticWicks'
 import {
   CandlestickSeries,
   ColorType,
@@ -85,6 +87,7 @@ const emit = defineEmits<{
 }>()
 
 const market = useMarketStore()
+const wickFactor = useSyntheticWicks()
 const user = useUserStore()
 const authModal = useAuthModalStore()
 const theme = useThemeStore()
@@ -585,7 +588,7 @@ function onCrosshairMove(param: { time?: unknown; point?: { x: number; y: number
     const bar = loadedBars[index]
     const previousClose = index > 0 ? loadedBars[index - 1].close : null
     const change = previousClose == null ? null : bar.close - previousClose
-    hoveredCandle.value = { bar, change, percent: previousClose ? (bar.close - previousClose) / previousClose * 100 : null }
+    hoveredCandle.value = { bar: displayCandle(bar), change, percent: previousClose ? (bar.close - previousClose) / previousClose * 100 : null }
   } else hoveredCandle.value = null
   const list = props.markers ?? []
   if (!list.length || param.time == null || !param.point) {
@@ -650,12 +653,24 @@ function indicatorQuantity(value: number | null | undefined): string {
   return value.toFixed(0)
 }
 
-function toCandleData(bars: KLineBar[]) {
-  return bars.map((b) => ({
-    time: toUtcSeconds(b.ts),
-    open: b.open, high: b.high, low: b.low, close: b.close,
-  }))
+function displayCandle(bar: KLineBar) {
+  return props.symbol?.type === 'index' && props.symbol.market === 'SW'
+    ? displaySyntheticCandle(bar, wickFactor.value) : bar
 }
+
+function toCandleData(bars: KLineBar[]) {
+  return bars.map(bar => {
+    const b = displayCandle(bar)
+    return { time: toUtcSeconds(b.ts), open: b.open, high: b.high, low: b.low, close: b.close }
+  })
+}
+
+watch(wickFactor, () => {
+  const range = chart?.timeScale().getVisibleLogicalRange()
+  candleSeries?.setData(toCandleData(loadedBars))
+  if (range) chart?.timeScale().setVisibleLogicalRange(range)
+  hoveredCandle.value = null
+})
 
 function initialWeeklyCount(): number {
   return props.showIndicators ? 30 : 60
@@ -1110,10 +1125,7 @@ onMounted(() => {
       } else loadedBars.push(bar)
       hoveredCandle.value = null
       lastBar = bar
-      candleSeries?.update({
-        time: toUtcSeconds(bar.ts),
-        open: bar.open, high: bar.high, low: bar.low, close: bar.close,
-      })
+      candleSeries?.update(toCandleData([bar])[0]!)
     }
   })
 })

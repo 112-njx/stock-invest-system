@@ -564,7 +564,7 @@ onBeforeUnmount(() => {
                 <strong class="quote">{{ board.price?.toFixed(2) ?? '—' }}</strong>
                 <strong class="quote" :class="color(board.change)">{{ formatReturn(board.change) }}</strong>
               </header>
-              <StockDbChart v-if="board.bars.length" :bars="board.bars.slice(-44)" :label="`${board.name}指数日 K`" amount />
+              <StockDbChart v-if="board.bars.length" :bars="board.bars.slice(-44)" :label="`${board.name}指数日 K`" amount synthetic />
             </article>
           </div>
         </div>
@@ -613,7 +613,7 @@ onBeforeUnmount(() => {
       <div v-if="comparison" class="compare-grid">
         <article v-for="[id, label] in algorithms" :key="id">
           <header><strong>{{ label }}</strong><span :class="color(barReturn(comparison.indices[id], days))">{{ formatReturn(barReturn(comparison.indices[id], days)) }}</span></header>
-          <StockDbChart :bars="comparison.indices[id].slice(-44)" :label="label" amount />
+          <StockDbChart :bars="comparison.indices[id].slice(-44)" :label="label" amount synthetic />
         </article>
       </div>
     </dialog>

@@ -29,6 +29,22 @@ class MarketSourcePolicy(BaseModel):
     snapshots_enabled: bool = False
 
 
+class MarketDisplaySettings(BaseModel):
+    synthetic_wick_factor: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+
+@router.get('/market-display')
+def get_market_display(current: User = Depends(get_current_admin)):
+    from app.services import market_display
+    return ok(data=market_display.read())
+
+
+@router.put('/market-display')
+def update_market_display(payload: MarketDisplaySettings, current: User = Depends(get_current_admin)):
+    from app.services import market_display
+    return ok(data=market_display.save(payload.synthetic_wick_factor))
+
+
 @router.get('/market-source-policy')
 def get_market_source_policy(current: User = Depends(get_current_admin)):
     from app.services import market_policy

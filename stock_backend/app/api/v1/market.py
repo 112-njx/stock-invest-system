@@ -20,6 +20,12 @@ from app.utils import market_cache
 router = APIRouter(prefix="/api/v1", tags=["market"])
 
 
+@router.get('/market/display-settings')
+def market_display_settings():
+    from app.services import market_display
+    return ok(data=market_display.read())
+
+
 class KlineBackfillRequest(BaseModel):
     symbol_id: int
     period: str
