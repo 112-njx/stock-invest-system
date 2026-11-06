@@ -8,20 +8,10 @@ import {
 } from '@/api/stockdb'
 import { cachedStockDb, fetchStockDb, peekCache, putCache, readCache, StockDbHttpError } from '@/api/stockdbCache'
 
-interface CustomIndex { id: string; name: string; codes: string[] }
-const storageKey = 'stockdb-custom-indices-v1'
-function readCustom(): CustomIndex[] {
-  try {
-    const stored: unknown = JSON.parse(localStorage.getItem(storageKey) ?? '[]')
-    return Array.isArray(stored) ? stored.filter((item) =>
-      typeof item?.id === 'string' && typeof item?.name === 'string' && Array.isArray(item?.codes) &&
-      item.codes.length > 0 && item.codes.length <= 1000 &&
-      item.codes.every((code: unknown) => typeof code === 'string' && /^\d{6}$/.test(code)),
-    ).slice(0, 20) : []
-  } catch { return [] }
+function supportedWorkspace(value: Workspace | undefined) {
+  return value && categories.some(([id]) => id === value.category) ? value : undefined
 }
-
-const screen = shallowRef(peekCache<Workspace>('last-workspace'))
+const screen = shallowRef(supportedWorkspace(peekCache<Workspace>('last-workspace')))
 function readPreferences() {
   try {
     const saved = JSON.parse(localStorage.getItem('stockdb-workspace-preferences-v2') ?? '{}')
@@ -44,7 +34,6 @@ interface IndexOrder { days: number; sort: 'price' | 'return' }
 const displayedOrder = ref<IndexOrder>({ days: preferences.days, sort: preferences.sort })
 const memberSort = ref<'return' | 'price' | 'code'>(preferences.memberSort)
 const memberAscending = ref(preferences.memberAscending)
-const custom = ref(readCustom())
 const ready = ref(false)
 const loading = ref(false)
 const refreshing = ref(false)
@@ -55,13 +44,8 @@ const cards = ref<HTMLElement | null>(null)
 const boardList = ref<HTMLElement | null>(null)
 const memberList = ref<HTMLElement | null>(null)
 const drawer = ref<HTMLDialogElement | null>(null)
-const editor = ref<HTMLDialogElement | null>(null)
 const compareBoard = shallowRef<Board | null>(null)
 const comparison = shallowRef<BoardDetail | null>(null)
-const customId = ref('')
-const customName = ref('')
-const customCodes = ref('')
-const editorError = ref('')
 const cardHeight = 338
 const windows = [[1, '今日涨幅'], [3, '3日涨幅'], [5, '5日涨幅'], [10, '10日涨幅'], [15, '15日涨幅'], [30, '30日涨幅']] as const
 
@@ -113,7 +97,7 @@ let persistTimer: ReturnType<typeof setTimeout> | undefined
 let statusTimer: ReturnType<typeof setInterval> | undefined
 
 function workspaceKey(group: Category, method: Weight) {
-  return 'workspace:' + group + ':' + method + (group === 'custom' ? ':' + JSON.stringify(custom.value) : '')
+  return 'workspace:' + group + ':' + method
 }
 function rememberWorkspace(value: Workspace) {
   const saved = { ...value, pinnedBoard: pinnedBoard.value }
@@ -151,14 +135,8 @@ function bundlePath(id: string, version: string, selected = '') {
   })
 }
 
-function ownIndex(id: string) { return custom.value.find((item) => item.id === id) }
-
 async function loadDetail(id: string, version: string) {
-  const own = ownIndex(id)
-  return cachedStockDb<BoardDetail & { date: number; detail: Members }>(
-    own ? '/custom?' + versionQuery(version) : '/boards/' + encodeURIComponent(id) + '?' + versionQuery(version),
-    own?.codes,
-  )
+  return cachedStockDb<BoardDetail>('/boards/' + encodeURIComponent(id) + '?' + versionQuery(version))
 }
 
 async function buildWorkspace(group: Category, method: Weight, order: IndexOrder): Promise<Workspace> {
@@ -168,39 +146,6 @@ async function buildWorkspace(group: Category, method: Weight, order: IndexOrder
     for (const [id, bars] of Object.entries(home.charts)) putCache(`curve:${home.version}:equal:${id}`, bars)
     return { ...home, category: group, weight: method }
   }
-  if (group === 'custom') {
-    if (!custom.value.length) return {
-      version: screen.value?.version ?? '', date: screen.value?.date ?? 0,
-      category: group, weight: method, boards: [], charts: {}, boardId: '',
-      detail: { members: [], count: 0, stockCode: '', stockBars: [] },
-    }
-    const localBoards: Board[] = []
-    const charts: Record<string, Bar[]> = {}
-    let version = ''
-    let sessionDate = 0
-    const details: Record<string, Members> = {}
-    // User-created sets are evaluated only while this category is open.
-    for (const item of custom.value) {
-      const payload = await fetchStockDb<BoardDetail & { date: number; detail: Members }>(
-        '/custom' + (version ? '?' + versionQuery(version) : ''), item.codes,
-      )
-      version = payload.version
-      sessionDate = payload.date
-      const bars = payload.indices[method]
-      charts[item.id] = bars
-      const changes: Record<string, number | null> = {}
-      for (const [period] of windows) changes[String(period)] = barReturn(bars, period)
-      localBoards.push({ id: item.id, name: item.name, count: item.codes.length, price: bars.at(-1)?.[4] ?? null, changes })
-      details[item.id] = payload.detail
-    }
-    const wanted = pinnedBoard.value && ownIndex(boardId.value)
-      ? boardId.value : rank(localBoards, order)[0]!.id
-    return {
-      version, date: sessionDate, category: group, weight: method, boards: localBoards, charts,
-      boardId: wanted, detail: details[wanted]!,
-    }
-  }
-
   const ranking = await fetchStockDb<Ranking>(
     '/ranking?' + new URLSearchParams({ category: group, weight: method }),
   )
@@ -243,19 +188,17 @@ async function loadWorkspace(retry = true) {
     if (request !== workspaceRequest || disposed) return
     // Scrolling can continue while the next generation is being prepared.
     // Fill the current window before publishing, even if it moved during the request.
-    if (group !== 'custom') {
-      let start = viewportStart(group, method, order)
-      while (true) {
-        const ids = rank(value.boards, order).slice(start, start + 10).map((board) => board.id)
-        const missing = ids.filter((id) => !value.charts[id])
-        if (missing.length) {
-          value.charts = { ...value.charts, ...await curves(value.version, method, missing) }
-        }
-        if (request !== workspaceRequest || disposed) return
-        const next = viewportStart(group, method, order)
-        if (next === start) break
-        start = next
+    let start = viewportStart(group, method, order)
+    while (true) {
+      const ids = rank(value.boards, order).slice(start, start + 10).map((board) => board.id)
+      const missing = ids.filter((id) => !value.charts[id])
+      if (missing.length) {
+        value.charts = { ...value.charts, ...await curves(value.version, method, missing) }
       }
+      if (request !== workspaceRequest || disposed) return
+      const next = viewportStart(group, method, order)
+      if (next === start) break
+      start = next
     }
     const changed = shownCategory.value !== group || shownWeight.value !== method ||
       !sameOrder(order, displayedOrder.value)
@@ -299,9 +242,7 @@ async function selectBoard(id: string) {
     return
   }
   try {
-    const own = ownIndex(id)
-    const next = own ? (await loadDetail(id, current.version)).detail
-      : await cachedStockDb<Members>(bundlePath(id, current.version))
+    const next = await cachedStockDb<Members>(bundlePath(id, current.version))
     if (request !== memberRequest || disposed || screen.value?.version !== current.version ||
       screen.value.category !== current.category || screen.value.weight !== current.weight) return
     rememberWorkspace({ ...screen.value, boardId: id, detail: next })
@@ -337,7 +278,7 @@ async function selectStock(code: string) {
 
 async function visibleCurves() {
   const current = screen.value
-  if (!current || current.category === 'custom') return
+  if (!current) return
   const request = ++chartRequest
   try {
     const data = await curves(current.version, current.weight, visibleCards.value.map((board) => board.id))
@@ -353,7 +294,7 @@ async function visibleCurves() {
   }
 }
 
-watch([category, weight, custom], ([group], previous) => {
+watch([category, weight], ([group], previous) => {
   if (!ready.value) return
   if (group !== previous[0]) pinnedBoard.value = false
   void loadWorkspace()
@@ -422,7 +363,7 @@ function showIntraday(stock: Member, event: PointerEvent) {
     try {
       const bars = await cachedStockDb<Bar[]>(
         `/stocks/${stock.code}/minutes?date=${stock.bar[0]}&version=${version}`,
-        undefined, 60000,
+        60000,
       )
       if (!disposed && request === hoverRequest) hover.value = { stock, x, y, bars }
     } catch {
@@ -449,37 +390,8 @@ async function compare(board: Board) {
   }
 }
 
-function edit(item?: CustomIndex) {
-  customId.value = item?.id ?? ''
-  customName.value = item?.name ?? ''
-  customCodes.value = item?.codes.join(' ') ?? ''
-  editorError.value = ''
-  editor.value?.showModal()
-}
-function persist(next: CustomIndex[]) {
-  try { localStorage.setItem(storageKey, JSON.stringify(next)) }
-  catch { editorError.value = '浏览器无法保存自定义指数。'; return false }
-  custom.value = next
-  editor.value?.close()
-  return true
-}
-function save() {
-  const name = customName.value.trim()
-  const codes = [...new Set(customCodes.value.trim().split(/[\s,，;；、]+/).filter(Boolean))]
-  if (!name || !codes.length || codes.length > 1000 || codes.some((code) => !/^\d{6}$/.test(code))) {
-    editorError.value = '请输入名称和 1 至 1000 个六位股票代码。'
-    return
-  }
-  const id = customId.value || 'custom-' + crypto.randomUUID()
-  const own = { id, name, codes }
-  const items = custom.value.some((item) => item.id === id)
-    ? custom.value.map((item) => item.id === id ? own : item) : [...custom.value, own]
-  persist(items)
-}
-function removeCustom() { persist(custom.value.filter((item) => item.id !== customId.value)) }
-
 onMounted(async () => {
-  const previous = screen.value ?? await readCache<Workspace>('last-workspace')
+  const previous = screen.value ?? supportedWorkspace(await readCache<Workspace>('last-workspace'))
   const preparedHome = previous ? undefined : await readCache<Home>('api:/home')
   const saved = previous ?? (preparedHome ? { ...preparedHome, category: 'sw1' as const, weight: 'equal' as const } : undefined)
   if (disposed) return
@@ -519,18 +431,14 @@ onBeforeUnmount(() => {
     </aside>
 
     <aside class="panel boards">
-      <header class="panel-head"><strong>{{ categoryName }}</strong><small>{{ boards.length }} {{ shownCategory === 'custom' ? '个指数' : '个板块' }}</small></header>
-      <div v-if="shownCategory === 'custom'" class="custom-actions">
-        <button :disabled="custom.length >= 20" @click="edit()">＋ 新建指数</button>
-        <button v-if="currentBoard" @click="edit(custom.find((item) => item.id === currentBoard?.id))">编辑所选</button>
-      </div>
+      <header class="panel-head"><strong>{{ categoryName }}</strong><small>{{ boards.length }} 个板块</small></header>
       <div ref="boardList" class="rows">
         <button v-for="board in ranked" :key="board.id" class="board-row" :class="{ active: boardId === board.id }"
           :aria-pressed="boardId === board.id" :title="board.name" @click="selectBoard(board.id)" @dblclick="compare(board)">
           <span class="ellipsis">{{ board.name }}</span><small>{{ board.count }}</small>
           <strong :class="color(board.change)">{{ formatReturn(board.change) }}</strong>
         </button>
-        <p v-if="!loading && !error && !boards.length" class="empty">{{ shownCategory === 'custom' ? '暂无自定义指数' : '暂无板块' }}</p>
+        <p v-if="!loading && !error && !boards.length" class="empty">暂无板块</p>
       </div>
     </aside>
 
@@ -551,7 +459,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
       <div v-if="!screen && error" class="empty state" role="alert">{{ error }} <button @click="refresh">重试</button></div>
-      <div v-if="screen && !loading && !ranked.length" class="empty state">选择板块或新建自定义指数</div>
+      <div v-if="screen && !loading && !ranked.length" class="empty state">请选择板块</div>
       <div ref="cards" class="cards" @scroll.passive="cardScroll = ($event.target as HTMLElement).scrollTop">
         <div :style="{ height: ranked.length * cardHeight + 'px', position: 'relative' }">
           <div class="card-window" :style="{ top: firstCard * cardHeight + 'px' }">
@@ -619,18 +527,6 @@ onBeforeUnmount(() => {
       </div>
     </dialog>
 
-    <dialog ref="editor" class="edit-dialog">
-      <form @submit.prevent="save">
-        <header class="panel-head"><strong>{{ customId ? '编辑自定义指数' : '新建自定义指数' }}</strong></header>
-        <label>指数名称 <input v-model="customName" maxlength="40" required /></label>
-        <label>股票代码 <textarea v-model="customCodes" rows="5" required placeholder="例如 000001 600519，支持空格、逗号或换行" /></label>
-        <p v-if="editorError" class="up" role="alert">{{ editorError }}</p>
-        <footer>
-          <button v-if="customId" class="up" type="button" @click="removeCustom">删除指数</button>
-          <button type="button" @click="editor?.close()">取消</button><button class="primary" type="submit">保存</button>
-        </footer>
-      </form>
-    </dialog>
   </div>
 </template>
 
@@ -676,8 +572,7 @@ button:hover, .active { background: var(--blueprint-active); color: var(--bluepr
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .up { color: var(--blueprint-up); }
 .down { color: var(--blueprint-down); }
-.custom-actions { padding: 6px; display: flex; gap: 5px; border-bottom: 1px solid var(--border); }
-.custom-actions button, .source button { padding: 4px 7px; color: var(--blueprint-link); background: var(--accent-soft); }
+.source button { padding: 4px 7px; color: var(--blueprint-link); background: var(--accent-soft); }
 .index-toolbar { gap: 6px; }
 .algorithms, .segmented, .ranking { display: flex; align-items: center; gap: 3px; }
 .algorithms strong, .segmented, .ranking { font-size: 11px; }
@@ -714,9 +609,6 @@ dialog::backdrop { background: #23344950; }.compare-dialog { width: min(96vw, 16
 .compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; padding: 8px; background: var(--blueprint-workspace); }
 .compare-grid article { height: 235px; padding: 8px; display: flex; flex-direction: column; background: var(--bg-panel); border-radius: 5px; }
 .compare-grid article header { display: flex; justify-content: space-between; }
-.edit-dialog { width: min(480px, 92vw); margin: auto; }.edit-dialog label, .edit-dialog footer, .edit-dialog p { display: block; margin: 12px; }
-.edit-dialog input, .edit-dialog textarea { display: block; width: 100%; margin-top: 4px; padding: 7px; color: inherit; font: inherit; background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 4px; }
-.edit-dialog footer { display: flex; justify-content: flex-end; gap: 7px; }.edit-dialog button { padding: 6px 10px; }
 @media (max-width: 1080px) {
   .blueprint { grid-template-columns: 105px minmax(150px, 22%) minmax(0, 1fr); overflow: auto; grid-template-rows: minmax(510px, 1fr) 440px; }
   .constituents { grid-column: 1 / -1; }.algorithms strong { display: none; }

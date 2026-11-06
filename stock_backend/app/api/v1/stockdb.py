@@ -4,7 +4,7 @@ from hashlib import sha256
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request, Response
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import StringConstraints
 
 from app.core.config import get_settings
 from app.services import stockdb_cache as cache
@@ -23,10 +23,6 @@ def heatmap() -> dict:
         return snapshot()
     except rd.StockDBError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-class Constituents(BaseModel):
-    codes: list[Code] = Field(min_length=1, max_length=1000)
 
 
 def _snapshot(version: str | None = None) -> rd.Snapshot:
@@ -125,16 +121,6 @@ def board_detail(request: Request, board_id: Annotated[str, Path(max_length=24)]
     if board is None:
         raise HTTPException(status_code=404, detail="找不到该板块")
     return _reply(request, data, lambda: _detail(data, board["symbols"]))
-
-
-@router.post("/custom")
-def custom_index(request: Request, body: Constituents, version: str | None = None) -> Response:
-    data = _snapshot(version)
-    codes = list(dict.fromkeys(body.codes))
-    return _reply(request, data, lambda: {
-        **_detail(data, codes), "date": data.dates[-1],
-        "detail": cache.member_bundle(data, codes),
-    }, identity=",".join(sorted(codes)))
 
 
 @router.get("/stocks/{code}")

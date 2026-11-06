@@ -139,7 +139,7 @@ function preview(stock: TrendColumn, cell: TrendCell | null, date: number, event
   hoverTimer = setTimeout(async () => {
     try {
       const query = new URLSearchParams({ date: String(date), version: overview.value?.version ?? '' })
-      const bars = await cachedStockDb<Bar[]>('/stocks/' + stock.code + '/minutes?' + query, undefined, 60000)
+      const bars = await cachedStockDb<Bar[]>('/stocks/' + stock.code + '/minutes?' + query, 60000)
       if (!disposed && ticket === hoverId) hover.value = {
         code: stock.code, name: stock.name, date, baseline: cell.preClose, bars, x, y,
       }

@@ -30,17 +30,17 @@ await build({
       builder.onLoad({ filter: /^cache$/, namespace: 'fixture' }, () => ({
         contents: `
           const runtime = () => globalThis.stockDbFixture;
-          const key = (path, codes) => 'api:' + path + (codes ? ':' + JSON.stringify(codes) : '');
+          const key = path => 'api:' + path;
           export const peekCache = key => runtime().memory.get(key);
           export const readCache = async key => peekCache(key);
           export const putCache = (key, value) => runtime().memory.set(key, value);
-          export async function fetchStockDb(path, codes) {
-            const result = await runtime().request(path, codes);
-            putCache(key(path, codes), result);
+          export async function fetchStockDb(path) {
+            const result = await runtime().request(path);
+            putCache(key(path), result);
             return result;
           }
-          export const cachedStockDb = async (path, codes) =>
-            peekCache(key(path, codes)) ?? fetchStockDb(path, codes);
+          export const cachedStockDb = async path =>
+            peekCache(key(path)) ?? fetchStockDb(path);
           export class StockDbHttpError extends Error {}
         `,
       }))
@@ -98,7 +98,7 @@ function deferred() {
 function row(code) { return all('.stock-row').find(item => item.querySelector('strong').textContent === code) }
 function clickBoard(id) { all('.board-row').find(item => item.title === id).click() }
 
-async function fixture(run) {
+async function fixture(run, legacy = false) {
   localStorage.clear()
   document.body.innerHTML = '<div id="test-app"></div>'
   const state = {
@@ -132,6 +132,10 @@ async function fixture(run) {
     },
   }
   globalThis.stockDbFixture = state
+  if (legacy) state.memory.set('last-workspace', {
+    version: 'legacy', date: 20261104, category: 'custom', weight: 'equal',
+    boards: [], charts: {}, boardId: '', detail: state.bundle(),
+  })
   const app = createApp(Workspace)
   app.mount('#test-app')
   try {
@@ -210,4 +214,12 @@ await fixture(async state => {
   assert.equal(query('.rank').textContent.trim(), 'TOP 11')
 })
 console.log('Passed version replacement at the current viewport')
+await fixture(async state => {
+  assert(!document.body.textContent.includes('我的指数'))
+  assert(!query('.edit-dialog'))
+  assert(state.calls.includes('/home'), 'discard the retired category from persisted workspaces')
+  assert(!state.calls.some(path => path.includes('/custom') || path.includes('category=custom')))
+}, true)
+console.log('Passed retired category cache recovery and removed editor')
+
 dom.window.close()
