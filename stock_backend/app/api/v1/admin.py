@@ -62,12 +62,15 @@ def update_market_source_policy(payload: MarketSourcePolicy, current: User = Dep
 
 
 def _queue_name(task: dict) -> str:
+    routing = (task.get("delivery_info") or {}).get("routing_key")
+    if routing in QUEUE_NAMES:
+        return routing
     name = task.get("name", "")
     if name.endswith("watchlist_stock_sync"):
         return "watchlist"
     if name.endswith("watchlist_delivery_reconcile"):
         return "control"
-    if name.endswith("kline_init_fixed_indices"):
+    if name.endswith(("kline_init_fixed_indices", "local_market_sync")):
         return "fixed_indices"
     if name.endswith("kline_backfill"):
         return "backfill"
@@ -103,6 +106,9 @@ def _task_queue_state(db: Session, redis) -> tuple[dict, dict]:
         Symbol, SyncTask.symbol_id == Symbol.id).where(
         SyncTask.status == "failed", Symbol.is_fixed_index.is_(True),
         SyncTask.task_type == "kline_init",
+    )) or 0
+    queues["fixed_indices"]["abnormal"] += db.scalar(select(func.count()).select_from(SyncTask).where(
+        SyncTask.task_type == "local_market_sync", SyncTask.status == "failed",
     )) or 0
     queues["watchlist"]["abnormal"] = db.scalar(select(func.count()).select_from(SyncTask).where(
         SyncTask.status == "failed", SyncTask.symbol_id.in_(select(UserWatchlist.symbol_id)),
@@ -140,7 +146,7 @@ def traffic_status(current: User = Depends(get_current_admin), db: Session = Dep
     redis = get_redis_client()
     data['retry_interval_seconds'] = int(redis.get('provider:retry:interval') or get_settings().SYNC_RETRY_BACKOFF)
     data['sync_status'] = {}
-    for scope in ('fixed_indices', 'catalog'):
+    for scope in ('local_market_sync', 'fixed_indices', 'catalog'):
         row = ops_repo.get_latest_sync_status(db, scope)
         data['sync_status'][scope] = {'status': row.status, 'message': row.message} if row else None
     return ok(data=data)
@@ -151,7 +157,15 @@ def task_queues(current: User = Depends(get_current_admin), db: Session = Depend
     from app.utils.redis_client import get_redis_client
 
     queues, workers = _task_queue_state(db, get_redis_client())
-    return ok(data={"queues": queues, "workers": workers})
+    return ok(data={"queues": queues, "workers": workers,
+                    "observed_at": datetime.now(UTC).isoformat()})
+
+
+@router.get('/local-services')
+def local_services(current: User = Depends(get_current_admin)) -> dict:
+    from app.services.admin_services import local_service_status
+
+    return ok(data=local_service_status())
 
 
 @router.get('/provider-requests')

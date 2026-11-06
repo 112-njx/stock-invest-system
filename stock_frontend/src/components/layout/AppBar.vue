@@ -35,12 +35,11 @@ onBeforeUnmount(() => clearTimeout(prepareTimer))
     <nav class="appbar__nav">
       <RouterLink to="/" class="appbar__link">行情</RouterLink>
       <RouterLink to="/ai" class="appbar__link">AI 策略</RouterLink>
-      <RouterLink v-if="user.user?.username === 'root' && user.user.is_admin" to="/admin" class="appbar__link">管理后台</RouterLink>
       <RouterLink to="/stockdb" class="appbar__link" @pointerenter="prepareBlueprint" @focus="prepareBlueprint">指数蓝图</RouterLink>
     </nav>
 
     <div class="appbar__right">
-      <!-- G16：通知铃铛（仅新增此区块，不改现有布局结构） -->
+      <RouterLink v-if="user.user?.username === 'root' && user.user.is_admin" to="/admin" class="appbar__link">管理后台</RouterLink>
       <StockSearch />
       <NotificationBell />
       <!-- G35：头像区（未登录=登录入口；已登录=下拉菜单） -->
