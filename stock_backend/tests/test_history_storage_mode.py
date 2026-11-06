@@ -44,12 +44,13 @@ def history(monkeypatch):
         db.query(KlineQuality).filter(KlineQuality.symbol_id == symbol.id).delete()
         db.delete(symbol); db.commit(); db.close()
         redis = get_redis_client()
-        for key in redis.scan_iter(match=f'source-history:v1:*:{symbol.id}:*'):
+        for key in redis.scan_iter(match=f'source-history:v*:*:{symbol.id}:*'):
             redis.delete(key)
 
 
 def test_akshare_only_cache_supports_paging_without_writing(history):
     db, symbol, bars, provider, policy = history
+    source_history.load(db, symbol.id, '1d')
     assert kline_repo.latest_bars(db, '1d', symbol.id, 2) == bars[-2:]
     assert kline_repo.get_bars(db, '1d', symbol.id, bars[0].ts, bars[-1].ts, 3, 2) == bars[2:5]
     assert kline_repo.upsert_bars(db, '1d', symbol.id, bars) == 0
@@ -83,6 +84,7 @@ def test_opt_in_uses_persisted_history_and_policy_revision_isolates_cache(histor
 
 def test_source_indicators_warm_up_before_paged_range(history):
     db, symbol, bars, provider, policy = history
+    source_history.load(db, symbol.id, '1d')
     rows = indicator_service.compute_indicators(db, str(symbol.id), '1d', ['macd'],
                                                 start=bars[20].ts, end=bars[-1].ts)
     all_rows = indicator_service.compute_indicators(db, str(symbol.id), '1d', ['macd'],
@@ -93,6 +95,7 @@ def test_source_indicators_warm_up_before_paged_range(history):
 
 def test_old_akshare_rows_are_ignored_when_storage_is_off(history):
     db, symbol, bars, provider, policy = history
+    source_history.load(db, symbol.id, '1d')
     db.add(Kline1d(symbol_id=symbol.id, ts=bars[-1].ts, source='akshare',
                   open=999, high=999, low=999, close=999, volume=1, amount=1))
     db.commit()
@@ -174,3 +177,89 @@ def test_watchlist_task_completes_when_akshare_is_cached_not_inserted(history):
     assert task.status == 'success' and task.publish_status == 'completed'
     assert source_history.cached(symbol.id, '1d')
     assert db.scalar(select(func.count()).select_from(Kline1d).where(Kline1d.symbol_id == symbol.id)) == 0
+
+
+def test_cold_reads_and_startup_warmup_never_fetch_a_provider(history, monkeypatch):
+    db, symbol, bars, provider, policy = history
+    monkeypatch.setattr('app.repositories.symbol_repo.list_fixed_indices', lambda db: [symbol])
+    assert kline_repo.latest_bars(db, '1d', symbol.id) == []
+    assert kline_repo.get_bars(db, '1d', symbol.id, bars[0].ts, bars[-1].ts) == []
+    assert sync_service.warmup_fixed_indices_cache()['kline_warmed'] == 0
+    provider.fetch_kline_checked.assert_not_called()
+    # The existing missing-history task still tries StockDB first and persists it.
+    provider.fetch_kline.return_value = [KlineBar(**{**vars(bar), 'source': 'stockdb'}) for bar in bars]
+    provider.fetch_kline_all.return_value = provider.fetch_kline.return_value
+    sync_service.run_kline_init(symbol_id=symbol.id)
+    assert db.scalar(select(func.count()).select_from(Kline1d).where(Kline1d.symbol_id == symbol.id)) == len(bars)
+    assert kline_repo.latest_bars(db, '1d', symbol.id)[-1].source == 'stockdb'
+    provider.fetch_kline_checked.assert_not_called()
+
+
+def test_cache_preparation_only_calls_external_sources_and_covers_pre_2000(history):
+    db, symbol, bars, provider, policy = history
+    old = KlineBar(datetime(1995, 1, 3, tzinfo=UTC), 1, 2, 1, 2, 1, 1, 'akshare')
+    provider.fetch_kline_checked.side_effect = lambda code, period, start, end, asset, **kw: (
+        [bar for bar in [old, *bars] if start <= bar.ts <= end], True)
+    source_history.load(db, symbol.id, '1d')
+    assert provider.fetch_kline_checked.call_args.kwargs['external_only'] is True
+    assert source_history.window(db, symbol.id, '1d', old.ts, old.ts) == [old]
+
+
+@pytest.mark.parametrize('source', ['stockdb', 'akshare'])
+def test_backtest_worker_prepares_cold_window_using_source_policy(history, monkeypatch, source):
+    from app.services import backtest_service
+    db, symbol, bars, provider, policy = history
+    fetched = [KlineBar(**{**vars(bar), 'source': source}) for bar in bars]
+    provider.fetch_kline_checked.return_value = (fetched, True)
+    monkeypatch.setattr('app.data_providers.factory.get_provider', lambda: provider)
+    task = SimpleNamespace(symbol_id=symbol.id, period='1d', start_ts=bars[0].ts, end_ts=bars[-1].ts)
+    rows = backtest_service._load_backtest_bars(db, task, symbol)
+    assert [float(bar.close) for bar in rows] == [bar.close for bar in bars]
+    assert rows[-1].source == source
+    count = db.scalar(select(func.count()).select_from(Kline1d).where(Kline1d.symbol_id == symbol.id))
+    assert count == (len(bars) if source == 'stockdb' else 0)
+
+
+def test_cache_write_failure_prevents_task_completion(history, monkeypatch):
+    from app.worker.tasks.sync_tasks import watchlist_stock_sync
+    from app.models.ops import SyncTask
+    db, symbol, bars, provider, policy = history
+    redis = get_redis_client()
+    monkeypatch.setattr(redis, 'lock', lambda *a, **kw: SimpleNamespace(acquire=lambda: True, release=lambda: None))
+    monkeypatch.setattr(redis, 'set', Mock(side_effect=ConnectionError('Redis unavailable')))
+    task_id = str(uuid4())
+    task = SyncTask(task_type='kline_init', symbol_id=symbol.id, status='queued',
+                    publish_status='published', celery_task_id=task_id)
+    db.add(task); db.commit()
+    result = watchlist_stock_sync.apply(kwargs={'symbol_id': symbol.id, 'initialize': True}, task_id=task_id)
+    assert result.failed()
+    db.expire_all()
+    task = db.get(SyncTask, task.id)
+    assert task.status != 'success' and task.publish_status != 'completed'
+    assert source_history.cached(symbol.id, '1d') is None
+
+
+@pytest.mark.parametrize('status,ready,requested,expected,queued', [
+    ('success', True, True, 'done', False),
+    ('success', False, True, 'pending', True),
+    ('failed', False, True, 'pending', True),
+    ('failed', False, False, 'failed', False),
+    ('queued', False, True, 'pending', False),
+])
+def test_new_attention_distinguishes_old_delivery_states(monkeypatch, status, ready, requested, expected, queued):
+    from app.services import user_service, watchlist_delivery, kline_quality_service
+    now = datetime.now(UTC)
+    db = Mock()
+    db.scalars.return_value = [SimpleNamespace(status=status, last_run_at=now)]
+    entry = SimpleNamespace(sync_status='pending', last_synced_at=None)
+    sym = SimpleNamespace(id=1)
+    quality = SimpleNamespace(status='complete', checked_to=now.date(), checked_at=now) if ready else None
+    monkeypatch.setattr(kline_quality_service, 'get_quality', lambda *a: quality)
+    monkeypatch.setattr(kline_repo, 'latest_ts', lambda *a: now if ready else None)
+    queue = Mock()
+    monkeypatch.setattr(watchlist_delivery, 'queue_watchlist_sync', queue)
+    user_service._queue_watchlist_stock(db, entry, sym, requested=requested)
+    assert entry.sync_status == expected
+    assert queue.called is queued
+    if queued:
+        assert queue.call_args.kwargs['force'] is True

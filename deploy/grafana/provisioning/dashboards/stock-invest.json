@@ -75,16 +75,6 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
     },
     {
-      "id": 6,
-      "type": "timeseries",
-      "title": "Market Data Freshness (s)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
-      "targets": [{ "refId": "A", "expr": "market_data_freshness_seconds", "legendFormat": "age" }],
-      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
-    },
-    {
       "id": 7,
       "type": "timeseries",
       "title": "LLM Calls (RPS)",

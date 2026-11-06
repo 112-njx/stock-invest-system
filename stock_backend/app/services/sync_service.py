@@ -39,7 +39,7 @@ def _write_bars(db, period: str, symbol_id: int, bars) -> int:
     from app.services.market_policy import history_storage_enabled
     if bars and bars[0].source == 'akshare' and not history_storage_enabled():
         from app.services import source_history
-        if not source_history.load(db, symbol_id, period, refresh=True, external_only=True):
+        if not source_history.load(db, symbol_id, period, refresh=True):
             raise RuntimeError('AkShare 历史缓存未准备完成')
         market_cache.invalidate_kline_cache(symbol_id, period)
         from app.services.indicator_service import invalidate_indicator_cache

@@ -244,14 +244,12 @@ def test_watchlist_cache_second_call_hits(client: TestClient, user_token: str):
     assert market_cache.get_watchlist_cache(uid) is None
 
 
-def test_snapshot_watchlist_snap_cache(client: TestClient, user_token: str):
-    sym = _make_catalog_symbol("900604", "测试快照股票")
-    headers = {"Authorization": f"Bearer {user_token}"}
-    with patch("app.worker.tasks.sync_tasks.kline_init"):
-        client.post("/api/v1/watchlist", json={"symbol": sym.code}, headers=headers)
-    resp = client.get("/api/v1/snapshot", params={"symbols": str(sym.id)}, headers=headers)
-    assert resp.status_code == 200
-    db = get_session()
-    uid = db.query(User).filter(User.username.like(f"{_PREFIX}w%")).order_by(User.id.desc()).first().id
-    db.close()
-    assert market_cache.get_watchlist_snap_cache(uid) is not None  # 按关注集缓存
+def test_latest_quote_uses_local_record(client: TestClient, user_token: str):
+    sym = _make_catalog_symbol('900604', '测试本地行情股票')
+    row = {'code': sym.code, 'date': 20261105, 'close': 8.35, 'pre_close': 8.30}
+    with patch('app.data_providers.stockdb.StockDBProvider.query', return_value=[row]):
+        response = client.get('/api/v1/quotes/latest', params={'symbols': str(sym.id)})
+    assert response.status_code == 200
+    quote = response.json()['data'][0]
+    assert quote['source'] == 'stockdb' and quote['price'] == 8.35
+    assert quote['data_date'] == '2026-11-05'

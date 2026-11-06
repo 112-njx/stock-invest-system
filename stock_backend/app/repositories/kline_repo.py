@@ -157,8 +157,8 @@ def latest_bars(db: Session, period: str, symbol_id: int, limit: int = 1000) -> 
     """最近 N 根 K 线（返回按 ts 升序），供"最新N根"缓存与默认查询。"""
     model = _model(period)
     if use_transient_source(db, model, symbol_id):
-        from app.services.source_history import load
-        return load(db, symbol_id, period)[-limit:]
+        from app.services.source_history import cached
+        return (cached(symbol_id, period) or [])[-limit:]
     stmt = (
         select(model)
         .where(model.symbol_id == symbol_id, source_filter(model, symbol_id))

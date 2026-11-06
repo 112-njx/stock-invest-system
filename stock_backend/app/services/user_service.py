@@ -269,7 +269,8 @@ def add_watchlist(db: Session, user_id: int, symbol: str) -> dict:
     if sym and kline_quality_service.is_a_share_stock(sym):
         db.commit()
         try:
-            _queue_watchlist_stock(db, entry, sym, force=existing is not None and existing.sync_status == "failed")
+            _queue_watchlist_stock(db, entry, sym, requested=True,
+                                   force=existing is not None and existing.sync_status == "failed")
         except Exception:
             db.rollback()
             entry.sync_status = "failed"
@@ -326,21 +327,41 @@ def list_watchlist(db: Session, user_id: int) -> list[dict]:
     return rows
 
 
-def _queue_watchlist_stock(db: Session, entry: UserWatchlist, sym: Symbol, *, force: bool = False) -> None:
+def _queue_watchlist_stock(db: Session, entry: UserWatchlist, sym: Symbol, *, force: bool = False,
+                          requested: bool = False) -> None:
     """按数据质量建立持久待发布任务；调度器负责实际投递。"""
     from app.services.watchlist_delivery import queue_watchlist_sync
     from app.models.ops import SyncTask
+    from app.repositories import kline_repo
     now = datetime.now(UTC)
     quality = kline_quality_service.get_quality(db, sym.id, '1d')
     latest = quality.checked_to if quality else None
-    if not force and db.scalar(select(SyncTask.id).where(
-            SyncTask.symbol_id == sym.id,
-            SyncTask.task_type.in_(('kline_init', 'kline_incremental'))).limit(1)) is not None:
+    tasks = list(db.scalars(select(SyncTask).where(
+        SyncTask.symbol_id == sym.id,
+        SyncTask.task_type.in_(('kline_init', 'kline_incremental')))))
+    if any(task.status in {'queued', 'running'} for task in tasks):
+        entry.sync_status = 'pending'
+        db.commit()
         return
-    needs_sync = force or quality is None or quality.status != 'complete'
-    if not needs_sync:
+    terminal = max(tasks, key=lambda task: market_cache.as_utc(task.last_run_at) or datetime.min.replace(tzinfo=UTC), default=None)
+    failed = terminal is not None and terminal.status == 'failed'
+    if failed and not (requested or force):
+        entry.sync_status = 'failed'
+        db.commit()
         return
-    queue_watchlist_sync(db, sym.id, initialize=latest is None, force=force, now=now)
+    ready = quality is not None and quality.status == 'complete' and all(
+        kline_repo.latest_ts(db, period, sym.id) is not None for period in ('1d', '1w', '1mon'))
+    if ready and not (force or failed):
+        entry.sync_status = 'done'
+        entry.last_synced_at = quality.checked_at
+        db.commit()
+        return
+    # Reading a list never restarts completed work because a cache expired.
+    # An explicit add/re-add can retry a failed or no-longer-available history.
+    if terminal is not None and not (requested or force):
+        return
+    queue_watchlist_sync(db, sym.id, initialize=latest is None,
+                         force=force or terminal is not None, now=now)
     db.refresh(entry)
 
 

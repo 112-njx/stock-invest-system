@@ -60,8 +60,6 @@ class Settings(BaseSettings):
     KLINE_INIT_DAYS: int = 730  # 首次全量拉取天数（约2年）
     PROVIDER_MIN_INTERVAL_SECONDS: int = 2  # 单数据源跨进程请求间隔
     PROVIDER_DAILY_BUDGET: int = 2000  # 单数据源每日请求预算
-    SYNC_INCREMENTAL_HOUR: int = 16  # 每日增量同步时刻（本地时区小时）
-    SYNC_INCREMENTAL_MINUTE: int = 30
     SYNC_TIMEOUT: int = 30  # 数据源请求超时（秒）
     SYNC_RETRY_TIMES: int = 2  # 外部源最多尝试两次
     SYNC_RETRY_BACKOFF: float = 10.0  # 外部请求重试间隔默认值（秒）

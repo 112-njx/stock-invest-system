@@ -12,13 +12,13 @@ from app.utils.market_cache import as_utc
 from app.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
-FIRST = datetime(2000, 1, 1, tzinfo=UTC)
+FIRST = datetime(1900, 1, 1, tzinfo=UTC)
 TTL = 3600
 
 
 def _key(symbol_id, period, revision=None):
     revision = market_policy.read()['revision'] if revision is None else revision
-    return f'source-history:v1:{revision}:{symbol_id}:{period}'
+    return f'source-history:v2:{revision}:{symbol_id}:{period}'
 
 
 def cached(symbol_id, period):
@@ -34,12 +34,13 @@ def cached(symbol_id, period):
 def store(symbol_id, period, bars, revision=None):
     try:
         rows = [{**asdict(bar), 'ts': bar.ts.isoformat()} for bar in bars]
-        get_redis_client().set(_key(symbol_id, period, revision), json.dumps(rows), ex=TTL if bars else 30)
-    except Exception:
-        logger.warning('source history cache write failed', exc_info=True)
+        if not get_redis_client().set(_key(symbol_id, period, revision), json.dumps(rows), ex=TTL if bars else 30):
+            raise RuntimeError('Redis did not acknowledge history storage')
+    except Exception as exc:
+        raise ProviderError('AkShare 历史缓存写入失败，任务未完成') from exc
 
 
-def _load(db, symbol_id, period, *, refresh=False, revision=None, external_only=False):
+def _load(db, symbol_id, period, *, refresh=False, revision=None):
     if not refresh:
         bars = cached(symbol_id, period)
         if bars is not None:
@@ -52,14 +53,16 @@ def _load(db, symbol_id, period, *, refresh=False, revision=None, external_only=
     provider = get_provider()
     if not market_policy.akshare_enabled():
         return []
-    if not any((not external_only or p.name != 'stockdb') and p.can_fetch_kline(asset, period)
+    if not any(p.name != 'stockdb' and p.can_fetch_kline(asset, period)
                for p in provider._active_providers()):
         return []
-    bars, confirmed_empty = provider.fetch_kline_checked(code, period, FIRST, datetime.now(UTC), asset, external_only=external_only)
+    bars, confirmed_empty = provider.fetch_kline_checked(code, period, FIRST, datetime.now(UTC), asset, external_only=True)
     if not bars and not confirmed_empty:
         raise ProviderError(f'{symbol.name} {period} 数据源查询失败，请检查 RD 7899 / SDK 7900 服务')
-    # SDK may label an unfinished week/month more than once. Keep the last
-    # native record, using exactly the same rule as the persistent repository.
+    if any(bar.source != 'akshare' for bar in bars):
+        raise ProviderError('AkShare 缓存拒绝接收其他来源的历史数据')
+    # Keep the last native record for an unfinished week/month, matching the
+    # persistent repository without locally aggregating any OHLC values.
     def identity(bar):
         day = bar.ts.date()
         return day.isocalendar()[:2] if period == '1w' else (day.year, day.month) if period == '1mon' else bar.ts
@@ -68,7 +71,8 @@ def _load(db, symbol_id, period, *, refresh=False, revision=None, external_only=
     return bars
 
 
-def load(db, symbol_id, period, *, refresh=False, external_only=False):
+def load(db, symbol_id, period, *, refresh=False):
+    """Worker-only preparation. Query endpoints must use cached/window instead."""
     revision = market_policy.read()['revision']
     if not refresh:
         rows = cached(symbol_id, period)
@@ -78,13 +82,12 @@ def load(db, symbol_id, period, *, refresh=False, external_only=False):
     try:
         lock = get_redis_client().lock(_key(symbol_id, period, revision) + ':lock', timeout=240, blocking_timeout=185)
         acquired = lock.acquire()
-    except Exception:
-        lock = None
-        acquired = True  # Redis outage must not make source reads impossible.
+    except Exception as exc:
+        raise ProviderError('AkShare 历史缓存不可用，任务未完成') from exc
     if not acquired:
         raise ProviderError('本地行情仍在准备，请稍后重试')
     try:
-        return _load(db, symbol_id, period, refresh=refresh, revision=revision, external_only=external_only)
+        return _load(db, symbol_id, period, refresh=refresh, revision=revision)
     finally:
         if lock is not None:
             try:
@@ -94,5 +97,5 @@ def load(db, symbol_id, period, *, refresh=False, external_only=False):
 
 
 def window(db, symbol_id, period, start, end, limit=1000, offset=0):
-    bars = [bar for bar in load(db, symbol_id, period) if as_utc(start) <= as_utc(bar.ts) <= as_utc(end)]
+    bars = [bar for bar in (cached(symbol_id, period) or []) if as_utc(start) <= as_utc(bar.ts) <= as_utc(end)]
     return bars[offset:offset + limit]

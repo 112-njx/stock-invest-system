@@ -156,6 +156,23 @@ def _resolve_symbol(db: Session, symbol: str) -> int | None:
 
 
 # ---- 回测执行（Celery worker 调用）----
+def _load_backtest_bars(db, task, symbol):
+    """Prepare a missing window in the worker, preserving the local-first policy."""
+    bars = kline_repo.get_bars(db, task.period, task.symbol_id, task.start_ts, task.end_ts, limit=_KLINE_LIMIT)
+    if not bars and kline_repo.use_transient_source(db, KLINE_MODELS[task.period], task.symbol_id,
+                                                  task.start_ts, task.end_ts):
+        from app.data_providers.factory import get_provider
+        from app.services.sync_service import _provider_params, _write_bars
+        code, asset = _provider_params(symbol)
+        fetched, confirmed = get_provider().fetch_kline_checked(code, task.period, task.start_ts, task.end_ts, asset)
+        if not fetched and not confirmed:
+            raise BacktestFatalError('历史行情源不可用，请检查本地行情服务')
+        _write_bars(db, task.period, task.symbol_id, fetched)
+        db.commit()
+        bars = kline_repo.get_bars(db, task.period, task.symbol_id, task.start_ts, task.end_ts, limit=_KLINE_LIMIT)
+    return bars
+
+
 def execute_backtest(task_id: int) -> dict:
     db = get_session()
     try:
@@ -187,7 +204,7 @@ def execute_backtest(task_id: int) -> dict:
         if symbol is None:
             raise BacktestFatalError("回测标的不存在")
 
-        bars = kline_repo.get_bars(db, task.period, task.symbol_id, task.start_ts, task.end_ts, limit=_KLINE_LIMIT)
+        bars = _load_backtest_bars(db, task, symbol)
         if not bars:
             raise BacktestFatalError("标的无 K 线数据，请先同步行情后再回测")
         bars_dict = [_bar_to_dict(b) for b in bars]

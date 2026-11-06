@@ -159,7 +159,6 @@ function policyChanged() {
             required
             @input="controller.edit('limits')"
         /></label>
-        <label class="switch-row"><div><b>每日 16:30 自动同步</b><small>默认关闭，使用手动同步。此操作不运行数据更新.exe。</small></div><input v-model="s.policyForm.auto_sync_enabled" type="checkbox" @change="policyChanged" /></label>
       </fieldset>
       <div class="form-actions">
         <button class="primary" :disabled="!s.traffic.data || s.saving.limits || !s.dirty.limits">

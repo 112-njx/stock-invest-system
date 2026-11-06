@@ -158,11 +158,3 @@ def invalidate_search_cache() -> None:
             r.delete(key)
     except Exception:  # noqa: BLE001
         pass
-
-
-def _num(v):
-    return float(v) if v is not None else None
-
-
-def _iso(v):
-    return v.isoformat() if v is not None else None

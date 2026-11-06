@@ -109,7 +109,7 @@ class FakeChatModel(BaseChatModel):
                             content="",
                             tool_calls=[
                                 {
-                                    "name": "market_snapshot",
+                                    "name": "latest_market_quote",
                                     "args": {"symbol": self.tool_symbol},
                                     "id": "call_1",
                                     "type": "tool_call",
@@ -168,7 +168,7 @@ def test_build_tools_return_market_indicator():
     try:
         tools = build_tools(db)
         names = [getattr(t, "name", "") or t.__class__.__name__ for t in tools]
-        assert "market_snapshot" in names
+        assert "latest_market_quote" in names
         assert "get_kline" in names
         assert "get_indicator" in names
     finally:
@@ -281,10 +281,10 @@ def test_stream_chat_tool_call_records_steps(client: TestClient):
         token = _register(client, uname)
         conv = client.post("/api/v1/conversations", json={}, headers=_auth(token)).json()["data"]
         me = client.get("/api/v1/users/me", headers=_auth(token)).json()["data"]
-        fake = FakeLLMService(FakeChatModel(with_tool=True, final_text="基于快照给出结论", tool_symbol=code))
+        fake = FakeLLMService(FakeChatModel(with_tool=True, final_text="基于最新本地行情给出结论", tool_symbol=code))
         events = _run_stream_chat(fake, user_id=me["id"], conversation_id=conv["id"], symbol=code, content="看下行情", run_type="custom")
         tool_events = [e for e in events if e["type"] == "tool_call"]
-        assert tool_events and tool_events[0]["tool"] == "market_snapshot"
+        assert tool_events and tool_events[0]["tool"] == "latest_market_quote"
 
         db = get_session()
         try:
