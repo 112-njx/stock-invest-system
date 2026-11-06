@@ -1,4 +1,4 @@
-"""行情查询 API：标的列表/搜索、K线、批量实时快照。"""
+"""行情查询 API：标的列表/搜索、K线、最新本地行情。"""
 
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -7,17 +7,23 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_current_user_optional, get_read_db
+from app.api.deps import get_current_admin, get_read_db
 from app.core.exceptions import ApiError
 from app.core.response import ok
 from app.models.symbol import Symbol
 from app.models.user import User
-from app.repositories import ops_repo, user_repo
-from app.schemas.market import KlineBarOut, SnapshotOut, SymbolOut, SymbolSearchOut
+from app.repositories import kline_repo, ops_repo
+from app.schemas.market import KlineBarOut, LatestQuoteOut, SymbolOut, SymbolSearchOut
 from app.services import market_service, sync_service
 from app.utils import market_cache
 
 router = APIRouter(prefix="/api/v1", tags=["market"])
+
+
+@router.get('/market/display-settings')
+def market_display_settings():
+    from app.services import market_display
+    return ok(data=market_display.read())
 
 
 class KlineBackfillRequest(BaseModel):
@@ -25,6 +31,7 @@ class KlineBackfillRequest(BaseModel):
     period: str
     start: datetime
     end: datetime
+    initial: bool = False
 
 
 @router.post("/kline/backfill")
@@ -41,6 +48,8 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
     from app.worker.tasks.sync_tasks import kline_backfill
 
     key = f"kline-backfill:{payload.symbol_id}:{payload.period}:{payload.start.isoformat()}:{payload.end.isoformat()}"
+    if payload.initial:
+        key += ":initial"
     redis = get_redis_client()
     # 同一历史窗口复用任务；失败时 worker 清理该键，允许重新请求。
     task_id = str(uuid4())
@@ -49,6 +58,7 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
     try:
         kline_backfill.apply_async(
             args=(payload.symbol_id, payload.period, payload.start.isoformat(), payload.end.isoformat()),
+            kwargs={"initial": payload.initial},
             task_id=task_id,
         )
     except Exception:
@@ -69,6 +79,13 @@ def kline_backfill_status(task_id: str) -> dict:
         return ok(data={"status": "done", "fetched": payload.get("fetched", 0),
                         "confirmed_empty": payload.get("confirmed_empty", False)})
     return ok(data={"status": "loading"})
+
+
+@router.get("/stocks/search-directory")
+def stock_search_directory() -> dict:
+    from app.services.stock_search_directory import get_directory
+
+    return ok(data=get_directory())
 
 
 @router.get("/symbols")
@@ -97,14 +114,14 @@ def search_symbols(
 
 @router.get("/market/home-indices")
 def home_indices(db: Session = Depends(get_read_db)) -> dict:
-    """首页固定指数：一次返回排序信息和已有快照，不触发外部行情同步。"""
+    """首页固定指数：一次返回排序信息和最新行情，不触发外部行情同步。"""
     symbols = market_service.list_symbols(db, type_="index", fixed_only=True)
-    snapshots = {s["symbol_id"]: s for s in market_service.get_snapshots(db, [s.id for s in symbols])}
+    quotes = {s["symbol_id"]: s for s in market_service.get_latest_quotes(db, [s.id for s in symbols])}
     return ok(data=[
         {
             **SymbolOut.model_validate(symbol).model_dump(),
-            "snapshot": SnapshotOut(**snapshots[symbol.id]).model_dump(mode="json")
-            if symbol.id in snapshots else None,
+            "quote": LatestQuoteOut(**quotes[symbol.id]).model_dump(mode="json")
+            if symbol.id in quotes else None,
         }
         for symbol in symbols
     ])
@@ -143,6 +160,10 @@ def get_kline_quality(
     if period != "1d" or not kline_quality_service.eligible(sym):
         return ok(data={"status": "unsupported", "missing_count": 0, "missing_ranges": [], "checked_at": None})
     data = kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period))
+    latest = kline_repo.latest_ts(db, period, sym.id)
+    data.update(status="complete" if latest else "unchecked", missing_count=0, missing_ranges=[])
+    if latest:
+        data["checked_to"] = latest.date().isoformat()
     tasks = [ops_repo.latest_sync_task(db, kind, sym.id) for kind in ('kline_incremental', 'kline_init')]
     symbol_syncing = any(
         task is not None and task.status in {'queued', 'running'} and task.last_run_at is not None
@@ -166,28 +187,14 @@ def get_kline_quality(
     return ok(data=data)
 
 
-@router.get("/snapshot")
-def get_snapshot(
-    symbols: str = Query(..., description="逗号分隔的 symbol_id 列表"),
-    db: Session = Depends(get_read_db),
-    current: User | None = Depends(get_current_user_optional),
-) -> dict:
+@router.get('/quotes/latest')
+def latest_quotes(symbols: str = Query(...), db: Session = Depends(get_read_db)):
     try:
-        ids = [int(x) for x in symbols.split(",") if x.strip()]
+        ids = [int(x) for x in symbols.split(',') if x.strip()]
     except ValueError as exc:
-        raise ApiError(status_code=400, msg="symbols 必须为逗号分隔的数字 ID") from exc
-    if current is not None:
-        watch_ids = set(user_repo.list_watchlist_symbol_ids(db, current.id))
-        if watch_ids and set(ids) <= watch_ids:
-            cached = market_cache.get_watchlist_snap_cache(current.id)
-            if cached is not None:
-                return ok(data=[SnapshotOut(**s).model_dump(mode="json") for s in cached])
-            snapshots = market_service.get_snapshots(db, ids)
-            ttl = 10 if sync_service.is_market_open() else 300  # 交易时段 10s / 非交易 300s
-            market_cache.set_watchlist_snap_cache(current.id, snapshots, ttl)
-            return ok(data=[SnapshotOut(**s).model_dump(mode="json") for s in snapshots])
-    snapshots = market_service.get_snapshots(db, ids)
-    return ok(data=[SnapshotOut(**s).model_dump(mode="json") for s in snapshots])
+        raise ApiError(status_code=400, msg='symbols 必须为逗号分隔的数字 ID') from exc
+    return ok(data=[LatestQuoteOut(**row).model_dump(mode='json')
+                    for row in market_service.get_latest_quotes(db, ids)])
 
 
 @router.get("/sync-status")
@@ -211,9 +218,9 @@ def get_sync_status(
 
 @router.post("/fetch-all")
 def fetch_all(current: User = Depends(get_current_admin)) -> dict:
-    """管理员专用一次性全量同步：固定指数K线+快照 + 全量实时快照，同步执行不依赖 Celery/beat。
+    """管理员专用一次性全量同步：固定指数K线，同步执行不依赖 Celery/beat。
 
-    用于本地无法触发定时任务时一次性补齐大盘/行业指数数据，返回固定指数同步结果与实时轮询结果。
+    用于本地无法触发定时任务时一次性补齐大盘/行业指数数据，返回固定指数同步结果。
     """
     from app.utils.redis_client import get_redis_client
 
@@ -221,5 +228,4 @@ def fetch_all(current: User = Depends(get_current_admin)) -> dict:
     if not redis.set('provider:fetch-all:cooldown', '1', nx=True, ex=86400):
         raise ApiError(status_code=429, msg='全量刷新每天最多触发一次')
     fixed = sync_service.run_fixed_indices_sync(skip_existing=False)
-    realtime = sync_service.run_realtime_poll()
-    return ok(data={"fixed_indices": fixed, "realtime": realtime}, msg="全量同步完成")
+    return ok(data={"fixed_indices": fixed}, msg="全量同步完成")

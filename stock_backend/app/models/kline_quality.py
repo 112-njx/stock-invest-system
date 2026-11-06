@@ -1,4 +1,4 @@
-"""A 股交易日历与日 K 缺口检查结果。"""
+"""Loaded daily-history coverage and synchronization status."""
 
 from datetime import date, datetime
 
@@ -6,12 +6,6 @@ from sqlalchemy import JSON, BigInteger, Date, DateTime, ForeignKey, Integer, St
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
-
-
-class TradingDay(Base):
-    __tablename__ = "cn_trading_days"
-
-    day: Mapped[date] = mapped_column(Date, primary_key=True)
 
 
 class KlineQuality(Base):

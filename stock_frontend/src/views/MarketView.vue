@@ -13,8 +13,8 @@ import { fetchHomeIndices, type HomeIndex } from '@/api/market'
 import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
-import { useSnapshotPolling } from '@/composables/useSnapshotPolling'
-import { readHomeIndexCache, snapshotTime, writeHomeIndexCache } from '@/utils/homeIndexCache'
+import { useLatestQuotes } from '@/composables/useLatestQuotes'
+import { readHomeIndexCache, quoteTime, writeHomeIndexCache } from '@/utils/homeIndexCache'
 import { trackTiming } from '@/utils/monitor'
 import KLineChart from '@/components/trading/KLineChart.vue'
 import WatchlistPanel from '@/components/trading/WatchlistPanel.vue'
@@ -29,7 +29,7 @@ const authModal = useAuthModalStore()
 const indicesLoading = ref(false)
 const indicesError = ref(false)
 const cachedIds = ref(new Set<number>())
-const { start } = useSnapshotPolling(4000)
+const { start } = useLatestQuotes()
 
 let indicesInFlight: Promise<void> | null = null
 let refreshAfterCurrent = false
@@ -46,7 +46,7 @@ async function recordVisible(source: string) {
     namesTracked = true
     trackTiming('home_index_names_visible', performance.now() - pageStartedAt, { source })
   }
-  if (!pricesTracked && market.fixedIndices.some((i) => market.snapshots[i.id]?.price != null)) {
+  if (!pricesTracked && market.fixedIndices.some((i) => market.quotes[i.id]?.price != null)) {
     pricesTracked = true
     trackTiming('home_index_prices_visible', performance.now() - pageStartedAt, { source })
   }
@@ -67,9 +67,9 @@ function onWatchlistLoaded() {
 function applyIndices(rows: HomeIndex[], source: string) {
   market.setFixedIndices(rows)
   // 本地缓存只用于立即显示名称；价格须经服务端比较快照与日 K 后再展示。
-  if (source === 'server') market.mergeSnapshots(rows.flatMap((row) => row.snapshot?.price != null ? [row.snapshot] : []))
+  if (source === 'server') market.mergeQuotes(rows.flatMap((row) => row.quote ? [row.quote] : []))
   cachedIds.value = new Set(rows
-    .filter((row) => source === 'cache' || (row.snapshot?.price == null && market.snapshots[row.id]?.price != null))
+    .filter((row) => source === 'cache' || (row.quote?.price == null && market.quotes[row.id]?.price != null))
     .map((row) => row.id))
   chooseDefaultSymbol()
   void recordVisible(source)
@@ -87,7 +87,7 @@ function loadHomeIndices(): Promise<void> {
       const rows = await fetchHomeIndices()
       if (!mounted) return
       applyIndices(rows, 'server')
-      writeHomeIndexCache(rows, market.snapshots)
+      writeHomeIndexCache(rows, market.quotes)
     } catch {
       if (mounted) indicesError.value = !market.fixedIndices.length
     } finally {
@@ -114,7 +114,7 @@ onMounted(() => {
   mounted = true
   const cached = readHomeIndexCache()
   if (cached.length) {
-    for (const row of cached) delete market.snapshots[row.id]
+    for (const row of cached) delete market.quotes[row.id]
     applyIndices(cached, 'cache')
   }
   void loadHomeIndices()
@@ -127,22 +127,22 @@ onMounted(() => {
 watch(() => market.current?.id, () => ws.syncSubscriptions())
 watch(() => market.watchlist.length, () => ws.syncSubscriptions())
 watch(() => market.fixedIndices.length, () => ws.syncSubscriptions())
-watch(() => market.snapshots, () => {
+watch(() => market.quotes, () => {
   if (cacheTimer) clearTimeout(cacheTimer)
   cacheTimer = setTimeout(() => {
     cachedIds.value = new Set([...cachedIds.value].filter((id) => {
-      const updated = market.snapshots[id]?.updated_at
-      return !updated || Date.now() - snapshotTime(updated) > 5 * 60 * 1000
+      const updated = market.quotes[id]?.updated_at
+      return !updated || Date.now() - quoteTime(updated) > 5 * 60 * 1000
     }))
     if (market.fixedIndices.length) writeHomeIndexCache(
-      market.fixedIndices.map((row) => ({ ...row, snapshot: market.snapshots[row.id] ?? null })),
-      market.snapshots,
+      market.fixedIndices.map((row) => ({ ...row, quote: market.quotes[row.id] ?? null })),
+      market.quotes,
     )
   }, 500)
   void recordVisible('update')
 }, { deep: true })
 
-// 快照轮询由 useSnapshotPolling 内部 onBeforeUnmount 停止；WS 为全局单例。
+// 最新行情查询监听随组件卸载释放；WS 为全局单例。
 onUnmounted(() => {
   mounted = false
   if (cacheTimer) { clearTimeout(cacheTimer); cacheTimer = null }

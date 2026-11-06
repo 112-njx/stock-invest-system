@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _DEFAULT_BACK_DAYS = 7300  # 默认回看窗口：约 20 年，等价"按 limit 取最近 N 根"（与 get_kline 默认区间对齐），避免历史指标缺失
-INDICATOR_NAMES = set(INDICATORS.keys())
+INDICATOR_NAMES = set(INDICATORS.keys()) | {"ma"}
 
 
 def compute_indicators(
@@ -47,6 +47,15 @@ def compute_indicators(
         if n not in INDICATOR_NAMES:
             raise ValueError(f"unsupported indicator: {n}")
 
+    defaults = {'ma': {}, 'macd': {'fast':12, 'slow':26, 'signal':9}, 'kdj': {'n':9, 'm1':3, 'm2':3}, 'volume': {}, 'amount': {}}
+    if params is not None and (not isinstance(params, dict) or params.keys() - defaults.keys()):
+        raise ValueError('无效的指标参数')
+    for name in names:
+        chosen = (params or {}).get(name, {})
+        if not isinstance(chosen, dict) or chosen.keys() - defaults[name].keys() or any(
+                type(v) is not int or not 1 <= v <= 10000 for v in chosen.values()):
+            raise ValueError('指标周期须为 1 到 10000 的整数，参数名须与指标匹配')
+
     symbol_id = market_service.resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
@@ -56,32 +65,41 @@ def compute_indicators(
     if start is None:
         start = end - timedelta(days=_DEFAULT_BACK_DAYS)
 
-    if period in ("1w", "1mon"):
-        from app.services.weekly_kline import get_period_bars
-
-        bars = get_period_bars(db, symbol_id, period, None, end, limit=100000) if explicit_range else get_period_bars(
-            db, symbol_id, period, None, None, limit=limit
-        )
-    elif explicit_range:
-        # 从库中最早的 K 线起算递推指标，返回时再裁到请求区间，避免补页交界处数值跳变。
-        bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end, limit=100000)
-    else:
-        bars = kline_repo.latest_bars(db, period, symbol_id, limit=limit)
+    # Keep the bounded warmup window anchored to the newest bar for latest-N queries.
+    bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end,
+                               limit=100000, source_window=(start, end), latest=not explicit_range)
     if not bars:
         return []
 
+    from app.services import indicator_policy, sdk_indicators
+    policy = indicator_policy.read()
     latest_ts = bars[-1].ts
-    key = _cache_key(symbol_id, period, names, params, latest_ts, explicit_range, start, end, limit)
+    key = _cache_key(symbol_id, period, names, params, latest_ts, explicit_range, start, end, limit,
+                     source=bars[-1].source, engine=("pandas" if policy["pandas_enabled"] else "sdk") + ":v1:" + str(policy["revision"]))
+    if "ma" in names:
+        # The active candle can change without changing its timestamp.
+        closes = [(b.ts.isoformat(), str(b.close)) for b in bars]
+        key += ":ma-zb-v1:" + hashlib.sha256(json.dumps(closes).encode()).hexdigest()[:24]
     cached = _get_cache(key)
     if cached is not None:
         return cached
 
-    df = _bars_to_df(bars)
-    for name in names:
-        df = get_indicator(name, (params or {}).get(name)).calculate(df)
-    rows = _df_to_rows(df)
+    if policy['pandas_enabled']:
+        df = _bars_to_df(bars)
+        for name in names:
+            if name == "ma":
+                continue
+            df = get_indicator(name, (params or {}).get(name)).calculate(df)
+        rows = _df_to_rows(df)
+        if "ma" in names:
+            # Price MA always uses zb, even when other indicators use pandas.
+            rows = sdk_indicators.calculate(rows, ["ma"], params)
+    else:
+        rows = sdk_indicators.calculate([market_cache.kline_bar_to_dict(b) for b in bars], names, params)
     if explicit_range:
         rows = [row for row in rows if market_cache.as_utc(datetime.fromisoformat(row["ts"])) >= market_cache.as_utc(start)]
+    else:
+        rows = rows[-limit:]
     _set_cache(key, rows)
     return rows
 
@@ -96,6 +114,8 @@ def _cache_key(
     start: datetime,
     end: datetime,
     limit: int,
+    source: str = 'stockdb',
+    engine: str = 'pandas',
 ) -> str:
     """默认区间（未显式指定 start/end）按"最新N根"缓存：键只含 latest_ts，新K线到达自动失效。
 
@@ -103,7 +123,9 @@ def _cache_key(
     """
     params_hash = hashlib.md5(json.dumps(params or {}, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
     names_sorted = ",".join(sorted(names))
-    key = f"indicator:{symbol_id}:{period}:{names_sorted}:{params_hash}:{latest_ts.isoformat()}"
+    from app.services.market_policy import read
+    key = f"indicator:{symbol_id}:{period}:{engine}:{read()['revision']}:{source}:{names_sorted}:{params_hash}:{latest_ts.isoformat()}"
+    key += f":limit={limit}"
     if explicit_range:
         key += f":{start.isoformat()}:{end.isoformat()}:{limit}"
     return key

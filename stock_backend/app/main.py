@@ -33,15 +33,17 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001
         logger.warning("startup set ws loop failed (skip)", exc_info=True)
     _startup_tasks()
-    from app.services import stockdb_cache
+    from app.services import stockdb_cache, trend_service
 
     if settings.APP_ENV != "test":
         await asyncio.to_thread(stockdb_cache.prepare)
         stockdb_cache.start()
+        trend_service.start()
     try:
         yield
     finally:
         stockdb_cache.stop()
+        trend_service.stop()
 
 
 def _startup_tasks() -> None:

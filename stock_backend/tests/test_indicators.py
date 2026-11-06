@@ -66,7 +66,10 @@ def test_volume_amount_passthrough():
     df = pd.DataFrame({"volume": [100, 200, 300], "amount": [1e6, 2e6, 3e6], "close": [1, 2, 3]})
     for name in ("volume", "amount"):
         out = get_indicator(name).calculate(df.copy())
-        assert list(out.columns) == ["volume", "amount", "close"]
+        assert list(out["volume"]) == [100, 200, 300]
+        assert list(out["amount"]) == [1e6, 2e6, 3e6]
+        if name == "volume":
+            assert out["volume_ma5"].isna().all()
 
 
 def test_unknown_indicator():
@@ -143,3 +146,110 @@ def test_indicators_api_cache_same_result(client: TestClient, _indicator_data):
     r1 = client.get("/api/v1/indicators", params=q).json()["data"]
     r2 = client.get("/api/v1/indicators", params=q).json()["data"]
     assert r1 == r2
+
+
+def test_sdk_native_values_and_volume_averages():
+    from app.services.sdk_indicators import calculate
+    rows = [dict(ts=str(i), high=float(i+2), low=float(i), close=float(i+1), volume=100+i, amount=1000) for i in range(16)]
+    result = calculate(rows, ['macd', 'kdj', 'volume', 'amount'], {})
+    assert result[1]['macd_dif'] == 0.08
+    assert result[0]['kdj_k'] is None
+    assert result[0]['volume_ma5'] is None
+    assert result[-1]['macd_hist'] == 1.933
+    assert result[-1]['kdj_k'] == 90.0
+    assert result[-1]['volume_ma5'] == 113.0
+    assert result[-1]['volume_ma10'] == 110.5
+    custom = calculate(rows, ['macd'], {'macd': {'fast': 2, 'slow': 3, 'signal': 2}})
+    assert custom[-1]['macd_dif'] != result[-1]['macd_dif']
+    assert [r['ts'] for r in result] == [r['ts'] for r in rows]
+
+
+def test_both_engines_preserve_paging_warmup(monkeypatch, _indicator_data):
+    from app.services import indicator_service, indicator_policy
+    policy = {'pandas_enabled': False, 'revision': 987654321}
+    monkeypatch.setattr(indicator_policy, 'read', lambda: dict(policy))
+    with get_session() as db:
+        start = dt.datetime(2026, 6, 1, tzinfo=UTC)
+        end = start + dt.timedelta(days=39)
+        values = []
+        for pandas_enabled in (False, True):
+            policy['pandas_enabled'] = pandas_enabled
+            complete = indicator_service.compute_indicators(db, str(_indicator_data.id), '1d', ['macd','volume'], start=start, end=end)
+            page = indicator_service.compute_indicators(db, str(_indicator_data.id), '1d', ['macd','volume'], start=start+dt.timedelta(days=20), end=end)
+            recent = indicator_service.compute_indicators(db, str(_indicator_data.id), '1d', ['macd','volume'], limit=5)
+            assert page == complete[20:]
+            assert recent == complete[-5:]
+            values.append(complete)
+        assert values[0][1]['macd_dif'] != values[1][1]['macd_dif']
+
+
+def test_sdk_failure_does_not_invoke_pandas(client, monkeypatch, _indicator_data):
+    from app.services import indicator_service, indicator_policy, sdk_indicators
+    from app.core.exceptions import ApiError
+    monkeypatch.setattr(indicator_policy, 'read', lambda: {'pandas_enabled':False,'revision':987654322})
+    def failure(*args):
+        raise ApiError(503, 50331, 'SDK unavailable')
+    monkeypatch.setattr(sdk_indicators, 'calculate', failure)
+    monkeypatch.setattr(indicator_service, '_bars_to_df', lambda *args: pytest.fail('Unexpected pandas fallback'))
+    result = client.get('/api/v1/indicators', params={'symbol':str(_indicator_data.id),'names':'macd'})
+    assert result.status_code == 503
+
+
+def test_pandas_panels_survive_unavailable_sdk_ma(client, monkeypatch, _indicator_data):
+    from app.services import indicator_service, indicator_policy, sdk_indicators
+    from app.core.exceptions import ApiError
+    monkeypatch.setattr(indicator_policy, 'read', lambda: {'pandas_enabled':True,'revision':987654323})
+    monkeypatch.setattr(indicator_service, '_get_cache', lambda key: None)
+    def unavailable(*args):
+        raise ApiError(503, 50331, 'SDK unavailable')
+    monkeypatch.setattr(sdk_indicators, 'calculate', unavailable)
+    base = {'symbol':str(_indicator_data.id)}
+    ma = client.get('/api/v1/indicators', params={**base,'names':'ma'})
+    panels = client.get('/api/v1/indicators', params={**base,'names':'macd,kdj,volume,amount'})
+    assert ma.status_code == 503
+    assert panels.status_code == 200
+    rows = panels.json()['data']
+    assert len(rows) == 40
+    for name in ('macd_hist', 'kdj_k', 'volume_ma5', 'volume_ma10', 'volume', 'amount'):
+        assert rows[-1][name] is not None
+
+
+@pytest.mark.parametrize('params', [{'macd':{'fast':0}}, {'kdj':{'n':True}}, {'macd':{'bad':12}}, {'macd':[]}])
+def test_invalid_engine_parameters(client, _indicator_data, params):
+    import json
+    result = client.get('/api/v1/indicators', params={'symbol':str(_indicator_data.id),'names':'macd,kdj','params':json.dumps(params)})
+    assert result.status_code == 400
+
+
+def test_indicator_policy_requires_admin_and_notifies_views(client, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app.services import indicator_policy
+    from app.main import app
+    from app.api.deps import get_current_admin
+    from app.ws import publisher
+    assert client.get('/api/v1/admin/indicator-settings').status_code == 401
+    assert client.put('/api/v1/admin/indicator-settings',json={'pandas_enabled':True}).status_code == 401
+    original = indicator_policy.read()
+    notify = Mock()
+    monkeypatch.setattr(publisher, '_publish', notify)
+    app.dependency_overrides[get_current_admin] = lambda: SimpleNamespace(is_admin=True)
+    try:
+        result = client.put('/api/v1/admin/indicator-settings',json={'pandas_enabled':not original['pandas_enabled']})
+        assert result.status_code == 200
+        assert result.json()['data']['revision'] > original['revision']
+        assert result.json()['data']['pandas_enabled'] is not original['pandas_enabled']
+        notify.assert_called_once_with({'type':'indicator_settings_changed'})
+    finally:
+        indicator_policy.save(original['pandas_enabled'])
+        app.dependency_overrides.pop(get_current_admin,None)
+
+
+def test_indicator_notification_broadcasts_without_symbol_id(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from app.api.v1.ws_market import _dispatch, manager
+    notify = AsyncMock()
+    monkeypatch.setattr(manager, 'broadcast_all', notify)
+    asyncio.run(_dispatch(None, {'type':'indicator_settings_changed'}))
+    notify.assert_awaited_once_with({'type':'indicator_settings_changed'})

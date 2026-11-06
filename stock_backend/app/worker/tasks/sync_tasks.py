@@ -1,4 +1,4 @@
-"""行情同步 Celery 任务：kline_init / kline_incremental / realtime_poll。
+"""行情同步 Celery 任务：历史初始化、历史补拉和手动/定时同步。
 
 任务内只做薄编排：调用同步服务，状态与全链路日志写 sync_tasks / task_logs。
 """
@@ -49,7 +49,7 @@ def kline_init(self, symbol_id: int | None = None, days: int | None = None) -> d
 def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict:
     """关注 A 股的首次初始化或日 K 增量与缺口修复。"""
     from app.models.ops import SyncTask
-    from app.repositories import kline_repo, user_repo
+    from app.repositories import user_repo
     from app.services import kline_quality_service
     from app.utils import market_cache
 
@@ -74,13 +74,9 @@ def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict
             result = sync_service.run_kline_init(symbol_id=symbol_id)
         else:
             result = sync_service.run_kline_incremental(symbol_id=symbol_id)
-        latest = kline_repo.latest_ts(db, "1d", symbol_id)
-        expected = kline_quality_service.last_completed_mainland_day(db)
-        if latest is None or expected is None or latest.astimezone(kline_quality_service.settings.tz).date() < expected:
-            raise RuntimeError(f"关注股票最新日 K 未更新到已完成交易日 {expected}")
         quality = kline_quality_service.get_quality(db, symbol_id, "1d")
         if quality is None or quality.status != "complete":
-            raise RuntimeError(f"关注股票历史日 K 仍有缺口：{quality.missing_count if quality else '未核验'}")
+            raise RuntimeError(f"关注股票历史日 K 暂不可用：{quality.missing_count if quality else '未核验'}")
         db.refresh(row)
         if row.celery_task_id != self.request.id:
             return {"skipped": "superseded delivery"}
@@ -128,33 +124,33 @@ def watchlist_delivery_reconcile() -> dict:
     return dispatch_watchlist_sync()
 
 
+@celery_app.task(name='app.worker.tasks.sync_tasks.local_market_after_close')
+def local_market_after_close():
+    from app.services import market_policy, local_market_sync
+    if not market_policy.read()['auto_sync_enabled']:
+        return {'skipped': 'automatic local sync disabled'}
+    return local_market_sync.request_sync()
+
+
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_backfill",
                  acks_late=True, reject_on_worker_lost=True,
                  soft_time_limit=900, time_limit=1200)
-def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: str) -> dict:
+def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: str, initial: bool = False) -> dict:
     """按用户请求的历史窗口补取，结果供前端轮询。"""
     from datetime import datetime
 
-    from app.data_providers.factory import get_provider
     from app.models.symbol import Symbol
-    from app.services.sync_service import _provider_params, _write_bars
+    from app.services.sync_service import prepare_history_window
 
     db = get_session()
     try:
         sym = db.get(Symbol, symbol_id)
         if sym is None:
             return {"fetched": 0, "added": 0}
-        symbol_param, asset_type = _provider_params(sym)
-        source_period = "1d" if period in ("1w", "1mon") else period
-        bars, confirmed_empty = get_provider().fetch_kline_checked(
-            symbol_param, source_period, datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso), asset_type
-        )
-        if not bars and not confirmed_empty:
-            raise RuntimeError("historical providers unavailable")
-        added = _write_bars(db, source_period, symbol_id, bars)
-        db.commit()
-        _log("kline_backfill", self.request.id, "success", f"symbol_id={symbol_id} fetched={len(bars)}")
-        return {"fetched": len(bars), "added": added, "confirmed_empty": confirmed_empty if not bars else False}
+        result = prepare_history_window(db, sym, period, datetime.fromisoformat(start_iso),
+                                        datetime.fromisoformat(end_iso), initial=initial)
+        _log("kline_backfill", self.request.id, "success", f"symbol_id={symbol_id} fetched={result['fetched']}")
+        return result
     except Exception as exc:
         db.rollback()
         if self.request.retries < 2:
@@ -162,6 +158,8 @@ def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: s
         from app.utils.redis_client import get_redis_client
 
         key = f"kline-backfill:{symbol_id}:{period}:{start_iso}:{end_iso}"
+        if initial:
+            key += ":initial"
         redis = get_redis_client()
         if redis.get(key) == self.request.id:
             redis.delete(key)
@@ -203,7 +201,7 @@ def kline_init_fixed_indices(self) -> dict:
         logger.exception("kline_init_fixed_indices failed")
         _log("kline_init", self.request.id, "failed", str(exc))
         redis.set('provider:fixed-indices-retry', '1', ex=120)
-        raise self.retry(exc=exc, countdown=120, max_retries=None)
+        raise self.retry(exc=exc, countdown=120, max_retries=3)
     finally:
         redis.delete('provider:presync:queued')
         lock_conn.execute(text("SELECT pg_advisory_unlock(4000000001)"))
@@ -221,22 +219,6 @@ def kline_incremental(self, symbol_id: int | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.exception("kline_incremental failed")
         _log("kline_incremental", self.request.id, "failed", str(exc))
-        raise
-
-
-@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.realtime_poll")
-def realtime_poll(self, symbol_id: int | None = None, force: bool = False) -> dict:
-    """交易时段实时快照轮询；非交易时段跳过（beat 周期触发，force 用于手动验证/运维）。"""
-    if not force and not sync_service.is_market_open():
-        return {"skipped": "market closed"}
-    _log("realtime", self.request.id, "running", f"start symbol_id={symbol_id}")
-    try:
-        result = sync_service.run_realtime_poll(symbol_id=symbol_id)
-        _log("realtime", self.request.id, "success", f"done: {result}")
-        return result
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("realtime_poll failed")
-        _log("realtime", self.request.id, "failed", str(exc))
         raise
 
 
@@ -283,3 +265,11 @@ def provider_probe() -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("provider_probe failed: %s", exc)
         return {"probed": [], "error": str(exc)[:120]}
+
+
+@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.local_market_sync",
+                 acks_late=True, reject_on_worker_lost=True, soft_time_limit=6900, time_limit=7200)
+def local_market_sync(self) -> dict:
+    from app.services import local_market_sync as service
+
+    return service.run(self.request.id)

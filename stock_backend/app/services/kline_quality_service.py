@@ -1,15 +1,12 @@
 """境内固定指数及 A 股日 K 缺口检测与按交易日区间补拉。"""
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import get_settings
 from app.models.kline import Kline1d
-from app.models.kline_quality import KlineQuality, TradingDay
-from app.repositories import kline_repo
-from app.utils import market_cache
+from app.models.kline_quality import KlineQuality
 
 settings = get_settings()
 MAINLAND_MARKETS = {"SSE", "SZSE", "CSI"}
@@ -33,76 +30,8 @@ def eligible(symbol) -> bool:
     )
 
 
-def _calendar(db, window_start: date, today: date) -> list[date] | None:
-    """持久化交易日；源不可用时仅使用覆盖完整目标区间的已存日历。"""
-    existing = list(db.scalars(select(TradingDay.day).order_by(TradingDay.day)))
-    if not existing or existing[0] > window_start or existing[-1] < today:
-        try:
-            import akshare as ak
-
-            frame = ak.tool_trade_date_hist_sina()
-            dates = sorted({date.fromisoformat(str(x)[:10]) for x in frame["trade_date"]})
-            if not dates or dates[0] > window_start or dates[-1] < today:
-                return None
-            db.execute(pg_insert(TradingDay).values([{"day": day} for day in dates]).on_conflict_do_nothing())
-            db.commit()
-            existing = dates
-        except Exception:
-            db.rollback()
-            return None
-    return [day for day in existing if window_start <= day <= today]
-
-
-def _last_completed(days: list[date], now: datetime) -> date | None:
-    local = now.astimezone(settings.tz)
-    candidates = [day for day in days if day < local.date() or (day == local.date() and local.time() >= time(15, 30))]
-    return candidates[-1] if candidates else None
-
-
-def last_completed_mainland_day(db, now: datetime | None = None) -> date | None:
-    """固定指数启动检查使用与缺口检测相同的交易日边界。"""
-    now = now or datetime.now(UTC)
-    today = now.astimezone(settings.tz).date()
-    days = _calendar(db, today - timedelta(days=30), today)
-    return _last_completed(days, now) if days else None
-
-
-def _ranges(days: list[date], all_days: list[date]) -> list[tuple[date, date]]:
-    positions = {day: i for i, day in enumerate(all_days)}
-    result: list[tuple[date, date]] = []
-    for day in days:
-        if result and positions[day] == positions[result[-1][1]] + 1:
-            result[-1] = (result[-1][0], day)
-        else:
-            result.append((day, day))
-    return result
-
-
 def get_quality(db, symbol_id: int, period: str) -> KlineQuality | None:
     return db.get(KlineQuality, (symbol_id, period))
-
-
-def _fetch_gap_bars(provider, symbol_param, asset_type, first: date, last: date, required: set[date]):
-    """短区间优先选轻量来源；失败再按项目既有优先级链降级。"""
-    start = datetime.combine(first - timedelta(days=1), time(), UTC)
-    end = datetime.combine(last + timedelta(days=1), time(), UTC)
-    bars = []
-    try:
-        if asset_type == "index":
-            from app.data_providers.sina import SinaProvider
-
-            bars = SinaProvider().fetch_kline(symbol_param, "1d", start, end, asset_type)
-        elif asset_type == "industry_index":
-            from app.data_providers.ths import THSProvider
-
-            bars = THSProvider().fetch_kline(symbol_param, "1d", start, end, asset_type)
-    except Exception:
-        pass
-    found = {market_cache.as_utc(bar.ts).date(): bar for bar in bars if market_cache.as_utc(bar.ts).date() in required}
-    if required - found.keys():
-        fallback = provider.fetch_kline(symbol_param, "1d", start, end, asset_type)
-        found.update({market_cache.as_utc(bar.ts).date(): bar for bar in fallback if market_cache.as_utc(bar.ts).date() in required})
-    return list(found.values())
 
 
 def quality_dict(row: KlineQuality | None) -> dict:
@@ -121,63 +50,20 @@ def quality_dict(row: KlineQuality | None) -> dict:
 
 
 def check_and_repair(db, symbol, provider, *, now: datetime | None = None, full_watchlist_repair: bool = False) -> dict:
-    """检查境内固定指数及已关注 A 股日 K；不使用工作日猜测交易日。"""
-    if not eligible(symbol):
-        return {"status": "unsupported", "added": 0}
+    """Record available history coverage without calendar gap scans or automatic repairs."""
     now = now or datetime.now(UTC)
-    window_start = (now - timedelta(days=settings.KLINE_INIT_DAYS)).astimezone(settings.tz).date()
-    calendar = _calendar(db, window_start, now.astimezone(settings.tz).date())
-    last_day = _last_completed(calendar, now) if calendar else None
-    rows = list(db.scalars(select(Kline1d.ts).where(Kline1d.symbol_id == symbol.id, Kline1d.ts >= datetime.combine(window_start, time(), UTC)).order_by(Kline1d.ts)))
-    actual = {market_cache.as_utc(ts).date() for ts in rows}
-    checked_from = min(actual) if actual else window_start
-    expected = [day for day in (calendar or []) if checked_from <= day <= last_day] if last_day else []
-    missing = [day for day in expected if day not in actual]
-    before = len(missing)
-    added = 0
-    if calendar and last_day and missing:
-        from app.services.sync_service import _provider_params
-
-        symbol_param, asset_type = _provider_params(symbol)
-        for first, last in _ranges(missing, expected):
-            # 含两端缓冲，兼容提供器日期边界及周末。
-            from app.utils.redis_client import get_redis_client
-
-            redis = get_redis_client()
-            cooldown_key = f'provider:gap-cooldown:{symbol.id}:{first}:{last}'
-            if not full_watchlist_repair and not redis.set(cooldown_key, '1', nx=True, ex=86400):
-                continue
-            try:
-                required = {day for day in missing if first <= day <= last}
-                if full_watchlist_repair:
-                    start = datetime.combine(first - timedelta(days=1), time(), UTC)
-                    end = datetime.combine(last + timedelta(days=1), time(), UTC)
-                    bars = [bar for bar in provider.fetch_kline_all(symbol_param, "1d", start, end, asset_type)
-                            if market_cache.as_utc(bar.ts).date() in required]
-                else:
-                    bars = _fetch_gap_bars(provider, symbol_param, asset_type, first, last, required)
-                added += kline_repo.upsert_bars(db, "1d", symbol.id, bars)
-                if not full_watchlist_repair and {market_cache.as_utc(bar.ts).date() for bar in bars} >= required:
-                    redis.delete(cooldown_key)
-            except Exception:
-                db.rollback()
-                added = 0
-                break
-        db.commit()
-        actual = {market_cache.as_utc(ts).date() for ts in db.scalars(
-            select(Kline1d.ts).where(Kline1d.symbol_id == symbol.id, Kline1d.ts >= datetime.combine(window_start, time(), UTC))
-        )}
-        missing = [day for day in expected if day not in actual]
-        if added:
-            from app.services.indicator_service import invalidate_indicator_cache
-            from app.ws.publisher import publish_kline_refresh
-
-            market_cache.invalidate_kline_cache(symbol.id, "1d")
-            invalidate_indicator_cache(symbol.id, "1d")
-            invalidate_indicator_cache(symbol.id, "1w")
-            invalidate_indicator_cache(symbol.id, "1mon")
-            publish_kline_refresh(symbol.id, "1d")
-    status = "unknown" if not calendar or not last_day else "partial" if missing else "complete"
+    from app.services import market_policy, source_history
+    query = select(Kline1d.ts).where(Kline1d.symbol_id == symbol.id)
+    if not market_policy.history_storage_enabled():
+        query = query.where(Kline1d.source == 'stockdb')
+    dates = list(db.scalars(query.order_by(Kline1d.ts)))
+    if not dates and market_policy.akshare_enabled():
+        dates = [bar.ts for bar in (source_history.cached(symbol.id, '1d') or [])]
+    checked_from = dates[0].date() if dates else None
+    last_day = dates[-1].date() if dates else None
+    status = "complete" if dates else "unknown"
+    missing = []
+    before = added = 0
     quality = get_quality(db, symbol.id, "1d")
     if quality is None:
         quality = KlineQuality(symbol_id=symbol.id, period="1d", status=status, checked_at=now)
@@ -188,7 +74,7 @@ def check_and_repair(db, symbol, provider, *, now: datetime | None = None, full_
     quality.missing_before = before
     quality.recovered = before - len(missing)
     quality.missing_count = len(missing)
-    quality.missing_ranges = [[a.isoformat(), b.isoformat()] for a, b in _ranges(missing, expected)]
+    quality.missing_ranges = []
     quality.checked_at = now
-    db.commit()
+    db.flush()
     return {"status": status, "added": added, "missing_before": before, "recovered": quality.recovered, "missing_count": len(missing)}

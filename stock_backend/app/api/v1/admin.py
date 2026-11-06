@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
-from app.api.deps import get_read_db
+from app.api.deps import get_db, get_read_db
 from app.core.response import ok
 from app.data_providers.factory import get_provider
 from app.models.user import User, UserWatchlist
@@ -21,16 +21,85 @@ from app.worker.tasks.sync_tasks import catalog_sync
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 logger = logging.getLogger(__name__)
+
+
+@router.get('/local-market/update')
+def get_local_update(current: User = Depends(get_current_admin)):
+    from app.services.stockdb_update import status
+    return ok(data=status())
+
+
+@router.post('/local-market/update')
+def start_local_update(current: User = Depends(get_current_admin)):
+    from app.services.stockdb_update import request_update
+    return ok(data=request_update())
 QUEUE_NAMES = ("watchlist", "fixed_indices", "backfill", "control", "sync", "backtest", "ai", "backup")
 
 
+class MarketSourcePolicy(BaseModel):
+    akshare_enabled: bool = False
+    history_storage_enabled: bool = False
+    auto_sync_enabled: bool = False
+
+
+class IndicatorSettings(BaseModel):
+    pandas_enabled: bool = False
+
+
+@router.get('/indicator-settings')
+def get_indicator_settings(current: User = Depends(get_current_admin)):
+    from app.services import indicator_policy
+    return ok(data=indicator_policy.read())
+
+
+@router.put('/indicator-settings')
+def update_indicator_settings(payload: IndicatorSettings, current: User = Depends(get_current_admin)):
+    from app.services import indicator_policy
+    return ok(data=indicator_policy.save(payload.pandas_enabled))
+
+
+class MarketDisplaySettings(BaseModel):
+    synthetic_wick_factor: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+
+@router.get('/market-display')
+def get_market_display(current: User = Depends(get_current_admin)):
+    from app.services import market_display
+    return ok(data=market_display.read())
+
+
+@router.put('/market-display')
+def update_market_display(payload: MarketDisplaySettings, current: User = Depends(get_current_admin)):
+    from app.services import market_display
+    return ok(data=market_display.save(payload.synthetic_wick_factor))
+
+
+@router.get('/market-source-policy')
+def get_market_source_policy(current: User = Depends(get_current_admin)):
+    from app.services import market_policy
+    return ok(data=market_policy.read())
+
+
+@router.put('/market-source-policy')
+def update_market_source_policy(payload: MarketSourcePolicy, current: User = Depends(get_current_admin)):
+    from app.services import market_policy
+    from app.core.exceptions import ApiError
+    try:
+        return ok(data=market_policy.save(payload.akshare_enabled, payload.history_storage_enabled, payload.auto_sync_enabled))
+    except ValueError as exc:
+        raise ApiError(status_code=400, msg=str(exc)) from exc
+
+
 def _queue_name(task: dict) -> str:
+    routing = (task.get("delivery_info") or {}).get("routing_key")
+    if routing in QUEUE_NAMES:
+        return routing
     name = task.get("name", "")
     if name.endswith("watchlist_stock_sync"):
         return "watchlist"
     if name.endswith("watchlist_delivery_reconcile"):
         return "control"
-    if name.endswith("kline_init_fixed_indices"):
+    if name.endswith(("kline_init_fixed_indices", "local_market_sync")):
         return "fixed_indices"
     if name.endswith("kline_backfill"):
         return "backfill"
@@ -67,6 +136,9 @@ def _task_queue_state(db: Session, redis) -> tuple[dict, dict]:
         SyncTask.status == "failed", Symbol.is_fixed_index.is_(True),
         SyncTask.task_type == "kline_init",
     )) or 0
+    queues["fixed_indices"]["abnormal"] += db.scalar(select(func.count()).select_from(SyncTask).where(
+        SyncTask.task_type == "local_market_sync", SyncTask.status == "failed",
+    )) or 0
     queues["watchlist"]["abnormal"] = db.scalar(select(func.count()).select_from(SyncTask).where(
         SyncTask.status == "failed", SyncTask.symbol_id.in_(select(UserWatchlist.symbol_id)),
         SyncTask.task_type.in_(("kline_init", "kline_incremental")),
@@ -98,12 +170,11 @@ def traffic_status(current: User = Depends(get_current_admin), db: Session = Dep
     data = usage()
     from app.core.config import get_settings
 
-    data['poll_interval_seconds'] = get_settings().REALTIME_POLL_INTERVAL
     data['probe_interval_seconds'] = get_settings().PROVIDER_PROBE_INTERVAL
     redis = get_redis_client()
     data['retry_interval_seconds'] = int(redis.get('provider:retry:interval') or get_settings().SYNC_RETRY_BACKOFF)
     data['sync_status'] = {}
-    for scope in ('fixed_indices', 'catalog'):
+    for scope in ('local_market_sync', 'fixed_indices', 'catalog'):
         row = ops_repo.get_latest_sync_status(db, scope)
         data['sync_status'][scope] = {'status': row.status, 'message': row.message} if row else None
     return ok(data=data)
@@ -114,7 +185,15 @@ def task_queues(current: User = Depends(get_current_admin), db: Session = Depend
     from app.utils.redis_client import get_redis_client
 
     queues, workers = _task_queue_state(db, get_redis_client())
-    return ok(data={"queues": queues, "workers": workers})
+    return ok(data={"queues": queues, "workers": workers,
+                    "observed_at": datetime.now(UTC).isoformat()})
+
+
+@router.get('/local-services')
+def local_services(current: User = Depends(get_current_admin)) -> dict:
+    from app.services.admin_services import local_service_status
+
+    return ok(data=local_service_status())
 
 
 @router.get('/provider-requests')
@@ -157,3 +236,23 @@ def trigger_catalog_sync(current: User = Depends(get_current_admin)) -> dict:
     """手动触发全量标的目录同步，返回任务 ID（异步执行）。"""
     task = catalog_sync.delay()
     return ok(data={"task_id": task.id, "status": "queued"}, msg="目录同步已提交")
+
+
+@router.post("/local-market/sync")
+def trigger_local_market_sync(current: User = Depends(get_current_admin)) -> dict:
+    from app.services import local_market_sync
+
+    result = local_market_sync.request_sync()
+    # The control worker also retries unpublished durable requests.
+    try:
+        local_market_sync.dispatch(set(), False)
+    except Exception:
+        logger.exception("manual local-market task remains queued for delivery")
+    return ok(data=result, msg="本地行情同步已提交")
+
+
+@router.get("/local-market/sync")
+def local_market_sync_status(current: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> dict:
+    from app.services import local_market_sync
+
+    return ok(data=local_market_sync.status(db))

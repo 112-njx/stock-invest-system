@@ -4,7 +4,7 @@
 哪个实例都能收到 —— 因此 Nginx 无需 sticky session，可以放心用 least_conn 分发。
 
 测试方式：起两个独立 API 进程（不同端口、共享同一 Redis 与 DB），各连一个真实 WS 客户端，
-向 ``market:updates`` 发布一次快照，断言**两个实例上的客户端都收到**。
+向 ``market:updates`` 发布一次 K 线更新，断言**两个实例上的客户端都收到**。
 
 为什么不能用 TestClient：同一进程内两个 TestClient 共享模块级 ConnectionManager 单例，
 无法区分"实例"，也就验证不了跨实例广播。必须真起两个进程。
@@ -104,14 +104,14 @@ async def _connect_and_subscribe(port: int, token: str, symbol_ids: list[int]) -
     return ws
 
 
-async def _drain_until_snapshot(ws, sentinel: str, timeout: float = 8.0) -> dict:
-    """读消息直到拿到含 sentinel 的快照（容忍 auth/subscribe 的确认帧）。"""
+async def _drain_until_kline(ws, sentinel: str, timeout: float = 8.0) -> dict:
+    """读消息直到拿到含 sentinel 的K 线更新（容忍 auth/subscribe 的确认帧）。"""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         raw = await asyncio.wait_for(ws.recv(), timeout=max(0.1, deadline - time.monotonic()))
         if sentinel in raw:
             return json.loads(raw)
-    raise AssertionError(f"未在 {timeout}s 内收到快照（sentinel={sentinel}）")
+    raise AssertionError(f"未在 {timeout}s 内收到K 线更新（sentinel={sentinel}）")
 
 
 def test_ws_broadcast_reaches_all_instances(two_instances):
@@ -124,12 +124,12 @@ def test_ws_broadcast_reaches_all_instances(two_instances):
         conns = [await _connect_and_subscribe(p, token, [_SYMBOL_ID]) for p in ports]
         try:
             await asyncio.sleep(1.0)  # 等订阅在服务端登记完成
-            # 模拟 realtime_poll：向 Redis 频道发布一条快照
+            # 模拟历史同步任务：向 Redis 频道发布一条K 线更新
             r.publish(
                 "market:updates",
-                json.dumps({"type": "snapshot", "symbol_id": _SYMBOL_ID, "data": {"price": _SENTINEL}}),
+                json.dumps({"type": "kline", "symbol_id": _SYMBOL_ID, "period": "1d", "bar": {"close": 1.0, "marker": _SENTINEL}}),
             )
-            return [await _drain_until_snapshot(c, _SENTINEL) for c in conns]
+            return [await _drain_until_kline(c, _SENTINEL) for c in conns]
         finally:
             for c in conns:
                 await c.close()
@@ -138,9 +138,9 @@ def test_ws_broadcast_reaches_all_instances(two_instances):
 
     assert len(received) == 2, "两个实例都应收到广播"
     for msg in received:
-        assert msg["type"] == "snapshot"
-        assert str(_SYMBOL_ID) in msg["data"] or _SYMBOL_ID in msg["data"], msg
-        assert _SENTINEL in json.dumps(msg["data"])
+        assert msg["type"] == "kline"
+        assert msg["symbol_id"] == _SYMBOL_ID, msg
+        assert _SENTINEL in json.dumps(msg["bar"])
 
 
 def test_ws_unsubscribed_instance_does_not_receive(two_instances):
@@ -162,10 +162,10 @@ def test_ws_unsubscribed_instance_does_not_receive(two_instances):
             await asyncio.sleep(1.0)
             r.publish(
                 "market:updates",
-                json.dumps({"type": "snapshot", "symbol_id": _SYMBOL_ID, "data": {"price": sentinel}}),
+                json.dumps({"type": "kline", "symbol_id": _SYMBOL_ID, "period": "1d", "bar": {"close": 1.0, "marker": sentinel}}),
             )
-            got = await _drain_until_snapshot(ws1, sentinel)
-            assert _SYMBOL_ID in got["data"] or str(_SYMBOL_ID) in got["data"]
+            got = await _drain_until_kline(ws1, sentinel)
+            assert got["symbol_id"] == _SYMBOL_ID
             # 实例 2 未订阅该标的 → 不应收到（短超时内确认收不到）
             try:
                 await asyncio.wait_for(ws2.recv(), timeout=2.0)
@@ -176,4 +176,4 @@ def test_ws_unsubscribed_instance_does_not_receive(two_instances):
             await ws1.close()
             await ws2.close()
 
-    assert asyncio.run(scenario()) is False, "未订阅该标的的实例不应收到该快照"
+    assert asyncio.run(scenario()) is False, "未订阅该标的的实例不应收到该K 线更新"

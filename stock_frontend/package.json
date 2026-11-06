@@ -13,6 +13,7 @@
     "format": "prettier --write \"src/**/*.{ts,vue,css,json}\"",
     "verify:xss": "node scripts/verify-xss.mjs",
     "verify:pagination": "node scripts/verify-pagination.mjs",
+    "verify:stockdb": "node scripts/verify-stockdb-workspace.mjs",
     "verify:routing": "node scripts/verify-g35-routing.mjs"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "dompurify": "^3.4.15",
     "lightweight-charts": "^5.2.0",
     "pinia": "^4.0.2",
+    "pinyin-pro": "^3.29.5",
     "vue": "^3.5.40",
     "vue-router": "^4.6.4",
     "vue-virtual-scroller": "^3.0.5"

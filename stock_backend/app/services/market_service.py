@@ -1,17 +1,14 @@
-"""行情查询服务：标的列表/搜索、K线（Redis 缓存）、实时快照（Redis 缓存合并特殊字段）。"""
+"""行情查询服务：标的列表/搜索、K线（Redis 缓存）、最新本地行情。"""
 
 import logging
 import time
 from datetime import datetime, timedelta
-from datetime import time as dt_time
 
-from sqlalchemy import select, true
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.data_providers.factory import get_provider
 from app.models.kline import KLINE_MODELS, Kline1d
-from app.models.snapshot import EtfPremium, IndexValuation, SnapshotRealtime, StockFundamental
 from app.models.symbol import Symbol
 from app.repositories import kline_repo, symbol_repo
 from app.utils import market_cache
@@ -92,7 +89,11 @@ def _kline_symbol_ids(db: Session, ids: list[int]) -> set[int]:
     """命中 K 线的标的 id 集合（kline_1d 存在即视为有数据）。"""
     if not ids:
         return set()
-    return set(db.scalars(select(Kline1d.symbol_id).where(Kline1d.symbol_id.in_(ids)).distinct()))
+    from app.services.market_policy import akshare_enabled
+    query = select(Kline1d.symbol_id).where(Kline1d.symbol_id.in_(ids))
+    if not akshare_enabled():
+        query = query.where(Kline1d.source == 'stockdb')
+    return set(db.scalars(query.distinct()))
 
 
 def has_kline(db: Session, symbol_id: int) -> bool:
@@ -129,11 +130,6 @@ def get_kline(
     symbol_id = resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
-    if period in ("1w", "1mon"):
-        from app.services.weekly_kline import get_period_bars
-
-        bars = get_period_bars(db, symbol_id, period, start, end, limit, offset)
-        return [market_cache.kline_bar_to_dict(bar) for bar in bars]
     use_cache = start is None and end is None and offset == 0
     if use_cache:
         cached = market_cache.get_kline_cache(symbol_id, period, limit)
@@ -161,144 +157,11 @@ def get_kline(
     return [market_cache.kline_bar_to_dict(b) for b in bars]
 
 
-def get_snapshots(db: Session, symbol_ids: list[int]) -> list[dict]:
-    """批量实时快照，按类型合并特殊字段；快照主体走 Redis 缓存（MGET → PG 兜底 → 回写）。
-
-    附带 `data_age_seconds`（当前时间 - updated_at），前端据此标注"数据时间"。
-    """
-    if not symbol_ids:
-        return []
-    symbols = {s.id: s for s in db.scalars(select(Symbol).where(Symbol.id.in_(symbol_ids)))}
-    # 快照主体：Redis MGET，未命中查 PG 并回写（避免二次读缓存）
-    cached = market_cache.mget_snapshot_cache([sid for sid in symbol_ids if sid in symbols])
-    snaps: dict[int, dict] = {}
-    missing: list[int] = []
-    for sid in symbol_ids:
-        if sid not in symbols:
-            continue
-        if cached.get(sid) is not None:
-            snaps[sid] = cached[sid]
-        else:
-            missing.append(sid)
-    if missing:
-        for snap in db.scalars(select(SnapshotRealtime).where(SnapshotRealtime.symbol_id.in_(missing))):
-            d = market_cache.snapshot_to_cache_dict(snap)
-            snaps[snap.symbol_id] = d
-            market_cache.set_snapshot_cache(snap.symbol_id, d)
-
-    # 固定指数和 A 股股票的日 K 若比快照覆盖的交易日更新，响应中以 K 线收盘数据为准。
-    # 一次查询取每个指数最近两根；只改响应，不覆盖原始实时快照及其缓存。
-    from app.services.kline_quality_service import is_a_share_stock
-
-    fixed_ids = [sid for sid in symbol_ids if sid in symbols and (
-        symbols[sid].is_fixed_index or is_a_share_stock(symbols[sid])
-    )]
-    kline_override_ids: set[int] = set()
-    if fixed_ids:
-        latest_two = select(
-            Kline1d.symbol_id, Kline1d.ts, Kline1d.open, Kline1d.high, Kline1d.low,
-            Kline1d.close, Kline1d.volume, Kline1d.amount,
-        ).where(Kline1d.symbol_id == Symbol.id).order_by(Kline1d.ts.desc()).limit(2).lateral()
-        bars_by_symbol: dict[int, list] = {}
-        for row in db.execute(select(latest_two).select_from(Symbol).join(latest_two, true())
-                              .where(Symbol.id.in_(fixed_ids)).order_by(latest_two.c.symbol_id, latest_two.c.ts.desc())):
-            bars_by_symbol.setdefault(row.symbol_id, []).append(row)
-        now_local = datetime.now(get_settings().tz)
-        for sid, bars in bars_by_symbol.items():
-            latest = bars[0]
-            latest_day = market_cache.as_utc(latest.ts).date()
-            mainland = symbols[sid].market in {'SSE', 'SZSE', 'CSI'}
-            finished = latest_day < now_local.date() or (
-                mainland and latest_day == now_local.date() and now_local.time() >= dt_time(15, 30)
-            )
-            if not finished:
-                continue
-            snap = snaps.get(sid) or {}
-            snap_time = snap.get('updated_at')
-            if isinstance(snap_time, str):
-                snap_time = datetime.fromisoformat(snap_time.replace('Z', '+00:00'))
-            snap_utc = market_cache.as_utc(snap_time)
-            snap_local = snap_utc.astimezone(get_settings().tz) if snap_utc else None
-            snap_day = snap_local.date() if snap_local else None
-            if snap.get('price') is not None and snap_day is not None and (
-                snap_day > latest_day or (snap_day == latest_day and (not mainland or snap_local.time() >= dt_time(15, 30)))
-            ):
-                continue
-            previous = bars[1] if len(bars) > 1 else None
-            close = float(latest.close)
-            pre_close = float(previous.close) if previous else close
-            change = close - pre_close
-            snaps[sid] = {
-                'price': close, 'change': change,
-                'change_pct': change / pre_close * 100 if pre_close else None,
-                'open': float(latest.open), 'high': float(latest.high), 'low': float(latest.low),
-                'pre_close': pre_close, 'volume': int(latest.volume), 'amount': float(latest.amount),
-                'turnover': None,
-                'amplitude': (float(latest.high) - float(latest.low)) / pre_close * 100 if pre_close else None,
-                'updated_at': latest.ts.isoformat(),
-            }
-            kline_override_ids.add(sid)
-
-    stock_ids = [sid for sid in symbols if symbols[sid].type == "stock"]
-    etf_ids = [sid for sid in symbols if symbols[sid].type == "etf"]
-    index_ids = [sid for sid in symbols if symbols[sid].type == "index"]
-    fundamentals = {
-        f.symbol_id: f for f in db.scalars(select(StockFundamental).where(StockFundamental.symbol_id.in_(stock_ids)))
-    }
-    premiums = {e.symbol_id: e for e in db.scalars(select(EtfPremium).where(EtfPremium.symbol_id.in_(etf_ids)))}
-    valuations = {
-        v.symbol_id: v for v in db.scalars(select(IndexValuation).where(IndexValuation.symbol_id.in_(index_ids)))
-    }
-
-    result: list[dict] = []
-    for symbol_id in symbol_ids:
-        sym = symbols.get(symbol_id)
-        if sym is None:
-            continue
-        snap = snaps.get(symbol_id)
-        item: dict = {
-            "symbol_id": symbol_id,
-            "code": sym.code,
-            "name": sym.name,
-            "type": sym.type,
-            "source": "kline" if symbol_id in kline_override_ids else "snapshot",
-        }
-        item.update(
-            {
-                "price": _snap_val(snap, "price"),
-                "change": _snap_val(snap, "change"),
-                "change_pct": _snap_val(snap, "change_pct"),
-                "open": _snap_val(snap, "open"),
-                "high": _snap_val(snap, "high"),
-                "low": _snap_val(snap, "low"),
-                "pre_close": _snap_val(snap, "pre_close"),
-                "volume": _snap_val(snap, "volume"),
-                "amount": _snap_val(snap, "amount"),
-                "turnover": _snap_val(snap, "turnover"),
-                "amplitude": _snap_val(snap, "amplitude"),
-                "updated_at": _snap_val(snap, "updated_at"),
-            }
-        )
-        item["data_age_seconds"] = market_cache.data_age_seconds(_snap_val(snap, "updated_at"))
-        extra: dict = {}
-        if sym.type == "stock" and symbol_id in fundamentals:
-            f = fundamentals[symbol_id]
-            extra = {"market_cap": _num(f.market_cap), "pe": _num(f.pe)}
-        elif sym.type == "etf" and symbol_id in premiums:
-            e = premiums[symbol_id]
-            extra = {"nav": _num(e.nav), "premium": _num(e.premium)}
-        elif sym.type == "index" and symbol_id in valuations:
-            v = valuations[symbol_id]
-            extra = {"pe": _num(v.pe)}
-        item["extra"] = extra
-        result.append(item)
-    return result
-
-
-def _snap_val(snap: dict | None, key: str):
-    """从快照 dict 取值（快照缺失返回 None）。"""
-    return snap.get(key) if snap else None
-
-
-def _num(v):
-    return float(v) if v is not None else None
+def get_latest_quotes(db: Session, symbol_ids: list[int]) -> list[dict]:
+    from app.services import local_quotes, market_policy
+    symbols = list(db.scalars(select(Symbol).where(Symbol.id.in_(symbol_ids))))
+    rows = local_quotes.quotes(db, symbols)
+    revision = market_policy.read()['revision']
+    for row in rows:
+        row['policy_revision'] = revision
+    return rows

@@ -1,4 +1,4 @@
-"""东方财富行情提供器（基于 akshare）：K线 / 实时快照 / 行业指数 code 回填。
+"""东方财富行情提供器（基于 akshare）：K线 / 行业指数 code 回填。
 
 借鉴 TradingAgents-CN akshare 提供器：curl_cffi 模拟浏览器 TLS 指纹 + 请求间隔，
 规避东方财富反爬断连；统一超时、指数退避重试、数据清洗。
@@ -16,24 +16,16 @@ from app.core.config import get_settings
 from .base import (
     BaseDataProvider,
     KlineBar,
-    ProviderError,
-    RealtimeQuote,
-    RealtimeSymbol,
     _to_float,
-    unavailable_quote,
 )
 from .em_utils import install_requests_patch
 
 logger = logging.getLogger(__name__)
 
 # 周期映射
-_DAILY_PERIOD = {"1d": "daily", "1mon": "monthly"}
-_BOARD_PERIOD = {"1d": "日k", "1mon": "月k"}
+_DAILY_PERIOD = {"1d": "daily", "1w": "weekly", "1mon": "monthly"}
+_BOARD_PERIOD = {"1d": "日k", "1w": "周k", "1mon": "月k"}
 _MIN_PERIODS = ("15m",)
-# 国内指数实时分类（覆盖固定大盘指数）
-_INDEX_CATEGORIES = ("上证系列指数", "深证系列指数", "中证系列指数", "沪深系列指数")
-# 乐咕乐股 stock_index_pe_lg 可覆盖的固定大盘指数（其余指数/海外指数无 PE 数据源，留空显示 "--"）
-_INDEX_PE_SOURCE = {"沪深300", "上证50", "中证1000"}
 # 行业板块名匹配：分类后缀（东财三级行业带罗马数字）与最低置信阈值
 _ROMAN_SUFFIX = re.compile(r"[ⅠⅡⅢⅣⅤ]+$")
 _MIN_INDUSTRY_SCORE = 75
@@ -51,7 +43,7 @@ class EastMoneyProvider(BaseDataProvider):
     name = "eastmoney"
 
     def can_fetch_kline(self, asset_type: str, period: str) -> bool:
-        return period in ("15m", "1d", "1mon")
+        return asset_type in {"stock", "etf", "index", "industry_index"} and period in ("15m", "1d", "1w", "1mon")
 
     def __init__(self) -> None:
         super().__init__()
@@ -168,84 +160,9 @@ class EastMoneyProvider(BaseDataProvider):
         return bars
 
     # ---- 实时快照 ----
-    def fetch_realtime(self, symbols: list[RealtimeSymbol]) -> list[RealtimeQuote]:
-        by_type: dict[str, list[RealtimeSymbol]] = {}
-        for s in symbols:
-            by_type.setdefault(s.asset_type, []).append(s)
-        quotes: list[RealtimeQuote] = []
-        for atype, items in by_type.items():
-            quotes.extend(self._fetch_realtime_type(atype, items))
-        return quotes
 
-    def _fetch_realtime_type(self, asset_type, items: list[RealtimeSymbol]) -> list[RealtimeQuote]:
-        ak = self._ak
-        if asset_type == "stock":
-            df = self._call(ak.stock_zh_a_spot_em, retry_times=1, raise_on_giveup=True)
-            if df is None or df.empty:
-                return [unavailable_quote(s) for s in items]
-            return [_map_spot(df, s) for s in items]
-        if asset_type == "etf":
-            df = self._call(ak.fund_etf_spot_em, retry_times=1, raise_on_giveup=True)
-            if df is None or df.empty:
-                return [unavailable_quote(s) for s in items]
-            return [_map_spot(df, s) for s in items]
-        if asset_type == "index":
-            return self._fetch_index_realtime(items)
-        if asset_type == "industry_index":
-            # 板块实时接口偶发限流，retry 提升至 2 保证最新价/涨跌幅可获取
-            df = self._call(ak.stock_board_industry_name_em, retry_times=2, raise_on_giveup=True)
-            if df is None or df.empty:
-                return [unavailable_quote(s) for s in items]
-            return [_map_industry_spot(df, s) for s in items]
-        return [unavailable_quote(s) for s in items]
-
-    def _fetch_index_realtime(self, items: list[RealtimeSymbol]) -> list[RealtimeQuote]:
-        ak = self._ak
-        frames: list[pd.DataFrame] = []
-        for category in _INDEX_CATEGORIES:
-            df = self._call(ak.stock_zh_index_spot_em, symbol=category, retry_times=1)
-            if df is not None and not df.empty:
-                frames.append(df)
-        global_df = self._call(ak.index_global_spot_em, retry_times=1)
-        if global_df is not None and not global_df.empty:
-            frames.append(global_df)
-        if not frames:
-            # 全部分类失败视为 Provider 级故障（供工厂熔断识别），而非单纯"无数据"
-            raise ProviderError("index realtime all categories failed")
-        merged = pd.concat(frames, ignore_index=True)
-        quotes: list[RealtimeQuote] = []
-        for s in items:
-            q = _map_spot(merged, s, match_by_name=True)
-            quotes.append(q)
-        return quotes
 
     # ---- 指数 PE（乐咕乐股，best-effort）----
-    def fetch_index_pe(self, names: list[str]) -> dict[str, float | None]:
-        """固定大盘指数最新 PE（仅乐咕可覆盖的 A 股指数，其余返回 None 留空）。
-
-        取最新交易日"滚动市盈率"；外部源失败/无数据返回 None，不阻塞实时轮询主链路。
-        """
-        result: dict[str, float | None] = {}
-        for name in names:
-            if name not in _INDEX_PE_SOURCE:
-                result[name] = None
-                continue
-            try:
-                df = self._call(self._ak.stock_index_pe_lg, symbol=name)
-                pe: float | None = None
-                if df is not None and not df.empty:
-                    df = df.sort_values("日期", ascending=False)
-                    for _, row in df.iterrows():
-                        v = _to_float(row.get("滚动市盈率"))
-                        if v is not None:
-                            pe = v
-                            break
-                result[name] = pe
-                logger.info("index_pe %s -> %s", name, pe)
-            except Exception:  # noqa: BLE001
-                logger.warning("index_pe %s failed (best-effort skip)", name)
-                result[name] = None
-        return result
 
     # ---- 全量目录 / 外部搜索（V0.2 阶段三）----
     def fetch_catalog(self) -> dict:
@@ -370,91 +287,6 @@ def _clean_ohlc(row: pd.Series) -> tuple[float | None, float, float, float]:
     return o, h, low, c
 
 
-def _map_spot(df: pd.DataFrame, s: RealtimeSymbol, match_by_name: bool = False) -> RealtimeQuote:
-    """在实时表中按代码/名称定位标的并映射字段。"""
-    q = unavailable_quote(s)
-    try:
-        if "代码" in df.columns:
-            hit = df[df["代码"].astype(str).str.strip() == s.code.strip()]
-            if hit.empty and match_by_name and "名称" in df.columns:
-                hit = df[df["名称"].astype(str).str.strip() == s.name.strip()]
-        else:
-            hit = df[df["名称"].astype(str).str.strip() == s.name.strip()]
-        if hit.empty:
-            # 名称子串匹配（如 道琼斯 匹配 道琼斯指数）
-            if match_by_name and "名称" in df.columns:
-                hit = df[df["名称"].astype(str).str.contains(s.name[:3], regex=False)]
-        if hit.empty:
-            return q
-        row = hit.iloc[0]
-        q = RealtimeQuote(
-            code=str(row.get("代码", s.code)),
-            name=str(row.get("名称", s.name)),
-            asset_type=s.asset_type,
-            price=_to_float(row.get("最新价")) if "最新价" in row.index else None,
-            change=_to_float(row.get("涨跌额")) if "涨跌额" in row.index else None,
-            change_pct=_to_float(row.get("涨跌幅")) if "涨跌幅" in row.index else None,
-            open=(
-                _to_float(row.get("今开")) or _to_float(row.get("开盘价"))
-                if "今开" in row.index or "开盘价" in row.index
-                else None
-            ),
-            high=(
-                _to_float(row.get("最高")) or _to_float(row.get("最高价"))
-                if "最高" in row.index or "最高价" in row.index
-                else None
-            ),
-            low=(
-                _to_float(row.get("最低")) or _to_float(row.get("最低价"))
-                if "最低" in row.index or "最低价" in row.index
-                else None
-            ),
-            pre_close=(
-                _to_float(row.get("昨收")) or _to_float(row.get("昨收价"))
-                if "昨收" in row.index or "昨收价" in row.index
-                else None
-            ),
-            volume=int(_to_float(row.get("成交量")) or 0) if "成交量" in row.index else None,
-            amount=_to_float(row.get("成交额")) if "成交额" in row.index else None,
-            turnover=_to_float(row.get("换手率")) if "换手率" in row.index else None,
-            amplitude=_to_float(row.get("振幅")) if "振幅" in row.index else None,
-            available=True,
-        )
-        q.updated_at = _parse_quote_time(row)
-        # 特殊字段提取（个股总市值/PE、ETF 净值/溢价），供同步层写入 stock_fundamentals/etf_premiums
-        if s.asset_type == "stock":
-            q.extra["market_cap"] = _to_float(row.get("总市值")) if "总市值" in row.index else None
-            q.extra["pe"] = _to_float(row.get("市盈率-动态")) if "市盈率-动态" in row.index else None
-        elif s.asset_type == "etf":
-            q.extra["nav"] = _to_float(row.get("IOPV实时估值")) if "IOPV实时估值" in row.index else None
-            _disc = _to_float(row.get("基金折价率")) if "基金折价率" in row.index else None
-            q.extra["premium"] = -_disc if _disc is not None else None  # 溢价率 = -折价率
-        return q
-    except Exception:  # noqa: BLE001
-        return q
-
-
-def _map_industry_spot(df: pd.DataFrame, s: RealtimeSymbol) -> RealtimeQuote:
-    q = unavailable_quote(s)
-    try:
-        hit = _match_industry_row(df, s)
-        if hit.empty:
-            return q
-        row = hit.iloc[0]
-        return RealtimeQuote(
-            code=str(row.get("板块代码", s.code)),
-            name=s.name,
-            asset_type=s.asset_type,
-            price=_to_float(row.get("最新价")),
-            change=_to_float(row.get("涨跌额")),
-            change_pct=_to_float(row.get("涨跌幅")),
-            turnover=_to_float(row.get("换手率")),
-            available=True,
-        )
-    except Exception:  # noqa: BLE001
-        return q
-
-
 def _industry_score(name: str, em_name: str) -> int:
     """行业板块名相似度评分（通用模糊匹配，不硬编码具体名称，数据源可扩展）。
 
@@ -480,37 +312,3 @@ def _industry_score(name: str, em_name: str) -> int:
     if em_name.startswith("非"):
         score -= 40  # 否定前缀板块（非白酒/非金属）绝不匹配
     return score
-
-
-def _match_industry_row(df: pd.DataFrame, s: RealtimeSymbol) -> pd.DataFrame:
-    """行业板块定位：板块代码（BKxxxx）精确 → 名称精确 → 评分模糊匹配（全部候选取最高分，低于阈值不匹配）。
-
-    种子行业名称与数据源板块名可能不一致（粒度/后缀差异），但不可硬编码映射（数据源可能扩展），
-    故用通用评分匹配；语义差异大且无对应板块的行业（如"创新药"）诚实返回空 → 前端显示 "--"。
-    """
-    if "板块代码" in df.columns and s.code:
-        hit = df[df["板块代码"].astype(str).str.strip() == s.code.strip()]
-        if not hit.empty:
-            return hit
-    if "板块名称" not in df.columns:
-        return df.iloc[0:0]
-    name = s.name.strip()
-    hit = df[df["板块名称"].astype(str).str.strip() == name]
-    if not hit.empty:
-        return hit
-    scores = df["板块名称"].astype(str).str.strip().map(lambda em: _industry_score(name, em))
-    best = scores.max() if not scores.empty else 0
-    if best < _MIN_INDUSTRY_SCORE:
-        return df.iloc[0:0]
-    return df[scores == best].head(1)
-
-
-def _parse_quote_time(row: pd.Series) -> datetime | None:
-    for key in ("最新行情时间", "更新时间", "时间"):
-        if key in row.index:
-            v = row[key]
-            try:
-                return pd.to_datetime(v).to_pydatetime()
-            except Exception:  # noqa: BLE001
-                return None
-    return None

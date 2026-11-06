@@ -91,11 +91,11 @@ def capture_engines(monkeypatch):
 
 
 def test_market_read_endpoints_use_read_engine(client: TestClient, capture_engines):
-    """行情端点（K线/快照/目录）必须走**读引擎**。"""
+    """行情端点（K线/最新本地行情/目录）必须走**读引擎**。"""
     primary_sql, read_sql = capture_engines
 
     assert client.get("/api/v1/kline", params={"symbol": "600519", "period": "1d", "limit": 5}).status_code == 200
-    assert client.get("/api/v1/snapshot", params={"symbols": "600519"}).status_code == 200
+    assert client.get("/api/v1/quotes/latest", params={"symbols": "600519"}).status_code == 200
     assert client.get("/api/v1/symbols", params={"limit": 5}).status_code == 200
 
     assert any("kline_1d" in s for s in read_sql), f"K线查询未走读引擎：{read_sql[:5]}"

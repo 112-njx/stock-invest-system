@@ -20,7 +20,7 @@ export interface SymbolInfo {
 }
 
 export interface HomeIndex extends SymbolInfo {
-  snapshot: Snapshot | null
+  quote: LatestQuote | null
 }
 
 /** 首页固定指数名单与已有价格，一次返回；不触发外部行情抓取。 */
@@ -51,9 +51,11 @@ export function fetchKlineQuality(symbol: string | number, period: Period) {
   return request<KlineQuality>({ url: '/kline/quality', params: { symbol, period }, silent: true })
 }
 
-export interface Snapshot {
+export interface LatestQuote {
   symbol_id: number
-  source?: 'snapshot' | 'kline'
+  source?: 'stockdb' | 'akshare'
+  data_date?: string | null
+  policy_revision?: number
   code: string
   name: string
   type: SymbolType
@@ -69,9 +71,7 @@ export interface Snapshot {
   turnover: number | null
   amplitude: number | null
   updated_at?: string | null
-  /** V0.2：快照数据龄（秒），当前时间 - updated_at */
-  data_age_seconds?: number | null
-  /** 特殊字段：个股 market_cap/pe、ETF nav/premium、指数 pe */
+  /** 本地个股基础字段 */
   extra: Record<string, unknown>
 }
 
@@ -102,6 +102,12 @@ export interface SyncStatus {
 
 /** 技术指标行：K 线基础字段 + 请求的指标列（macd_dif/dea/hist、kdj_k/d/j；成交量成交额为基础字段） */
 export interface IndicatorRow extends KLineBar {
+  ma5?: number | null
+  ma10?: number | null
+  ma20?: number | null
+  ma30?: number | null
+  volume_ma5?: number | null
+  volume_ma10?: number | null
   macd_dif?: number | null
   macd_dea?: number | null
   macd_hist?: number | null
@@ -145,7 +151,7 @@ export function fetchKLine(params: {
   return request<KLineBar[]>({ url: '/kline', params })
 }
 
-export function requestKlineBackfill(params: { symbol_id: number; period: Period; start: string; end: string; retry?: boolean }) {
+export function requestKlineBackfill(params: { symbol_id: number; period: Period; start: string; end: string; retry?: boolean; initial?: boolean }) {
   return request<{ task_id: string }>({ url: '/kline/backfill', method: 'post', data: params, silent: true })
 }
 
@@ -155,12 +161,12 @@ export function fetchKlineBackfillStatus(taskId: string) {
   })
 }
 
-/** 批量实时快照（symbols 为 symbol_id 或代码逗号分隔；silent 供轮询使用，失败不 toast） */
-export function fetchSnapshot(symbols: Array<string | number>, silent = false) {
-  return request<Snapshot[]>({ url: '/snapshot', params: { symbols: symbols.join(',') }, silent })
+/** 批量最新本地行情（symbols 为 symbol_id 逗号分隔） */
+export function fetchLatestQuotes(symbols: Array<string | number>, silent = false) {
+  return request<LatestQuote[]>({ url: '/quotes/latest', params: { symbols: symbols.join(',') }, silent })
 }
 
-/** 关注列表（合并实时快照） */
+/** 关注列表（含最新本地行情） */
 export function fetchWatchlist() {
   return request<WatchlistItem[]>({ url: '/watchlist' })
 }

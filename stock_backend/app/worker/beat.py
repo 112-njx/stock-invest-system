@@ -1,4 +1,4 @@
-"""Celery Beat 调度：增量同步（每日收盘后）+ 实时轮询（交易时段，任务内自判）。"""
+"""Celery Beat 调度：任务投递恢复 + 实时轮询（交易时段，任务内自判）。"""
 
 from celery.schedules import crontab
 
@@ -12,13 +12,9 @@ def build_beat_schedule() -> dict:
             "task": "app.worker.tasks.sync_tasks.watchlist_delivery_reconcile",
             "schedule": 30.0,
         },
-        "kline-incremental-daily": {
-            "task": "app.worker.tasks.sync_tasks.kline_incremental",
-            "schedule": crontab(hour=settings.SYNC_INCREMENTAL_HOUR, minute=settings.SYNC_INCREMENTAL_MINUTE),
-        },
-        "realtime-poll": {
-            "task": "app.worker.tasks.sync_tasks.realtime_poll",
-            "schedule": settings.REALTIME_POLL_INTERVAL,  # 秒
+        "local-market-after-close": {
+            "task": "app.worker.tasks.sync_tasks.local_market_after_close",
+            "schedule": crontab(hour=16, minute=30, day_of_week='1-5'),
         },
         "provider-probe": {
             "task": "app.worker.tasks.sync_tasks.provider_probe",

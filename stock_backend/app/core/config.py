@@ -43,7 +43,6 @@ class Settings(BaseSettings):
 
     # ---- Redis（缓存 + Celery 队列）----
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
-    SNAPSHOT_CACHE_TTL: int = 300  # 实时快照缓存秒数（V0.2 从 5s 延长至 300s，交易时段由 realtime_poll 覆盖刷新）
     KLINE_CACHE_TTL: int = 300  # K线缓存秒数
     SEARCH_CACHE_TTL: int = 3600  # 搜索联想缓存秒数（catalog_sync 完成后批量删除）
     WATCHLIST_CACHE_TTL: int = 300  # 关注列表缓存秒数
@@ -52,17 +51,15 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://127.0.0.1:6379/2"
 
     # ---- 行情同步 ----
-    STOCKDB_URL: str = "http://127.0.0.1:7899"  # 独立指数蓝图的本地 RD 服务
-    DATA_PROVIDER_PRIORITY: str = "eastmoney,sina,ths"  # Provider 优先级链（逗号分隔，可调整顺序/禁用）
+    STOCKDB_URL: str = "http://127.0.0.1:7899"  # 本地历史行情及证券目录 RD 服务
+    STOCKDB_SDK_URL: str = "http://127.0.0.1:7900"
+    DATA_PROVIDER_PRIORITY: str = "stockdb,eastmoney,sina,ths"  # Provider 优先级链（逗号分隔，可调整顺序/禁用）
     PROVIDER_CIRCUIT_FAILURE_THRESHOLD: int = 3  # Provider 连续失败 N 次熔断
     PROVIDER_CIRCUIT_COOLDOWN: int = 600  # Provider 熔断冷却（秒），冷却后半开探测
     PROVIDER_PROBE_INTERVAL: int = 600  # 熔断中 Provider 后台探测间隔（秒）
     KLINE_INIT_DAYS: int = 730  # 首次全量拉取天数（约2年）
-    REALTIME_POLL_INTERVAL: int = 1800  # 实时轮询间隔（秒）
     PROVIDER_MIN_INTERVAL_SECONDS: int = 2  # 单数据源跨进程请求间隔
     PROVIDER_DAILY_BUDGET: int = 2000  # 单数据源每日请求预算
-    SYNC_INCREMENTAL_HOUR: int = 16  # 每日增量同步时刻（本地时区小时）
-    SYNC_INCREMENTAL_MINUTE: int = 30
     SYNC_TIMEOUT: int = 30  # 数据源请求超时（秒）
     SYNC_RETRY_TIMES: int = 2  # 外部源最多尝试两次
     SYNC_RETRY_BACKOFF: float = 10.0  # 外部请求重试间隔默认值（秒）

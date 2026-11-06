@@ -2,10 +2,23 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+
+
+class MarketSourceSettings(Base):
+    __tablename__ = 'market_source_policy'
+    __table_args__ = (CheckConstraint('id=1', name='singleton'),
+                      CheckConstraint('synthetic_wick_factor >= 0 AND synthetic_wick_factor <= 1', name='wick_factor'))
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    akshare_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    history_storage_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    auto_sync_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('1'))
+    synthetic_wick_factor: Mapped[float] = mapped_column(Float, nullable=False, server_default=text('0.5'))
 
 
 class SyncTask(Base):

@@ -9,6 +9,9 @@
  * - 双击 emit，由父级决定是否进入详情页
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useChartIndicators } from '@/composables/useChartIndicators'
+import { useSyntheticWicks } from '@/composables/useSyntheticWicks'
+import { displaySyntheticCandle } from '@/utils/syntheticWicks'
 import {
   CandlestickSeries,
   ColorType,
@@ -36,7 +39,6 @@ import {
   fetchSupportResistance,
   requestKlineBackfill,
   removeSupportResistance,
-  type IndicatorRow,
   type KLineBar,
   type KlineQuality,
   type SupportResistanceItem,
@@ -85,6 +87,7 @@ const emit = defineEmits<{
 }>()
 
 const market = useMarketStore()
+const wickFactor = useSyntheticWicks()
 const user = useUserStore()
 const authModal = useAuthModalStore()
 const theme = useThemeStore()
@@ -113,14 +116,21 @@ const qualityWarning = computed(() => {
     const ranges = quality.value.missing_ranges.slice(0, 2).map((r) => r.join('～')).join('、')
     return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${retryRemaining.value > 0 ? `${retryRemaining.value} 秒后同步` : quality.value.sync_status === 'syncing' ? '更新中' : '暂未同步'}`
   }
-  if (quality.value?.status === 'unknown') return '交易日历不可用，历史数据未能核验'
-  if (quality.value?.status === 'unchecked') return '历史数据尚未核验'
+  if (quality.value?.status === 'unknown') return '暂无可用历史数据，请在管理后台同步'
+  if (quality.value?.status === 'unchecked') return '历史数据尚未初始化'
   return ''
 })
-const currentPrice = computed(() => props.symbol ? market.snapshots[props.symbol.id]?.price : null)
+const currentPrice = computed(() => props.symbol ? market.quotes[props.symbol.id]?.price : null)
 
 let chart: IChartApi | null = null
 let candleSeries: ISeriesApi<'Candlestick'> | null = null
+const PRICE_MAS = [
+  { key: 'ma5', label: 'MA5', color: '#d4a72c' },
+  { key: 'ma10', label: 'MA10', color: '#db61a2' },
+  { key: 'ma20', label: 'MA20', color: '#38bdf8' },
+  { key: 'ma30', label: 'MA30', color: '#a78bfa' },
+] as const
+const priceMaSeries = new Map<string, ISeriesApi<'Line'>>()
 let srLines: IPriceLine[] = []
 let lastBar: KLineBar | null = null
 /** G32：买卖点标记插件（v5 独立插件 API） */
@@ -267,6 +277,9 @@ function toggleIndicator(key: IndicatorKey) {
   const visibleRange = chart?.timeScale().getVisibleLogicalRange()
   rebuildIndicatorPanes()
   setIndicatorData()
+  if (next.size && !indicatorRows.value.length && props.symbol) {
+    void refreshIndicators(loadVersion, props.symbol.id, market.period)
+  }
   if (visibleRange && chart) {
     // 延迟一帧恢复，确保 series 数据已设置
     requestAnimationFrame(() => {
@@ -383,6 +396,14 @@ function initChart() {
     wickDownColor: c.down,
     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
   })
+
+  priceMaSeries.clear()
+  for (const ma of PRICE_MAS) {
+    priceMaSeries.set(ma.key, chart.addSeries(LineSeries, {
+      color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    }, 0))
+  }
 
   // 优化7：window capture 阶段拦截 wheel，达到最大放大（≤15条）时阻止继续放大，可无限缩小
   window.addEventListener('wheel', onWheel, { capture: true, passive: false })
@@ -585,7 +606,7 @@ function onCrosshairMove(param: { time?: unknown; point?: { x: number; y: number
     const bar = loadedBars[index]
     const previousClose = index > 0 ? loadedBars[index - 1].close : null
     const change = previousClose == null ? null : bar.close - previousClose
-    hoveredCandle.value = { bar, change, percent: previousClose ? (bar.close - previousClose) / previousClose * 100 : null }
+    hoveredCandle.value = { bar: displayCandle(bar), change, percent: previousClose ? (bar.close - previousClose) / previousClose * 100 : null }
   } else hoveredCandle.value = null
   const list = props.markers ?? []
   if (!list.length || param.time == null || !param.point) {
@@ -606,7 +627,18 @@ function reasonText(t: BacktestTrade): string {
 }
 
 /* ---------- 数据 ---------- */
-const indicatorRows = ref<IndicatorRow[]>([])
+const indicators = useChartIndicators(fetchIndicators)
+const { indicatorRows, priceMaRows, indicatorError, priceMaError } = indicators
+watch(priceMaRows, (rows) => {
+  const times = new Set(loadedBars.map(bar => toUtcSeconds(bar.ts)))
+  for (const ma of PRICE_MAS) {
+    priceMaSeries.get(ma.key)?.setData(rows.filter(row => times.has(toUtcSeconds(row.ts))).map(row => {
+      const value = row[ma.key]
+      const time = toUtcSeconds(row.ts)
+      return value != null && Number.isFinite(value) ? { time, value } : { time }
+    }))
+  }
+}, { flush: 'sync' })
 const selectedIndicatorIndex = computed(() => {
   const rows = indicatorRows.value
   if (!rows.length) return -1
@@ -615,14 +647,19 @@ const selectedIndicatorIndex = computed(() => {
 })
 const selectedIndicator = computed(() => indicatorRows.value[selectedIndicatorIndex.value] ?? null)
 
-function movingAverage(rows: IndicatorRow[], index: number, count: number): number | null {
-  if (index < count - 1) return null
-  return rows.slice(index - count + 1, index + 1).reduce((sum, row) => sum + row.volume, 0) / count
-}
+watch(indicatorRows, rows => {
+  if (rows.length) setIndicatorData()
+  else for (const pane of indicatorPanes.values()) for (const series of pane.series) series.setData([])
+}, { flush: 'sync' })
+const selectedPriceMa = computed(() => {
+  const rows = priceMaRows.value
+  if (hoveredIndicatorTime.value == null) return rows[rows.length - 1] ?? null
+  return rows.find(row => toUtcSeconds(row.ts) === hoveredIndicatorTime.value) ?? null
+})
 
 const selectedVolumeAverages = computed(() => ({
-  ma5: movingAverage(indicatorRows.value, selectedIndicatorIndex.value, 5),
-  ma10: movingAverage(indicatorRows.value, selectedIndicatorIndex.value, 10),
+  ma5: selectedIndicator.value?.volume_ma5 ?? null,
+  ma10: selectedIndicator.value?.volume_ma10 ?? null,
 }))
 
 const selectedMacdCrosses = computed(() => {
@@ -650,12 +687,24 @@ function indicatorQuantity(value: number | null | undefined): string {
   return value.toFixed(0)
 }
 
-function toCandleData(bars: KLineBar[]) {
-  return bars.map((b) => ({
-    time: toUtcSeconds(b.ts),
-    open: b.open, high: b.high, low: b.low, close: b.close,
-  }))
+function displayCandle(bar: KLineBar) {
+  return props.symbol?.type === 'index' && props.symbol.market === 'SW'
+    ? displaySyntheticCandle(bar, wickFactor.value) : bar
 }
+
+function toCandleData(bars: KLineBar[]) {
+  return bars.map(bar => {
+    const b = displayCandle(bar)
+    return { time: toUtcSeconds(b.ts), open: b.open, high: b.high, low: b.low, close: b.close }
+  })
+}
+
+watch(wickFactor, () => {
+  const range = chart?.timeScale().getVisibleLogicalRange()
+  candleSeries?.setData(toCandleData(loadedBars))
+  if (range) chart?.timeScale().setVisibleLogicalRange(range)
+  hoveredCandle.value = null
+})
 
 function initialWeeklyCount(): number {
   return props.showIndicators ? 30 : 60
@@ -708,17 +757,19 @@ function beforePeriod(ts: string, period: Period): Date {
   return new Date(date.getTime() - 1)
 }
 
+function reloadIndicatorEngine() {
+  if (props.symbol) void refreshIndicators(loadVersion, props.symbol.id, market.period)
+}
+onMounted(() => window.addEventListener('indicator-settings-changed', reloadIndicatorEngine))
+onBeforeUnmount(() => window.removeEventListener('indicator-settings-changed', reloadIndicatorEngine))
+
 async function refreshIndicators(version: number, symbolId: number, period: Period) {
-  if (!props.showIndicators || !enabledList.value.length || !loadedBars.length) return
-  try {
-    const rows = await fetchIndicators({
-      symbol: symbolId, period, names: 'macd,kdj,volume,amount',
-      start: loadedBars[0].ts, end: loadedBars[loadedBars.length - 1].ts,
-    })
-    if (version !== loadVersion) return
-    indicatorRows.value = rows
-    setIndicatorData()
-  } catch { /* 指标失败不阻塞 K 线 */ }
+  if (!loadedBars.length) return
+  await indicators.load({
+    symbol: symbolId, period,
+    start: loadedBars[0].ts, end: loadedBars[loadedBars.length - 1].ts,
+  }, props.showIndicators && enabledList.value.length > 0,
+  () => version === loadVersion && props.symbol?.id === symbolId && market.period === period)
 }
 
 async function loadOlder() {
@@ -794,7 +845,7 @@ async function loadInitialMissing(version: number, symbolId: number, period: Per
   try {
     const retry = retryBackfill
     retryBackfill = false
-    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry })
+    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry, initial: true })
     for (let attempt = 0; attempt < 45; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
       if (version !== loadVersion) return
@@ -822,7 +873,7 @@ async function fillInitialPeriod(version: number, symbolId: number, period: '1w'
   for (let attempt = 0; attempt < 12 && loadedBars.length < target; attempt++) {
     const start = new Date(end.getTime() - 90 * 86400_000)
     try {
-      const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString() })
+      const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), initial: loadedBars.length === 0 })
       let status: Awaited<ReturnType<typeof fetchKlineBackfillStatus>> | null = null
       for (let poll = 0; poll < 45; poll++) {
         await new Promise((resolve) => setTimeout(resolve, 2000))
@@ -879,8 +930,8 @@ function setIndicatorData() {
         color: r.close >= r.open ? c.up : c.down,
       })))
       for (const [seriesIndex, count] of [[1, 5], [2, 10]]) {
-        ref.series[seriesIndex].setData(rows.map((r, i) => {
-          const value = movingAverage(rows, i, count)
+        ref.series[seriesIndex].setData(rows.map((r) => {
+          const value = r[`volume_ma${count}` as 'volume_ma5' | 'volume_ma10']
           return value == null ? { time: toUtcSeconds(r.ts) } : { time: toUtcSeconds(r.ts), value }
         }))
       }
@@ -937,6 +988,7 @@ async function loadKline() {
     historyCursor = bars[0]?.ts ?? ''
     candleSeries?.setData(toCandleData(bars))
     if (!bars.length) {
+      indicators.reset()
       if (period === '1w' || period === '1mon') showInitialPeriodRange(period, 1)
       void loadInitialMissing(version, symbolId, period)
       return
@@ -1049,7 +1101,7 @@ watch(() => props.symbol, (newSym, oldSym) => {
     lastBar = null
     candleSeries?.setData([])
     clearSRLines()
-    indicatorRows.value = []
+    indicators.reset()
     barRange = null
     markersPlugin?.setMarkers([])
     hoverTip.value = null
@@ -1059,7 +1111,7 @@ watch(() => props.symbol, (newSym, oldSym) => {
   // V0.2：无闪烁——切换标的时保留旧 K 线直到新数据返回，不清空
   clearSRLines()
   if (oldSym && newSym && oldSym.id !== newSym.id) {
-    indicatorRows.value = []
+    indicators.reset()
     if (props.showIndicators) removeAllIndicatorPanes()
   }
   loadKline()
@@ -1069,7 +1121,7 @@ watch(() => props.symbol, (newSym, oldSym) => {
 watch(() => market.period, () => {
   hoveredCandle.value = null
   hoveredIndicatorTime.value = null
-  indicatorRows.value = []
+  indicators.reset()
   initialViewport = true
   historyState.value = ''
   loadedBars = []
@@ -1110,15 +1162,15 @@ onMounted(() => {
       } else loadedBars.push(bar)
       hoveredCandle.value = null
       lastBar = bar
-      candleSeries?.update({
-        time: toUtcSeconds(bar.ts),
-        open: bar.open, high: bar.high, low: bar.low, close: bar.close,
-      })
+      candleSeries?.update(toCandleData([bar])[0]!)
+      void refreshIndicators(loadVersion, symbolId, period)
     }
   })
 })
 
 onBeforeUnmount(() => {
+  loadVersion++
+  indicators.reset()
   cancelAnimationFrame(paneLayoutFrame)
   chartResizeObserver?.disconnect()
   window.removeEventListener('mousemove', onIndicatorDrag, true)
@@ -1133,6 +1185,7 @@ onBeforeUnmount(() => {
   chart?.unsubscribeCrosshairMove(onCrosshairMove)
   chart?.remove()
   chart = null
+  priceMaSeries.clear()
   candleSeries = null
   srLines = []
   indicatorPanes.clear()
@@ -1205,6 +1258,8 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
 <template>
   <div class="kline-chart">
+    <p v-if="priceMaError" class="notice danger" role="alert">{{ priceMaError }}</p>
+    <p v-if="indicatorError" class="notice danger" role="alert">{{ indicatorError }}</p>
     <header class="kline-chart__header">
       <div class="kline-chart__header-left">
         <span class="kline-chart__symbol">{{ symbolTitle }}</span>
@@ -1245,6 +1300,9 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
     <div ref="container" class="kline-chart__body">
       <div ref="chartHost" class="kline-chart__canvas" />
+      <div v-if="props.symbol" class="kline-chart__ma-legend">
+        <span v-for="ma in PRICE_MAS" :key="ma.key" :style="{ color: ma.color }">{{ ma.label }}:{{ indicatorNumber(selectedPriceMa?.[ma.key]) }}</span>
+      </div>
       <svg v-if="showIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
         <circle
           v-for="(point, index) in macdCrossPoints"
@@ -1500,6 +1558,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   position: relative;
 }
 .kline-chart__canvas { position: absolute; inset: 0; z-index: 0; }
+.kline-chart__ma-legend { position: absolute; top: 4px; left: 8px; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px 12px; max-width: calc(100% - 70px); font-size: 11px; pointer-events: none; }
 .kline-chart__crosses { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; overflow: hidden; pointer-events: none; }
 .kline-chart__indicator-legend {
   position: absolute;

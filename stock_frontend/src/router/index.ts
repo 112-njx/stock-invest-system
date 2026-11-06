@@ -16,6 +16,7 @@ declare module 'vue-router' {
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/heatmap', name: 'heatmap', component: () => import('@/views/HeatmapView.vue') },
     // G35（方案 B）：`/` 为行情首页，免登录即可浏览；原登录页独立保留在 `/login`
     {
       path: '/',
@@ -43,6 +44,11 @@ const router = createRouter({
       path: '/stockdb',
       name: 'stockdb',
       component: () => import('@/views/StockDbView.vue'),
+    },
+    {
+      path: '/stockdb/trends',
+      name: 'stockdb-trends',
+      redirect: '/stockdb?view=trends',
     },
     // 独立页（不显示顶部导航/公告条）
     {

@@ -1,5 +1,5 @@
 export const categories = [
-  ['sw1', '申万一级'], ['sw2', '申万二级'], ['sw3', '申万三级'], ['concept', '概念'], ['custom', '我的指数'],
+  ['sw1', '申万一级'], ['sw2', '申万二级'], ['sw3', '申万三级'], ['concept', '概念'],
 ] as const
 export const algorithms = [
   ['equal', '等权指数'], ['float_mv', '流通市值'], ['amount', '成交额'], ['volume', '成交量'], ['total_mv', '总市值'],
@@ -26,6 +26,7 @@ export interface Workspace {
   boards: Board[]
   charts: Record<string, Bar[]>
   boardId: string
+  pinnedBoard?: boolean
   detail: Members
 }
 export interface Home extends Omit<Workspace, 'category' | 'weight'> {}

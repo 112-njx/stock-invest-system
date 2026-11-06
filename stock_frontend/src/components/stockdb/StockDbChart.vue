@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { percent, type Bar } from '@/api/stockdb'
+import { useSyntheticWicks } from '@/composables/useSyntheticWicks'
+import { displaySyntheticCandle } from '@/utils/syntheticWicks'
 
-const props = defineProps<{ bars: Bar[]; label: string; minute?: boolean; baseline?: number; amount?: boolean }>()
+const props = defineProps<{ bars: Bar[]; label: string; minute?: boolean; baseline?: number; amount?: boolean; synthetic?: boolean }>()
+const wickFactor = useSyntheticWicks()
+const bars = computed<Bar[]>(() => props.synthetic && !props.minute ? props.bars.map(bar => {
+  const candle = displaySyntheticCandle({ open: bar[1], high: bar[2], low: bar[3], close: bar[4] }, wickFactor.value)
+  return [bar[0], candle.open, candle.high, candle.low, candle.close, bar[5], bar[6], bar[7]]
+}) : props.bars)
 const width = 720
 const height = 250
 const top = 12
@@ -10,13 +17,13 @@ const bottom = 177
 const volumeBottom = 233
 const averages = [[5, '#cda745'], [10, '#9571d1'], [20, '#48c7cf']] as const
 const cursor = ref<{ index: number; x: number; y: number } | null>(null)
-watch(() => props.bars, () => { cursor.value = null })
+watch(() => bars.value, () => { cursor.value = null })
 
-const step = computed(() => width / Math.max(1, props.bars.length))
+const step = computed(() => width / Math.max(1, bars.value.length))
 const candleWidth = computed(() => Math.max(1, step.value * 0.73))
 const range = computed(() => {
-  const min = Math.min(...props.bars.map((bar) => props.minute ? bar[4] : bar[3]))
-  const max = Math.max(...props.bars.map((bar) => props.minute ? bar[4] : bar[2]))
+  const min = Math.min(...bars.value.map((bar) => props.minute ? bar[4] : bar[3]))
+  const max = Math.max(...bars.value.map((bar) => props.minute ? bar[4] : bar[2]))
   const base = props.baseline
   if (props.minute && base) {
     const spread = Math.max(max - base, base - min, base * 0.005) * 1.08
@@ -25,8 +32,8 @@ const range = computed(() => {
   const margin = Math.max((max - min) * 0.08, max * 0.001, 0.01)
   return { min: min - margin, max: max + margin }
 })
-const volumeMax = computed(() => Math.max(1, ...props.bars.map((bar) => bar[5])))
-const active = computed(() => cursor.value ? props.bars[cursor.value.index] : undefined)
+const volumeMax = computed(() => Math.max(1, ...bars.value.map((bar) => bar[5])))
+const active = computed(() => cursor.value ? bars.value[cursor.value.index] : undefined)
 const ticks = computed(() => Array.from({ length: 6 }, (_, i) => ({
   y: top + i * (bottom - top) / 5,
   value: range.value.max - i * (range.value.max - range.value.min) / 5,
@@ -35,14 +42,14 @@ const timeTicks = computed(() => {
   if (props.minute) {
     const labels = ['09:30', '10:30', '11:30', '14:00', '15:00']
     return labels.flatMap((label) => {
-      const index = props.bars.findIndex((bar) => dateLabel(bar[0]) === label)
+      const index = bars.value.findIndex((bar) => dateLabel(bar[0]) === label)
       return index >= 0 ? [{ label, x: x(index) }] : []
     })
   }
-  const count = Math.min(props.bars.length, props.amount ? 8 : 7)
+  const count = Math.min(bars.value.length, props.amount ? 8 : 7)
   return Array.from({ length: count }, (_, i) => {
-    const index = Math.round(i * (props.bars.length - 1) / Math.max(1, count - 1))
-    return { label: dateLabel(props.bars[index]![0]).slice(5), x: x(index) }
+    const index = Math.round(i * (bars.value.length - 1) / Math.max(1, count - 1))
+    return { label: dateLabel(bars.value[index]![0]).slice(5), x: x(index) }
   })
 })
 
@@ -61,19 +68,19 @@ function shortNumber(value: number) {
 }
 function volumeHeight(bar: Bar) { return bar[5] / volumeMax.value * 42 }
 function candleColor(bar: Bar, index: number) {
-  return bar[4] >= (props.minute ? (props.bars[index - 1]?.[4] ?? props.baseline ?? bar[1]) : bar[1])
+  return bar[4] >= (props.minute ? (bars.value[index - 1]?.[4] ?? props.baseline ?? bar[1]) : bar[1])
     ? 'var(--blueprint-candle-up)' : 'var(--blueprint-candle-down)'
 }
 function move(event: PointerEvent) {
   const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
   const px = Math.max(0, Math.min(0.9999, (event.clientX - bounds.left) / bounds.width))
-  cursor.value = { index: Math.floor(px * props.bars.length), x: px, y: (event.clientY - bounds.top) / bounds.height }
+  cursor.value = { index: Math.floor(px * bars.value.length), x: px, y: (event.clientY - bounds.top) / bounds.height }
 }
-const minuteLine = computed(() => props.bars.map((bar, i) => `${x(i)},${y(bar[4])}`).join(' '))
+const minuteLine = computed(() => bars.value.map((bar, i) => `${x(i)},${y(bar[4])}`).join(' '))
 const movingAverages = computed(() => averages.map(([period, color]) => ({
   color,
-  points: props.bars.map((_, i) => i + 1 < period ? '' : `${x(i)},${y(
-    props.bars.slice(i + 1 - period, i + 1).reduce((sum, bar) => sum + bar[4], 0) / period,
+  points: bars.value.map((_, i) => i + 1 < period ? '' : `${x(i)},${y(
+    bars.value.slice(i + 1 - period, i + 1).reduce((sum, bar) => sum + bar[4], 0) / period,
   )}`).filter(Boolean).join(' '),
 })))
 </script>

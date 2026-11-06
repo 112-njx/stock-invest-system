@@ -11,11 +11,8 @@ EXPECTED_TABLES = {
     "symbols",
     "kline_15m",
     "kline_1d",
+    "kline_1w",
     "kline_1mon",
-    "snapshot_realtime",
-    "stock_fundamentals",
-    "etf_premiums",
-    "index_valuations",
     "conversations",
     "chat_messages",
     "trading_strategies",
@@ -36,4 +33,8 @@ def test_all_tables_registered_in_metadata():
 
 
 def test_kline_partition_table_names():
-    assert KLINE_TABLES == ("kline_15m", "kline_1d", "kline_1mon")
+    assert set(KLINE_TABLES) == {"kline_15m", "kline_1d", "kline_1w", "kline_1mon"}
+
+
+def test_retired_realtime_models_are_not_registered():
+    assert not {'snapshot_realtime', 'stock_fundamentals', 'etf_premiums', 'index_valuations', 'cn_trading_days'} & Base.metadata.tables.keys()

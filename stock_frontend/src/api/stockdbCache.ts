@@ -132,16 +132,14 @@ export class StockDbHttpError extends Error {
 }
 
 /** Only explicit page/hover requests and the default home bootstrap call this function. */
-export async function fetchStockDb<T>(path: string, codes?: string[]): Promise<T> {
-  const key = 'api:' + path + (codes ? ':' + JSON.stringify(codes) : '')
+export async function fetchStockDb<T>(path: string): Promise<T> {
+  const key = 'api:' + path
   const saved = await readEntry<T>(key)
   const headers: Record<string, string> = {}
   if (saved?.etag) headers['If-None-Match'] = saved.etag
-  if (codes) headers['Content-Type'] = 'application/json'
   const response = await fetch('/api/v1/stockdb' + path, {
     headers,
     signal: AbortSignal.timeout(40000),
-    ...(codes ? { method: 'POST', body: JSON.stringify({ codes }) } : {}),
   })
   if (response.status === 304 && saved) return saved.value
   const value = await response.json()
@@ -150,9 +148,9 @@ export async function fetchStockDb<T>(path: string, codes?: string[]): Promise<T
   return value as T
 }
 
-export async function cachedStockDb<T>(path: string, codes?: string[], maxAge = Infinity): Promise<T> {
-  const saved = await readEntry<T>('api:' + path + (codes ? ':' + JSON.stringify(codes) : ''))
-  return saved && Date.now() - saved.savedAt <= maxAge ? saved.value : fetchStockDb<T>(path, codes)
+export async function cachedStockDb<T>(path: string, maxAge = Infinity): Promise<T> {
+  const saved = await readEntry<T>('api:' + path)
+  return saved && Date.now() - saved.savedAt <= maxAge ? saved.value : fetchStockDb<T>(path)
 }
 
 let homePrepared = false

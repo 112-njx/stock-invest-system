@@ -26,6 +26,13 @@ class StockDBError(Exception):
 
 
 def _rd(client: httpx.Client, command: str, table: str, **params) -> list:
+    import os
+    if os.environ.get('STOCKDB_CONTROL_DIR'):
+        from .stockdb_files import ensure_available
+        try:
+            ensure_available(os.environ['STOCKDB_CONTROL_DIR'])
+        except RuntimeError as exc:
+            raise StockDBError(str(exc)) from exc
     try:
         response = client.get("/", params={"cmd": command, "t": table, "json": 1, **params})
         response.raise_for_status()

@@ -1,7 +1,7 @@
 -- ==============================================================
 -- 种子数据：固定大盘指数 + 行业指数（G/H 区固定列表）
 -- 幂等：按 (type, name) 唯一约束 upsert
--- 行业指数 code 留空，由行情同步任务按名称回填
+-- 行业目录使用本地申万一级代码
 -- ==============================================================
 
 INSERT INTO symbols (code, name, type, market, etf_linked, is_fixed_index, sort_order) VALUES
@@ -14,38 +14,37 @@ INSERT INTO symbols (code, name, type, market, etf_linked, is_fixed_index, sort_
 ('000016', '上证50',     'index', 'SSE',  '510050',  TRUE,  6),
 ('000852', '中证1000',   'index', 'CSI',  '512100',  TRUE,  7),
 ('932000', '中证2000',   'index', 'CSI',  '563300',  TRUE,  8),
--- ---- 行业指数（H区，sort 9~36，code 待同步回填；etf_linked 为对应行业ETF代码）----
--- 说明：光学光电子、商业航天暂无直接对应行业ETF，etf_linked 留空显示 "--"。
-('', '通信设备',   'index', 'SSE', '515880', TRUE, 9),
-('', '半导体',     'index', 'SSE', '512480', TRUE, 10),
-('', '元件',       'index', 'SSE', '515260', TRUE, 11),
-('', '游戏',       'index', 'SSE', '159869', TRUE, 12),
-('', '教育',       'index', 'SSE', '513360', TRUE, 13),
-('', '半导体设备', 'index', 'SSE', '561980', TRUE, 14),
-('', '光学光电子', 'index', 'SSE', '',      TRUE, 15),
-('', '软件开发',   'index', 'SSE', '159035', TRUE, 16),
-('', '消费电子',   'index', 'SSE', '159732', TRUE, 17),
-('', '电网设备',   'index', 'SSE', '561380', TRUE, 18),
-('', '文化传媒',   'index', 'SSE', '512980', TRUE, 19),
-('', '机器人概念', 'index', 'SSE', '159770', TRUE, 20),
-('', '电池',       'index', 'SSE', '159071', TRUE, 21),
-('', '工业金属',   'index', 'SSE', '512400', TRUE, 22),
-('', '光伏设备',   'index', 'SSE', '560230', TRUE, 23),
-('', '贵金属',     'index', 'SSE', '518880', TRUE, 24),
-('', '油气开采及服务', 'index', 'SSE', '563150', TRUE, 25),
-('', '电力',       'index', 'SSE', '560450', TRUE, 26),
-('', '证券',       'index', 'SSE', '512880', TRUE, 27),
-('', '工程机械',   'index', 'SSE', '159161', TRUE, 28),
-('', '房地产',     'index', 'SSE', '512200', TRUE, 29),
-('', '煤炭开采加工','index', 'SSE', '515220', TRUE, 30),
-('', '白酒',       'index', 'SSE', '512690', TRUE, 31),
-('', '港口航运',   'index', 'SSE', '159666', TRUE, 32),
-('', '公路铁路运输','index', 'SSE', '159666', TRUE, 33),
-('', '汽车整车',   'index', 'SSE', '516110', TRUE, 34),
-('', '保险',       'index', 'SSE', '512070', TRUE, 35),
-('', '银行',       'index', 'SSE', '512800', TRUE, 36)
+-- ---- 本地申万一级行业（保持原 H 区显示方式）----
+('801010.SL', '农林牧渔', 'index', 'SW', '', TRUE, 9),
+('801020.SL', '采掘', 'index', 'SW', '', TRUE, 10),
+('801030.SL', '化工', 'index', 'SW', '', TRUE, 11),
+('801040.SL', '钢铁', 'index', 'SW', '', TRUE, 12),
+('801050.SL', '有色金属', 'index', 'SW', '', TRUE, 13),
+('801080.SL', '电子', 'index', 'SW', '', TRUE, 14),
+('801110.SL', '家用电器', 'index', 'SW', '', TRUE, 15),
+('801120.SL', '食品饮料', 'index', 'SW', '', TRUE, 16),
+('801130.SL', '纺织服装', 'index', 'SW', '', TRUE, 17),
+('801140.SL', '轻工制造', 'index', 'SW', '', TRUE, 18),
+('801150.SL', '医药生物', 'index', 'SW', '', TRUE, 19),
+('801160.SL', '公用事业', 'index', 'SW', '', TRUE, 20),
+('801170.SL', '交通运输', 'index', 'SW', '', TRUE, 21),
+('801180.SL', '房地产', 'index', 'SW', '', TRUE, 22),
+('801200.SL', '商业贸易', 'index', 'SW', '', TRUE, 23),
+('801210.SL', '休闲服务', 'index', 'SW', '', TRUE, 24),
+('801230.SL', '综合', 'index', 'SW', '', TRUE, 25),
+('801710.SL', '建筑材料', 'index', 'SW', '', TRUE, 26),
+('801720.SL', '建筑装饰', 'index', 'SW', '', TRUE, 27),
+('801730.SL', '电气设备', 'index', 'SW', '', TRUE, 28),
+('801740.SL', '国防军工', 'index', 'SW', '', TRUE, 29),
+('801750.SL', '计算机', 'index', 'SW', '', TRUE, 30),
+('801760.SL', '传媒', 'index', 'SW', '', TRUE, 31),
+('801770.SL', '通信', 'index', 'SW', '', TRUE, 32),
+('801780.SL', '银行', 'index', 'SW', '', TRUE, 33),
+('801790.SL', '非银金融', 'index', 'SW', '', TRUE, 34),
+('801880.SL', '汽车', 'index', 'SW', '', TRUE, 35),
+('801890.SL', '机械设备', 'index', 'SW', '', TRUE, 36)
 ON CONFLICT (type, name) DO UPDATE
-SET sort_order = EXCLUDED.sort_order,
+SET code = EXCLUDED.code, market = EXCLUDED.market, sort_order = EXCLUDED.sort_order,
     etf_linked = EXCLUDED.etf_linked,
     is_fixed_index = TRUE;
 

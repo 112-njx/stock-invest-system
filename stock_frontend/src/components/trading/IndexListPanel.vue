@@ -10,7 +10,7 @@ import { computed } from 'vue'
 import type { SymbolInfo } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
 import { formatPct, formatPrice, trendClass } from '@/utils/color'
-import { snapshotTime } from '@/utils/homeIndexCache'
+import { quoteTime } from '@/utils/homeIndexCache'
 
 const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; loading?: boolean; error?: boolean; cachedIds?: Set<number> }>(), {
   loading: false,
@@ -35,9 +35,12 @@ function onDblClick(s: SymbolInfo) {
 }
 
 function priceNote(s: SymbolInfo): string {
-  const snap = market.snapshots[s.id]
+  const snap = market.quotes[s.id]
+  if (snap?.source === 'stockdb' || snap?.source === 'akshare') {
+    return snap.data_date ? `数据日期 ${snap.data_date}` : '暂无价格数据'
+  }
   if (!snap?.updated_at) return '暂无价格数据'
-  const date = new Date(snapshotTime(snap.updated_at))
+  const date = new Date(quoteTime(snap.updated_at))
   if (Number.isNaN(date.getTime())) return '价格时间未知'
   const time = date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
   const stale = shanghaiDay.format(date) !== shanghaiDay.format(new Date())
@@ -80,11 +83,11 @@ function priceNote(s: SymbolInfo): string {
           @dblclick="onDblClick(s)"
         >
           <span class="col-name" :title="`${s.name} · ${priceNote(s)}`">{{ s.name }}</span>
-          <span class="col-num" :class="trendClass(market.snapshots[s.id]?.change_pct)">
-            {{ formatPrice(market.snapshots[s.id]?.price) }}
+          <span class="col-num" :class="trendClass(market.quotes[s.id]?.change_pct)">
+            {{ formatPrice(market.quotes[s.id]?.price) }}
           </span>
-          <span class="col-num" :class="trendClass(market.snapshots[s.id]?.change_pct)">
-            {{ formatPct(market.snapshots[s.id]?.change_pct) }}
+          <span class="col-num" :class="trendClass(market.quotes[s.id]?.change_pct)">
+            {{ formatPct(market.quotes[s.id]?.change_pct) }}
           </span>
           <span class="col-num col-etf">{{ s.etf_linked || '--' }}</span>
           <span class="col-num col-opp">--</span>

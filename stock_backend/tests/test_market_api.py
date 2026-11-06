@@ -68,9 +68,9 @@ def test_home_indices_combines_ordered_symbols_and_snapshots(client: TestClient)
     rows = resp.json()["data"]
     assert len(rows) == 36
     assert [row["sort_order"] for row in rows] == sorted(row["sort_order"] for row in rows)
-    assert all(row["type"] == "index" and "snapshot" in row for row in rows)
+    assert all(row["type"] == "index" and "quote" in row for row in rows)
     assert all(
-        row["snapshot"] is None or row["snapshot"]["symbol_id"] == row["id"]
+        row["quote"] is None or row["quote"]["symbol_id"] == row["id"]
         for row in rows
     )
 
@@ -100,21 +100,6 @@ def test_kline_unknown_symbol_empty(client: TestClient):
     resp = client.get("/api/v1/kline", params={"symbol": "999999", "period": "1d"})
     assert resp.status_code == 200
     assert resp.json()["data"] == []
-
-
-def test_snapshot_merges_symbols(client: TestClient, _kline_test_data):
-    # 用测试标的（有K线无快照，不受实时库数据影响）验证：按 id 合并返回 + 无快照字段为 null
-    resp = client.get("/api/v1/snapshot", params={"symbols": str(_kline_test_data.id)})
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert data and data[0]["code"] == "666666"
-    assert data[0]["price"] is None
-    assert data[0]["change"] is None
-
-
-def test_snapshot_invalid_id(client: TestClient):
-    resp = client.get("/api/v1/snapshot", params={"symbols": "abc"})
-    assert resp.status_code == 400
 
 
 def test_sync_status_no_record_returns_done(client: TestClient):

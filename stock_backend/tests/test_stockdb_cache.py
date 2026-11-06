@@ -92,6 +92,50 @@ def test_persisted_snapshot_restores_without_rd_read(isolated, monkeypatch):
     np.testing.assert_equal(cache._snapshot.values, previous.values)
 
 
+def test_expired_persisted_snapshot_survives_offline_source_after_restart(isolated, monkeypatch):
+    previous, _ = isolated
+    packed = cache._pack(previous)
+    monkeypatch.setattr(cache, "_snapshot", None)
+    monkeypatch.setattr(cache, "_state", lambda: {"version": previous.version, "built_at": time() - 600})
+    monkeypatch.setattr(cache, "_shared_get", lambda key: packed if key.startswith("snapshot:") else None)
+    monkeypatch.setattr(rd, "_load_snapshot", Mock(side_effect=rd.StockDBError("RD offline")))
+    cache._rebuild()
+    assert cache._snapshot.version == previous.version
+    assert cache._last_error == "RD offline"
+
+
+def test_startup_restores_expired_snapshot_and_refreshes_in_background(isolated, monkeypatch):
+    previous, _ = isolated
+    monkeypatch.setattr(cache, "_snapshot", None)
+    monkeypatch.setattr(cache, "_state", lambda: {"version": previous.version, "built_at": time() - 600})
+    packed = cache._pack(previous)
+    monkeypatch.setattr(cache, "_shared_get", lambda key: packed if key.startswith("snapshot:") else None)
+    monkeypatch.setattr(cache, "warm_home", Mock())
+    refresh = Mock()
+    monkeypatch.setattr(cache, "refresh", refresh)
+    monkeypatch.setattr(rd, "_load_snapshot", Mock(side_effect=AssertionError("must run in background")))
+    cache.prepare()
+    assert cache._snapshot.version == previous.version
+    refresh.assert_called_once_with()
+
+
+@pytest.mark.parametrize(("candidate_version", "expected_deleted"), [("A", None), ("C", "A")])
+def test_generation_cleanup_preserves_active_and_previous_versions(
+    isolated, monkeypatch, candidate_version, expected_deleted,
+):
+    _, redis = isolated
+    redis.eval.return_value = 1
+    monkeypatch.setattr(cache, "_state", lambda: {"version": "B", "previous": "A", "built_at": time() - 600})
+    monkeypatch.setattr(cache, "warm_home", Mock())
+    monkeypatch.setattr(rd, "_load_snapshot", lambda: sample(candidate_version))
+    cache._rebuild(force=True)
+    assert cache._snapshot.version == candidate_version
+    if expected_deleted is None:
+        redis.delete.assert_not_called()
+    else:
+        redis.delete.assert_called_once_with(cache._namespace + ":snapshot:" + expected_deleted)
+
+
 def test_corrupt_shared_blob_can_be_rebuilt(isolated, monkeypatch):
     previous, _ = isolated
     monkeypatch.setattr(cache, "_shared_get", lambda key: "invalid archive")

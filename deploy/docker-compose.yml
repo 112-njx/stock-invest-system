@@ -19,6 +19,9 @@ x-backend-env: &backend_env
   REDIS_URL: redis://redis:6379/0
   CELERY_BROKER_URL: redis://redis:6379/1
   CELERY_RESULT_BACKEND: redis://redis:6379/2
+  STOCKDB_SDK_URL: ${STOCKDB_SDK_URL:-http://stockdb-local:7900}
+  STOCKDB_URL: ${STOCKDB_URL:-http://stockdb-local:7899}
+  STOCKDB_CONTROL_DIR: /stockdb-control
   MEMORY_DIR: /app/data/memory
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production-0123456789abcdef}
   DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
@@ -32,6 +35,45 @@ x-backend-env: &backend_env
   # RCLONE_CONFIG: ${RCLONE_CONFIG:-}  # 或改用 RCLONE_CONFIG_* / AWS_* 环境变量传凭据（勿写死在此文件）
 
 services:
+  stockdb-local:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: deploy/stockdb/Dockerfile
+    init: true
+    mem_limit: ${STOCKDB_MEMORY_LIMIT:-2g}
+    stop_grace_period: 30s
+    environment:
+      STOCKDB_CONTROL_DIR: /stockdb-control
+      STOCKDB_CACHE_DIR: /var/cache/stockdb
+    volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control:ro
+      - ../stock_backend/data/stockdb-cache:/var/cache/stockdb
+      - type: bind
+        source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data
+        target: /opt/stockdb/data
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data1
+        target: /opt/stockdb/data1
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data_app
+        target: /opt/stockdb/data_app
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/mydb
+        target: /opt/stockdb/mydb
+        bind: { create_host_path: false }
+    healthcheck:
+      test: ["CMD", "python", "/opt/healthcheck.py"]
+      interval: 60s
+      timeout: 180s
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+    networks: [backend]
+
   wal-init:
     # G05：WAL 归档卷由 Docker 以 root 创建，postgres(uid 999) 写不进去 → archive_command 会持续失败。
     # 用一次性 sidecar 先把目录属主改成 postgres，db 再启动。
@@ -104,9 +146,11 @@ services:
       <<: *backend_env
       RUN_MIGRATIONS: "1"
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - backenddata:/app/data
     depends_on:
       db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
       redis: { condition: service_healthy }
     restart: "no"
     networks: [backend]
@@ -115,11 +159,13 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     environment: *backend_env
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - backenddata:/app/data
       - pgwal:/wal-archive:ro  # G05：只读挂载 WAL 归档卷，/metrics 可读归档文件数
     depends_on:
       migrate: { condition: service_completed_successfully }  # G10：等迁移单点完成
       db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
       redis: { condition: service_healthy }
     # G10（P1-2a）多实例扩容：docker compose up -d --scale api=3
     # 本服务不映射宿主端口（仅 nginx 发布），可安全扩容；nginx 经 upstream api_upstream
@@ -149,6 +195,7 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck: { disable: true }
     restart: unless-stopped
@@ -158,10 +205,11 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "watchlist", "--pool=prefork", "--concurrency=1", "-n", "watchlist@%h"]
     environment: *backend_env
-    volumes: ["backenddata:/app/data"]
+    volumes: ["backenddata:/app/data", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d watchlist@$$HOSTNAME | grep -q pong"]
@@ -176,10 +224,11 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "control", "--pool=prefork", "--concurrency=1", "-n", "control@%h"]
     environment: *backend_env
-    volumes: ["backenddata:/app/data"]
+    volumes: ["backenddata:/app/data", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d control@$$HOSTNAME | grep -q pong"]
@@ -194,10 +243,11 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "fixed_indices", "--pool=prefork", "--concurrency=1", "-n", "fixed@%h"]
     environment: *backend_env
-    volumes: ["backenddata:/app/data"]
+    volumes: ["backenddata:/app/data", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d fixed@$$HOSTNAME | grep -q pong"]
@@ -212,10 +262,11 @@ services:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backfill", "--pool=prefork", "--concurrency=1", "-n", "backfill@%h"]
     environment: *backend_env
-    volumes: ["backenddata:/app/data"]
+    volumes: ["backenddata:/app/data", "../stock_backend/data/stockdb-control:/stockdb-control"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d backfill@$$HOSTNAME | grep -q pong"]
@@ -235,6 +286,7 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck: { disable: true }
     restart: unless-stopped
@@ -245,10 +297,12 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "ai", "--pool=solo", "--concurrency=1", "-n", "ai@%h"]
     environment: *backend_env
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - backenddata:/app/data
     depends_on:
       migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck: { disable: true }
     restart: unless-stopped
@@ -259,9 +313,11 @@ services:
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "beat"]
     environment: *backend_env
     volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - backenddata:/app/data
     depends_on:
       db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
       redis: { condition: service_healthy }
     # celery 无 HTTP 服务，禁用镜像默认 HTTP healthcheck
     healthcheck: { disable: true }

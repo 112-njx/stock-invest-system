@@ -1,7 +1,7 @@
 """用户域服务：资料更新、重点关注股票（合并实时价 + 自动同步 + Redis 缓存）、支撑/压力位、账户删除。"""
 
 import logging
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ApiError
 from app.models.symbol import Symbol
 from app.models.user import User, UserWatchlist
-from app.repositories import kline_repo, ops_repo, symbol_repo, user_repo
+from app.repositories import symbol_repo, user_repo
 from app.schemas.user import WatchlistOut
 from app.services import kline_quality_service, market_service
 from app.utils import market_cache
@@ -200,6 +200,29 @@ def ensure_admins(db: Session) -> None:
 
 def _resolve_symbol_id(db: Session, symbol: str) -> int:
     """解析标的（代码或 id），不存在抛 400。"""
+    if symbol.startswith("stock:"):
+        from sqlalchemy import select
+        from sqlalchemy.dialects.postgresql import insert
+
+        from app.services.stock_search_directory import get_directory
+
+        code = symbol.removeprefix("stock:")
+        item = next((row for row in get_directory()["items"] if row["code"] == code), None)
+        if item is None:
+            raise ApiError(status_code=400, code=40002, msg="股票没有有效的本地日 K 数据")
+        stock = db.scalar(select(Symbol).where(Symbol.type == "stock", Symbol.code == code))
+        if stock is None:
+            stock_id = db.scalar(
+                insert(Symbol).values(code=code, name=item["name"], type="stock", market=item["market"], is_catalog=True)
+                .on_conflict_do_nothing(index_elements=[Symbol.type, Symbol.name]).returning(Symbol.id)
+            )
+            if stock_id is not None:
+                return stock_id
+            # A concurrent creator may have committed while this insert waited.
+            stock = db.scalar(select(Symbol).where(Symbol.type == "stock", Symbol.code == code))
+            if stock is None:
+                raise ApiError(status_code=409, msg="股票名称与现有目录冲突，请同步本地目录后重试")
+        return stock.id
     sym = symbol_repo.get_by_code(db, symbol)
     if sym:
         return sym.id
@@ -214,7 +237,7 @@ def _resolve_symbol_id(db: Session, symbol: str) -> int:
 def _watchlist_rows(db: Session, entries: list[UserWatchlist]) -> list[dict]:
     """批量合并实时快照构造关注列表行（一次查快照，避免 N+1）。"""
     symbol_ids = [e.symbol_id for e in entries]
-    snaps = {s["symbol_id"]: s for s in market_service.get_snapshots(db, symbol_ids)} if symbol_ids else {}
+    snaps = {s["symbol_id"]: s for s in market_service.get_latest_quotes(db, symbol_ids)} if symbol_ids else {}
     rows: list[dict] = []
     for e in entries:
         snap = snaps.get(e.symbol_id, {})
@@ -246,7 +269,8 @@ def add_watchlist(db: Session, user_id: int, symbol: str) -> dict:
     if sym and kline_quality_service.is_a_share_stock(sym):
         db.commit()
         try:
-            _queue_watchlist_stock(db, entry, sym, force=existing is not None and existing.sync_status == "failed")
+            _queue_watchlist_stock(db, entry, sym, requested=True,
+                                   force=existing is not None and existing.sync_status == "failed")
         except Exception:
             db.rollback()
             entry.sync_status = "failed"
@@ -303,25 +327,41 @@ def list_watchlist(db: Session, user_id: int) -> list[dict]:
     return rows
 
 
-def _queue_watchlist_stock(db: Session, entry: UserWatchlist, sym: Symbol, *, force: bool = False) -> None:
+def _queue_watchlist_stock(db: Session, entry: UserWatchlist, sym: Symbol, *, force: bool = False,
+                          requested: bool = False) -> None:
     """按数据质量建立持久待发布任务；调度器负责实际投递。"""
-    from app.models.kline_quality import TradingDay
-    from app.services import kline_quality_service
     from app.services.watchlist_delivery import queue_watchlist_sync
-
+    from app.models.ops import SyncTask
+    from app.repositories import kline_repo
     now = datetime.now(UTC)
-    latest = kline_repo.latest_ts(db, "1d", sym.id)
-    quality = kline_quality_service.get_quality(db, sym.id, "1d")
-    local_now = now.astimezone(kline_quality_service.settings.tz)
-    last_day = db.scalar(select(TradingDay.day).where(TradingDay.day <= local_now.date()).order_by(TradingDay.day.desc()).limit(1))
-    if last_day == local_now.date() and local_now.time() < time(16, 30):
-        last_day = db.scalar(select(TradingDay.day).where(TradingDay.day < local_now.date()).order_by(TradingDay.day.desc()).limit(1))
-    needs_sync = force or latest is None or quality is None or quality.status != "complete" or (
-        last_day is not None and (quality.checked_to is None or quality.checked_to < last_day)
-    )
-    if not needs_sync:
+    quality = kline_quality_service.get_quality(db, sym.id, '1d')
+    latest = quality.checked_to if quality else None
+    tasks = list(db.scalars(select(SyncTask).where(
+        SyncTask.symbol_id == sym.id,
+        SyncTask.task_type.in_(('kline_init', 'kline_incremental')))))
+    if any(task.status in {'queued', 'running'} for task in tasks):
+        entry.sync_status = 'pending'
+        db.commit()
         return
-    queue_watchlist_sync(db, sym.id, initialize=latest is None, force=force, now=now)
+    terminal = max(tasks, key=lambda task: market_cache.as_utc(task.last_run_at) or datetime.min.replace(tzinfo=UTC), default=None)
+    failed = terminal is not None and terminal.status == 'failed'
+    if failed and not (requested or force):
+        entry.sync_status = 'failed'
+        db.commit()
+        return
+    ready = quality is not None and quality.status == 'complete' and all(
+        kline_repo.latest_ts(db, period, sym.id) is not None for period in ('1d', '1w', '1mon'))
+    if ready and not (force or failed):
+        entry.sync_status = 'done'
+        entry.last_synced_at = quality.checked_at
+        db.commit()
+        return
+    # Reading a list never restarts completed work because a cache expired.
+    # An explicit add/re-add can retry a failed or no-longer-available history.
+    if terminal is not None and not (requested or force):
+        return
+    queue_watchlist_sync(db, sym.id, initialize=latest is None,
+                         force=force or terminal is not None, now=now)
     db.refresh(entry)
 
 

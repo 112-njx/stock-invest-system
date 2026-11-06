@@ -11,4 +11,7 @@ class VolumeIndicator(BaseIndicator):
 
     def calculate(self, df: pd.DataFrame) -> pd.DataFrame:
         self.validate(df)
-        return df
+        out = df.copy()
+        for n in (5, 10):
+            out[f"volume_ma{n}"] = df["volume"].rolling(n, min_periods=n).mean()
+        return out

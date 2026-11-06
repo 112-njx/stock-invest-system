@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import TrendView from '@/views/TrendView.vue'
 import StockDbChart from '@/components/stockdb/StockDbChart.vue'
 import {
   algorithms, barReturn, categories, percent,
@@ -8,20 +10,14 @@ import {
 } from '@/api/stockdb'
 import { cachedStockDb, fetchStockDb, peekCache, putCache, readCache, StockDbHttpError } from '@/api/stockdbCache'
 
-interface CustomIndex { id: string; name: string; codes: string[] }
-const storageKey = 'stockdb-custom-indices-v1'
-function readCustom(): CustomIndex[] {
-  try {
-    const stored: unknown = JSON.parse(localStorage.getItem(storageKey) ?? '[]')
-    return Array.isArray(stored) ? stored.filter((item) =>
-      typeof item?.id === 'string' && typeof item?.name === 'string' && Array.isArray(item?.codes) &&
-      item.codes.length > 0 && item.codes.length <= 1000 &&
-      item.codes.every((code: unknown) => typeof code === 'string' && /^\d{6}$/.test(code)),
-    ).slice(0, 20) : []
-  } catch { return [] }
-}
+const trendMode = ref(useRoute()?.query.view === 'trends')
+function selectCategory(id: Category) { trendMode.value = false; category.value = id; clearHover() }
+function openTrends() { trendMode.value = true; category.value = 'sw1'; clearHover(); drawer.value?.close() }
 
-const screen = shallowRef(peekCache<Workspace>('last-workspace'))
+function supportedWorkspace(value: Workspace | undefined) {
+  return value && categories.some(([id]) => id === value.category) && (!trendMode.value || value.category === 'sw1') ? value : undefined
+}
+const screen = shallowRef(supportedWorkspace(peekCache<Workspace>('last-workspace')))
 function readPreferences() {
   try {
     const saved = JSON.parse(localStorage.getItem('stockdb-workspace-preferences-v2') ?? '{}')
@@ -40,26 +36,22 @@ const category = ref<Category>(screen.value?.category ?? 'sw1')
 const weight = ref<Weight>(screen.value?.weight ?? 'equal')
 const days = ref(preferences.days)
 const sort = ref<'price' | 'return'>(preferences.sort)
+interface IndexOrder { days: number; sort: 'price' | 'return' }
+const displayedOrder = ref<IndexOrder>({ days: preferences.days, sort: preferences.sort })
 const memberSort = ref<'return' | 'price' | 'code'>(preferences.memberSort)
 const memberAscending = ref(preferences.memberAscending)
-const custom = ref(readCustom())
 const ready = ref(false)
 const loading = ref(false)
 const refreshing = ref(false)
 const error = ref('')
-const pinnedBoard = ref(Boolean(screen.value?.boardId))
+const pinnedBoard = ref(screen.value?.pinnedBoard ?? false)
 const cardScroll = ref(0)
 const cards = ref<HTMLElement | null>(null)
 const boardList = ref<HTMLElement | null>(null)
 const memberList = ref<HTMLElement | null>(null)
 const drawer = ref<HTMLDialogElement | null>(null)
-const editor = ref<HTMLDialogElement | null>(null)
 const compareBoard = shallowRef<Board | null>(null)
 const comparison = shallowRef<BoardDetail | null>(null)
-const customId = ref('')
-const customName = ref('')
-const customCodes = ref('')
-const editorError = ref('')
 const cardHeight = 338
 const windows = [[1, '今日涨幅'], [3, '3日涨幅'], [5, '5日涨幅'], [10, '10日涨幅'], [15, '15日涨幅'], [30, '30日涨幅']] as const
 
@@ -75,10 +67,17 @@ const stockBars = computed(() => detail.value?.stockBars ?? [])
 const date = computed(() => screen.value?.date)
 const currentBoard = computed(() => boards.value.find((board) => board.id === boardId.value))
 
-function rank(items: Board[]) {
-  return items.map((board) => ({ ...board, change: board.changes[String(days.value)] ?? null })).sort((a, b) =>
-    (b[sort.value === 'price' ? 'price' : 'change'] ?? -Infinity) -
-    (a[sort.value === 'price' ? 'price' : 'change'] ?? -Infinity) || a.name.localeCompare(b.name, 'zh-CN'),
+function sameOrder(left: IndexOrder, right: IndexOrder) {
+  return left.days === right.days && left.sort === right.sort
+}
+function viewportStart(group: Category, method: Weight, order: IndexOrder) {
+  return shownCategory.value === group && shownWeight.value === method && sameOrder(order, displayedOrder.value)
+    ? firstCard.value : 0
+}
+function rank(items: Board[], order = displayedOrder.value) {
+  return items.map((board) => ({ ...board, change: board.changes[String(order.days)] ?? null })).sort((a, b) =>
+    (b[order.sort === 'price' ? 'price' : 'change'] ?? -Infinity) -
+    (a[order.sort === 'price' ? 'price' : 'change'] ?? -Infinity) || a.name.localeCompare(b.name, 'zh-CN'),
   )
 }
 const ranked = computed(() => rank(boards.value))
@@ -104,14 +103,15 @@ let persistTimer: ReturnType<typeof setTimeout> | undefined
 let statusTimer: ReturnType<typeof setInterval> | undefined
 
 function workspaceKey(group: Category, method: Weight) {
-  return 'workspace:' + group + ':' + method + (group === 'custom' ? ':' + JSON.stringify(custom.value) : '')
+  return 'workspace:' + group + ':' + method
 }
 function rememberWorkspace(value: Workspace) {
-  screen.value = value
+  const saved = { ...value, pinnedBoard: pinnedBoard.value }
+  screen.value = saved
   clearTimeout(persistTimer)
   persistTimer = setTimeout(() => {
-    putCache('last-workspace', value)
-    putCache(workspaceKey(value.category, value.weight), value)
+    putCache('last-workspace', saved)
+    putCache(workspaceKey(saved.category, saved.weight), saved)
   }, 150)
 }
 function versionQuery(version: string) { return new URLSearchParams({ version }) }
@@ -141,62 +141,25 @@ function bundlePath(id: string, version: string, selected = '') {
   })
 }
 
-function ownIndex(id: string) { return custom.value.find((item) => item.id === id) }
-
 async function loadDetail(id: string, version: string) {
-  const own = ownIndex(id)
-  return cachedStockDb<BoardDetail & { date: number; detail: Members }>(
-    own ? '/custom?' + versionQuery(version) : '/boards/' + encodeURIComponent(id) + '?' + versionQuery(version),
-    own?.codes,
-  )
+  return cachedStockDb<BoardDetail>('/boards/' + encodeURIComponent(id) + '?' + versionQuery(version))
 }
 
-async function buildWorkspace(group: Category, method: Weight): Promise<Workspace> {
-  if (group === 'sw1' && method === 'equal' && sort.value === 'price' && !pinnedBoard.value) {
+async function buildWorkspace(group: Category, method: Weight, order: IndexOrder): Promise<Workspace> {
+  if (group === 'sw1' && method === 'equal' && order.sort === 'price' && !pinnedBoard.value &&
+    viewportStart(group, method, order) === 0) {
     const home = await fetchStockDb<Home>('/home')
     for (const [id, bars] of Object.entries(home.charts)) putCache(`curve:${home.version}:equal:${id}`, bars)
     return { ...home, category: group, weight: method }
   }
-  if (group === 'custom') {
-    if (!custom.value.length) return {
-      version: screen.value?.version ?? '', date: screen.value?.date ?? 0,
-      category: group, weight: method, boards: [], charts: {}, boardId: '',
-      detail: { members: [], count: 0, stockCode: '', stockBars: [] },
-    }
-    const localBoards: Board[] = []
-    const charts: Record<string, Bar[]> = {}
-    let version = ''
-    let sessionDate = 0
-    let firstDetail: Members | undefined
-    const wanted = ownIndex(boardId.value)?.id ?? custom.value[0]!.id
-    // User-created sets are evaluated only while this category is open.
-    for (const item of custom.value) {
-      const payload = await fetchStockDb<BoardDetail & { date: number; detail: Members }>(
-        '/custom' + (version ? '?' + versionQuery(version) : ''), item.codes,
-      )
-      version = payload.version
-      sessionDate = payload.date
-      const bars = payload.indices[method]
-      charts[item.id] = bars
-      const changes: Record<string, number | null> = {}
-      for (const [period] of windows) changes[String(period)] = barReturn(bars, period)
-      localBoards.push({ id: item.id, name: item.name, count: item.codes.length, price: bars.at(-1)?.[4] ?? null, changes })
-      if (item.id === wanted) firstDetail = payload.detail
-    }
-    return {
-      version, date: sessionDate, category: group, weight: method, boards: localBoards, charts,
-      boardId: wanted, detail: firstDetail!,
-    }
-  }
-
   const ranking = await fetchStockDb<Ranking>(
     '/ranking?' + new URLSearchParams({ category: group, weight: method }),
   )
-  const ordered = rank(ranking.boards)
+  const ordered = rank(ranking.boards, order)
   const selected = pinnedBoard.value && ranking.boards.some((board) => board.id === boardId.value)
     ? boardId.value : ordered[0]?.id ?? ''
   const selectedStock = selected === boardId.value ? stockCode.value : ''
-  const start = screen.value?.category === group && screen.value.weight === method ? firstCard.value : 0
+  const start = viewportStart(group, method, order)
   const [charts, detail] = await Promise.all([
     curves(ranking.version, method, ordered.slice(start, start + 10).map((board) => board.id)),
     selected ? cachedStockDb<Members>(bundlePath(selected, ranking.version, selectedStock))
@@ -211,23 +174,42 @@ async function loadWorkspace(retry = true) {
   stockRequest++
   const group = category.value
   const method = weight.value
+  const order: IndexOrder = { days: days.value, sort: sort.value }
   loading.value = true
   error.value = ''
   clearHover()
   try {
     const saved = await readCache<Workspace>(workspaceKey(group, method))
     if (request !== workspaceRequest || disposed) return
-    if (saved && rank(saved.boards).slice(0, 10).every((board) => saved.charts[board.id]) &&
+    if (saved && rank(saved.boards, order).slice(0, 10).every((board) => saved.charts[board.id]) &&
+      saved.boardId === (pinnedBoard.value ? boardId.value : rank(saved.boards, order)[0]?.id ?? '') &&
       (saved.category !== shownCategory.value || saved.weight !== shownWeight.value || !screen.value)) {
       cardScroll.value = 0
       cards.value?.scrollTo(0, 0)
       boardList.value?.scrollTo(0, 0)
       screen.value = saved
+      displayedOrder.value = order
     }
-    const value = await buildWorkspace(group, method)
+    const value = await buildWorkspace(group, method, order)
     if (request !== workspaceRequest || disposed) return
-    const changed = shownCategory.value !== group || shownWeight.value !== method
+    // Scrolling can continue while the next generation is being prepared.
+    // Fill the current window before publishing, even if it moved during the request.
+    let start = viewportStart(group, method, order)
+    while (true) {
+      const ids = rank(value.boards, order).slice(start, start + 10).map((board) => board.id)
+      const missing = ids.filter((id) => !value.charts[id])
+      if (missing.length) {
+        value.charts = { ...value.charts, ...await curves(value.version, method, missing) }
+      }
+      if (request !== workspaceRequest || disposed) return
+      const next = viewportStart(group, method, order)
+      if (next === start) break
+      start = next
+    }
+    const changed = shownCategory.value !== group || shownWeight.value !== method ||
+      !sameOrder(order, displayedOrder.value)
     const previous = screen.value
+    displayedOrder.value = order
     rememberWorkspace({
       ...value,
       charts: previous?.version === value.version && previous.weight === value.weight
@@ -252,18 +234,21 @@ async function loadWorkspace(retry = true) {
 
 async function selectBoard(id: string) {
   const current = screen.value
-  if (!current || current.boardId === id) return
-  if (loading.value && (current.category !== category.value || current.weight !== weight.value)) return
+  if (!current) return
+  if (loading.value && (current.category !== category.value || current.weight !== weight.value ||
+    !sameOrder({ days: days.value, sort: sort.value }, displayedOrder.value))) return
   const request = ++memberRequest
   workspaceRequest++
   loading.value = false
   stockRequest++
   pinnedBoard.value = true
   clearHover()
+  if (current.boardId === id) {
+    rememberWorkspace(current)
+    return
+  }
   try {
-    const own = ownIndex(id)
-    const next = own ? (await loadDetail(id, current.version)).detail
-      : await cachedStockDb<Members>(bundlePath(id, current.version))
+    const next = await cachedStockDb<Members>(bundlePath(id, current.version))
     if (request !== memberRequest || disposed || screen.value?.version !== current.version ||
       screen.value.category !== current.category || screen.value.weight !== current.weight) return
     rememberWorkspace({ ...screen.value, boardId: id, detail: next })
@@ -277,11 +262,14 @@ async function selectBoard(id: string) {
 
 async function selectStock(code: string) {
   const current = screen.value
-  if (!current || current.detail.stockCode === code) return
-  if (loading.value && (current.category !== category.value || current.weight !== weight.value)) return
+  if (!current) return
+  if (loading.value && (current.category !== category.value || current.weight !== weight.value ||
+    !sameOrder({ days: days.value, sort: sort.value }, displayedOrder.value))) return
   const request = ++stockRequest
+  memberRequest++
   workspaceRequest++
   loading.value = false
+  if (current.detail.stockCode === code) return
   try {
     const response = await cachedStockDb<{ bars: Bar[] }>('/stocks/' + code + '?' + versionQuery(current.version))
     if (request !== stockRequest || disposed || screen.value?.version !== current.version ||
@@ -296,7 +284,7 @@ async function selectStock(code: string) {
 
 async function visibleCurves() {
   const current = screen.value
-  if (!current || current.category === 'custom') return
+  if (!current) return
   const request = ++chartRequest
   try {
     const data = await curves(current.version, current.weight, visibleCards.value.map((board) => board.id))
@@ -312,16 +300,13 @@ async function visibleCurves() {
   }
 }
 
-watch([category, weight, custom], ([group], previous) => {
+watch([category, weight], ([group], previous) => {
   if (!ready.value) return
   if (group !== previous[0]) pinnedBoard.value = false
   void loadWorkspace()
 })
 watch([days, sort], () => {
-  cardScroll.value = 0
-  cards.value?.scrollTo(0, 0)
-  boardList.value?.scrollTo(0, 0)
-  void visibleCurves()
+  if (ready.value) void loadWorkspace()
 })
 watch(firstCard, () => { void visibleCurves() })
 watch([days, sort, memberSort, memberAscending], () => {
@@ -384,7 +369,7 @@ function showIntraday(stock: Member, event: PointerEvent) {
     try {
       const bars = await cachedStockDb<Bar[]>(
         `/stocks/${stock.code}/minutes?date=${stock.bar[0]}&version=${version}`,
-        undefined, 60000,
+        60000,
       )
       if (!disposed && request === hoverRequest) hover.value = { stock, x, y, bars }
     } catch {
@@ -411,37 +396,8 @@ async function compare(board: Board) {
   }
 }
 
-function edit(item?: CustomIndex) {
-  customId.value = item?.id ?? ''
-  customName.value = item?.name ?? ''
-  customCodes.value = item?.codes.join(' ') ?? ''
-  editorError.value = ''
-  editor.value?.showModal()
-}
-function persist(next: CustomIndex[]) {
-  try { localStorage.setItem(storageKey, JSON.stringify(next)) }
-  catch { editorError.value = '浏览器无法保存自定义指数。'; return false }
-  custom.value = next
-  editor.value?.close()
-  return true
-}
-function save() {
-  const name = customName.value.trim()
-  const codes = [...new Set(customCodes.value.trim().split(/[\s,，;；、]+/).filter(Boolean))]
-  if (!name || !codes.length || codes.length > 1000 || codes.some((code) => !/^\d{6}$/.test(code))) {
-    editorError.value = '请输入名称和 1 至 1000 个六位股票代码。'
-    return
-  }
-  const id = customId.value || 'custom-' + crypto.randomUUID()
-  const own = { id, name, codes }
-  const items = custom.value.some((item) => item.id === id)
-    ? custom.value.map((item) => item.id === id ? own : item) : [...custom.value, own]
-  persist(items)
-}
-function removeCustom() { persist(custom.value.filter((item) => item.id !== customId.value)) }
-
 onMounted(async () => {
-  const previous = screen.value ?? await readCache<Workspace>('last-workspace')
+  const previous = screen.value ?? supportedWorkspace(await readCache<Workspace>('last-workspace'))
   const preparedHome = previous ? undefined : await readCache<Home>('api:/home')
   const saved = previous ?? (preparedHome ? { ...preparedHome, category: 'sw1' as const, weight: 'equal' as const } : undefined)
   if (disposed) return
@@ -449,7 +405,7 @@ onMounted(async () => {
     screen.value = saved
     category.value = saved.category
     weight.value = saved.weight
-    pinnedBoard.value = Boolean(previous?.boardId)
+    pinnedBoard.value = previous?.pinnedBoard ?? false
   }
   await nextTick()
   ready.value = true
@@ -470,32 +426,35 @@ onBeforeUnmount(() => {
 })
 </script>
 <template>
-  <div class="blueprint">
+  <div class="blueprint" :class="{ 'blueprint--trends': trendMode }">
     <aside class="panel categories">
       <header class="panel-head"><strong>分类</strong></header>
       <div class="categories__list">
-        <button v-for="[id, label] in categories" :key="id" :class="{ active: shownCategory === id }"
-          :aria-pressed="shownCategory === id" @click="category = id">{{ label }}</button>
+        <template v-for="[id, label] in categories" :key="id">
+          <button :class="{ active: !trendMode && shownCategory === id }"
+            :aria-pressed="!trendMode && shownCategory === id" @click="selectCategory(id)">{{ label }}</button>
+          <button v-if="id === 'sw1'" class="trend-entry" :class="{ active: trendMode }"
+            :aria-pressed="trendMode" @click="openTrends">└ 波段追踪</button>
+        </template>
       </div>
     </aside>
 
     <aside class="panel boards">
-      <header class="panel-head"><strong>{{ categoryName }}</strong><small>{{ boards.length }} {{ shownCategory === 'custom' ? '个指数' : '个板块' }}</small></header>
-      <div v-if="shownCategory === 'custom'" class="custom-actions">
-        <button :disabled="custom.length >= 20" @click="edit()">＋ 新建指数</button>
-        <button v-if="currentBoard" @click="edit(custom.find((item) => item.id === currentBoard?.id))">编辑所选</button>
-      </div>
+      <header class="panel-head"><strong>{{ categoryName }}</strong><small>{{ boards.length }} 个板块</small></header>
       <div ref="boardList" class="rows">
         <button v-for="board in ranked" :key="board.id" class="board-row" :class="{ active: boardId === board.id }"
-          :aria-pressed="boardId === board.id" :title="board.name" @click="selectBoard(board.id)" @dblclick="compare(board)">
+          :aria-pressed="boardId === board.id" :title="board.name" @click="selectBoard(board.id)" @dblclick="!trendMode && compare(board)">
           <span class="ellipsis">{{ board.name }}</span><small>{{ board.count }}</small>
           <strong :class="color(board.change)">{{ formatReturn(board.change) }}</strong>
         </button>
-        <p v-if="!loading && !error && !boards.length" class="empty">{{ shownCategory === 'custom' ? '暂无自定义指数' : '暂无板块' }}</p>
+        <p v-if="!loading && !error && !boards.length" class="empty">暂无板块</p>
       </div>
     </aside>
 
-    <section class="panel indices">
+    <TrendView v-if="trendMode && shownCategory === 'sw1' && boardId" class="embedded-trends"
+      embedded :industry="boardId" />
+    <section v-else-if="trendMode" class="embedded-trends empty">正在准备申万一级行业…</section>
+    <section v-else class="panel indices">
       <header class="panel-head index-toolbar">
         <div class="algorithms"><strong>⚡ 指数算法</strong>
           <div class="segmented" aria-label="指数算法">
@@ -512,7 +471,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
       <div v-if="!screen && error" class="empty state" role="alert">{{ error }} <button @click="refresh">重试</button></div>
-      <div v-if="screen && !loading && !ranked.length" class="empty state">选择板块或新建自定义指数</div>
+      <div v-if="screen && !loading && !ranked.length" class="empty state">请选择板块</div>
       <div ref="cards" class="cards" @scroll.passive="cardScroll = ($event.target as HTMLElement).scrollTop">
         <div :style="{ height: ranked.length * cardHeight + 'px', position: 'relative' }">
           <div class="card-window" :style="{ top: firstCard * cardHeight + 'px' }">
@@ -520,20 +479,20 @@ onBeforeUnmount(() => {
               <header class="card-head">
                 <span class="rank" :class="`rank--${firstCard + i + 1}`">TOP {{ firstCard + i + 1 }}</span>
                 <button class="card-name ellipsis" :class="{ selected: boardId === board.id }" :title="board.name"
-                  @click="selectBoard(board.id)" @dblclick="compare(board)">{{ board.name }}</button>
+                  @click="selectBoard(board.id)" @dblclick="!trendMode && compare(board)">{{ board.name }}</button>
                 <span class="weight-label">{{ weightName }}{{ shownWeight === 'equal' ? '' : '加权' }}</span>
                 <button class="compare" :aria-label="`${board.name}五维对比`" @click="compare(board)">五维</button>
                 <strong class="quote">{{ board.price?.toFixed(2) ?? '—' }}</strong>
                 <strong class="quote" :class="color(board.change)">{{ formatReturn(board.change) }}</strong>
               </header>
-              <StockDbChart v-if="board.bars.length" :bars="board.bars.slice(-44)" :label="`${board.name}指数日 K`" amount />
+              <StockDbChart v-if="board.bars.length" :bars="board.bars.slice(-44)" :label="`${board.name}指数日 K`" amount synthetic />
             </article>
           </div>
         </div>
       </div>
     </section>
 
-    <aside class="panel constituents">
+    <aside v-if="!trendMode" class="panel constituents">
       <header class="panel-head"><strong class="ellipsis">{{ currentBoard?.name ?? '板块股票' }}</strong>
         <small v-if="detail">{{ detail.members.length }}/{{ detail.count }} 只</small>
       </header>
@@ -575,23 +534,11 @@ onBeforeUnmount(() => {
       <div v-if="comparison" class="compare-grid">
         <article v-for="[id, label] in algorithms" :key="id">
           <header><strong>{{ label }}</strong><span :class="color(barReturn(comparison.indices[id], days))">{{ formatReturn(barReturn(comparison.indices[id], days)) }}</span></header>
-          <StockDbChart :bars="comparison.indices[id].slice(-44)" :label="label" amount />
+          <StockDbChart :bars="comparison.indices[id].slice(-44)" :label="label" amount synthetic />
         </article>
       </div>
     </dialog>
 
-    <dialog ref="editor" class="edit-dialog">
-      <form @submit.prevent="save">
-        <header class="panel-head"><strong>{{ customId ? '编辑自定义指数' : '新建自定义指数' }}</strong></header>
-        <label>指数名称 <input v-model="customName" maxlength="40" required /></label>
-        <label>股票代码 <textarea v-model="customCodes" rows="5" required placeholder="例如 000001 600519，支持空格、逗号或换行" /></label>
-        <p v-if="editorError" class="up" role="alert">{{ editorError }}</p>
-        <footer>
-          <button v-if="customId" class="up" type="button" @click="removeCustom">删除指数</button>
-          <button type="button" @click="editor?.close()">取消</button><button class="primary" type="submit">保存</button>
-        </footer>
-      </form>
-    </dialog>
   </div>
 </template>
 
@@ -625,6 +572,8 @@ button:hover, .active { background: var(--blueprint-active); color: var(--bluepr
 .categories__list { display: grid; padding: 6px 8px; gap: 5px; }
 .categories__list button { padding: 10px; text-align: left; }
 .categories__list .active { font-weight: 700; }
+.categories__list .trend-entry { padding: 6px 10px 10px 24px; text-align: left; font-size: 12px; color: var(--blueprint-link); border-radius: 4px; text-decoration: none; }
+.trend-entry:hover { background: var(--blueprint-active); }
 .rows { overflow: auto; min-height: 0; flex: 1; }
 .board-row, .stock-row { display: grid; align-items: center; text-align: left; gap: 8px; width: 100%; padding: 0 10px; }
 .boards .rows { padding: 6px 7px; }
@@ -635,8 +584,7 @@ button:hover, .active { background: var(--blueprint-active); color: var(--bluepr
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .up { color: var(--blueprint-up); }
 .down { color: var(--blueprint-down); }
-.custom-actions { padding: 6px; display: flex; gap: 5px; border-bottom: 1px solid var(--border); }
-.custom-actions button, .source button { padding: 4px 7px; color: var(--blueprint-link); background: var(--accent-soft); }
+.source button { padding: 4px 7px; color: var(--blueprint-link); background: var(--accent-soft); }
 .index-toolbar { gap: 6px; }
 .algorithms, .segmented, .ranking { display: flex; align-items: center; gap: 3px; }
 .algorithms strong, .segmented, .ranking { font-size: 11px; }
@@ -673,9 +621,6 @@ dialog::backdrop { background: #23344950; }.compare-dialog { width: min(96vw, 16
 .compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; padding: 8px; background: var(--blueprint-workspace); }
 .compare-grid article { height: 235px; padding: 8px; display: flex; flex-direction: column; background: var(--bg-panel); border-radius: 5px; }
 .compare-grid article header { display: flex; justify-content: space-between; }
-.edit-dialog { width: min(480px, 92vw); margin: auto; }.edit-dialog label, .edit-dialog footer, .edit-dialog p { display: block; margin: 12px; }
-.edit-dialog input, .edit-dialog textarea { display: block; width: 100%; margin-top: 4px; padding: 7px; color: inherit; font: inherit; background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 4px; }
-.edit-dialog footer { display: flex; justify-content: flex-end; gap: 7px; }.edit-dialog button { padding: 6px 10px; }
 @media (max-width: 1080px) {
   .blueprint { grid-template-columns: 105px minmax(150px, 22%) minmax(0, 1fr); overflow: auto; grid-template-rows: minmax(510px, 1fr) 440px; }
   .constituents { grid-column: 1 / -1; }.algorithms strong { display: none; }
@@ -685,5 +630,12 @@ dialog::backdrop { background: #23344950; }.compare-dialog { width: min(96vw, 16
   .categories { flex: none; }.categories__list { display: flex; flex-wrap: wrap; }
   .boards { flex: none; max-height: 230px; }.indices { flex: none; height: 550px; }.constituents { flex: none; height: 440px; }
   .index-toolbar { padding: 0 4px; }.segmented button, .ranking button, .ranking select { padding-inline: 3px; }
+}
+</style>
+
+<style scoped>
+.embedded-trends { grid-column: 3 / -1; min-width: 0; min-height: 0; overflow: hidden; }
+@media (max-width: 1080px) {
+  .blueprint.blueprint--trends { grid-template-rows: minmax(510px, 1fr); }
 }
 </style>

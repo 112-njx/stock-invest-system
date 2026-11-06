@@ -73,5 +73,5 @@ def test_providers_health_returns_statuses(client: TestClient, admin_token: str)
     names = {p["name"] for p in data}
     assert "eastmoney" in names  # 默认优先级链含东方财富
     for p in data:
-        assert p["state"] in ("closed", "open", "half_open")
+        assert p["state"] in ("closed", "open", "half_open", "disabled")
         assert "failures" in p and "last_success_at" in p
