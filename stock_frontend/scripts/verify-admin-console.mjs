@@ -60,7 +60,7 @@ await build({
 const fixtureCode = `
 const replies={
  services:{stockdb:{state:'online',latest_date:'20261105'},sdk:{state:'online'},date_scope:'600519'},
- policy:{akshare_enabled:false,snapshots_enabled:false},
+ policy:{akshare_enabled:false,history_storage_enabled:false,auto_sync_enabled:false},
  traffic:{day:'20261106',interval_seconds:2,retry_interval_seconds:10,daily_budget:2000,providers:[{name:'eastmoney',used:0,health:{state:'disabled',failures:0,last_success_at:null}}]},
  queues:{queues:Object.fromEntries(['watchlist','fixed_indices','backfill','control','sync','backtest','ai','backup'].map(n=>[n,{ready:0,active:n==='fixed_indices'?1:0,delayed:0,reserved:0,abnormal:0}])),workers:{watchlist:true,fixed_indices:true,control:true,backfill:true,ai:false,backup:false,sync:true}},
  sync:{status:'idle',task_id:null,error:null,progress:0,message:'尚未同步本地行情'},display:{synthetic_wick_factor:.5},
@@ -134,7 +134,7 @@ await settle()
 assert.match(document.body.textContent, /本地数据服务/)
 await navigate('sources')
 const inputs = [...document.querySelectorAll('input[type=checkbox]')]
-assert.equal(inputs.length, 2)
+assert.equal(inputs.length, 3)
 inputs[0].click()
 await nextTick()
 assert.equal(fixture.calls.filter((c) => c === 'savePolicy').length, 0)
@@ -155,7 +155,7 @@ inputs[1].click()
 await nextTick()
 inputs[0].click()
 await nextTick()
-assert.equal(inputs[1].checked, false)
+assert.equal(inputs[1].checked, true, 'AkShare storage preference is independent of the fallback switch')
 const interval = document.querySelector('input[type=number]')
 interval.value = '7'
 interval.dispatchEvent(new dom.window.Event('input', { bubbles: true }))

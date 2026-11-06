@@ -5,12 +5,14 @@ from datetime import UTC, datetime
 from app.data_providers.stockdb import StockDBProvider
 from app.repositories import kline_repo
 from app.utils.redis_client import get_redis_client
+from app.services.market_policy import akshare_enabled
 
 logger = logging.getLogger(__name__)
 
 
-def stored_quote(db, sym):
-    bars = kline_repo.latest_bars(db, '1d', sym.id, limit=2)
+def stored_quote(db, sym, bars=None):
+    if bars is None:
+        bars = kline_repo.latest_bars(db, '1d', sym.id, limit=2)
     if not bars:
         return {}
     latest = bars[-1]
@@ -65,7 +67,6 @@ def quotes(db, symbols):
             logger.warning('local daily quote unavailable code=%s: %s', sym.code, exc)
             item['extra']['data_status'] = 'local_unavailable'
         if item.get('price') is None and sym.type in {'stock', 'etf'}:
-            from app.services.market_policy import akshare_enabled
             if akshare_enabled():
                 item.update(stored_quote(db, sym))
         result.append(item)

@@ -1,28 +1,27 @@
 <script setup lang="ts">
-/** C 区 · 基本数据面板：快照通用字段 + 按类型特殊字段（股票 market_cap/pe、ETF premium、指数 pe）。 */
+/** C 区 · 基本数据面板：最新本地行情与个股基础字段。 */
 import { computed, onMounted, ref, watch } from 'vue'
-import { fetchSnapshot } from '@/api/market'
+import { fetchLatestQuotes } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
 import { formatAmount, formatPct, formatPrice, trendClass } from '@/utils/color'
-import { getFreshness } from '@/utils/tradingTime'
 
 const market = useMarketStore()
 
 const current = computed(() => market.current)
-const snapshot = computed(() =>
-  current.value ? market.snapshots[current.value.id] ?? null : null
+const quote = computed(() =>
+  current.value ? market.quotes[current.value.id] ?? null : null
 )
 
 /** V0.2：加载错误状态（统一三态） */
 const loadError = ref(false)
 
-/** 当前标的快照缺失时主动拉取一次（后续由轮询刷新） */
-async function ensureSnapshot() {
-  if (!current.value || snapshot.value) return
+/** 当前标的基础行情缺失时主动查询 */
+async function ensureQuote() {
+  if (!current.value || quote.value) return
   loadError.value = false
   try {
-    const list = await fetchSnapshot([current.value.id])
-    market.mergeSnapshots(list)
+    const list = await fetchLatestQuotes([current.value.id])
+    market.mergeQuotes(list)
   } catch {
     loadError.value = true
   }
@@ -30,20 +29,20 @@ async function ensureSnapshot() {
 
 /** V0.2：错误重试 */
 function retryLoad() {
-  ensureSnapshot()
+  ensureQuote()
 }
 
-watch(current, () => ensureSnapshot())
-onMounted(ensureSnapshot)
+watch(current, () => ensureQuote())
+onMounted(ensureQuote)
 
 const fields = computed(() => {
-  const s = snapshot.value
+  const s = quote.value
   if (!s) return []
   const isIndex = s.type === 'index'
   const list = [
     { label: '名称', value: s.name, cls: '' },
     { label: '代码', value: s.code, cls: '' },
-    { label: s.source === 'snapshot' ? '现价' : '最新收盘价', value: formatPrice(s.price), cls: trendClass(s.change), big: true },
+    { label: '最新收盘价', value: formatPrice(s.price), cls: trendClass(s.change), big: true },
     { label: '涨跌额', value: (s.change ?? 0) > 0 ? `+${s.change?.toFixed(2)}` : s.change?.toFixed(2), cls: trendClass(s.change) },
     { label: '涨跌幅', value: formatPct(s.change_pct), cls: trendClass(s.change_pct) },
     { label: '昨收', value: formatPrice(s.pre_close) },
@@ -59,14 +58,13 @@ const fields = computed(() => {
   }
   list.push({ label: '振幅', value: formatPct(s.amplitude) })
   // V0.2：数据新鲜度标注（交易时段绿色/延迟黄色/非交易灰色收盘）
-  const fresh = getFreshness(s.updated_at, s.data_age_seconds)
-  list.push({ label: s.source === 'snapshot' ? '更新时间' : '数据日期', value: s.source === 'snapshot' ? fresh.label : (s.data_date ?? '--'), cls: s.source === 'snapshot' ? `fresh-${fresh.level}` : '' })
+  list.push({ label: '数据日期', value: s.data_date ?? '--', cls: '' })
   return list
 })
 
-/** 按标的类型渲染特殊字段（快照 extra） */
+/** 按标的类型渲染特殊字段（本地 extra） */
 const specialFields = computed(() => {
-  const s = snapshot.value
+  const s = quote.value
   if (!s) return []
   const e = s.extra || {}
   if (s.type === 'stock') {
@@ -92,11 +90,11 @@ const specialFields = computed(() => {
     </header>
 
     <div v-if="!current" class="basic-info__empty">未选择标的</div>
-    <div v-else-if="loadError && !snapshot" class="basic-info__empty basic-info__empty--error">
+    <div v-else-if="loadError && !quote" class="basic-info__empty basic-info__empty--error">
       <span>数据加载失败</span>
       <button class="basic-info__retry" @click="retryLoad">点击重试</button>
     </div>
-    <div v-else-if="!snapshot" class="basic-info__empty">数据加载中…</div>
+    <div v-else-if="!quote" class="basic-info__empty">数据加载中…</div>
     <div v-else class="basic-info__grid">
       <template v-for="f in fields" :key="f.label">
         <span class="basic-info__label">{{ f.label }}</span>

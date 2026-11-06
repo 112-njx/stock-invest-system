@@ -12,9 +12,9 @@ def build_beat_schedule() -> dict:
             "task": "app.worker.tasks.sync_tasks.watchlist_delivery_reconcile",
             "schedule": 30.0,
         },
-        "realtime-poll": {
-            "task": "app.worker.tasks.sync_tasks.realtime_poll",
-            "schedule": settings.REALTIME_POLL_INTERVAL,  # 秒
+        "local-market-after-close": {
+            "task": "app.worker.tasks.sync_tasks.local_market_after_close",
+            "schedule": crontab(hour=16, minute=30, day_of_week='1-5'),
         },
         "provider-probe": {
             "task": "app.worker.tasks.sync_tasks.provider_probe",

@@ -26,7 +26,8 @@ QUEUE_NAMES = ("watchlist", "fixed_indices", "backfill", "control", "sync", "bac
 
 class MarketSourcePolicy(BaseModel):
     akshare_enabled: bool = False
-    snapshots_enabled: bool = False
+    history_storage_enabled: bool = False
+    auto_sync_enabled: bool = False
 
 
 class MarketDisplaySettings(BaseModel):
@@ -56,7 +57,7 @@ def update_market_source_policy(payload: MarketSourcePolicy, current: User = Dep
     from app.services import market_policy
     from app.core.exceptions import ApiError
     try:
-        return ok(data=market_policy.save(payload.akshare_enabled, payload.snapshots_enabled))
+        return ok(data=market_policy.save(payload.akshare_enabled, payload.history_storage_enabled, payload.auto_sync_enabled))
     except ValueError as exc:
         raise ApiError(status_code=400, msg=str(exc)) from exc
 
@@ -141,7 +142,6 @@ def traffic_status(current: User = Depends(get_current_admin), db: Session = Dep
     data = usage()
     from app.core.config import get_settings
 
-    data['poll_interval_seconds'] = get_settings().REALTIME_POLL_INTERVAL
     data['probe_interval_seconds'] = get_settings().PROVIDER_PROBE_INTERVAL
     redis = get_redis_client()
     data['retry_interval_seconds'] = int(redis.get('provider:retry:interval') or get_settings().SYNC_RETRY_BACKOFF)

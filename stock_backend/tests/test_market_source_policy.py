@@ -8,18 +8,9 @@ from app.data_providers.base import KlineBar, ProviderError
 from app.data_providers.factory import DataProviderFactory, ProviderCircuit
 from app.services import market_policy
 
-
-def test_policy_defaults_and_snapshot_dependency():
-    original = market_policy.read()
-    try:
-        assert market_policy.save(False, False)['akshare_enabled'] is False
-        with pytest.raises(ValueError):
-            market_policy.save(False, True)
-        assert not market_policy.snapshots_enabled()
-        assert market_policy.save(True, True)['snapshots_enabled'] is True
-        assert market_policy.snapshots_enabled()
-    finally:
-        market_policy.save(original['akshare_enabled'], original['snapshots_enabled'])
+@pytest.fixture(autouse=True)
+def persisted_history_cases(monkeypatch):
+    monkeypatch.setattr(market_policy, 'history_storage_enabled', lambda: True)
 
 
 @pytest.mark.parametrize('enabled', [False, True])
@@ -148,19 +139,6 @@ def test_stored_industry_quote_restores_amplitude(monkeypatch, previous):
     assert result['amplitude'] == (30 if previous else None)
 
 
-def test_snapshots_disabled_even_for_direct_service_calls(monkeypatch):
-    from app.services import sync_service, market_service, local_quotes
-    monkeypatch.setattr(market_policy, 'snapshots_enabled', lambda: False)
-    provider = Mock(side_effect=AssertionError('must not fetch snapshots'))
-    monkeypatch.setattr(sync_service, 'get_provider', provider)
-    assert sync_service.run_realtime_poll()['skipped'] == 'snapshots disabled'
-    db = Mock()
-    db.scalars.return_value = []
-    monkeypatch.setattr(local_quotes, 'quotes', lambda *a: [])
-    monkeypatch.setattr(market_service, '_legacy_snapshots', provider)
-    assert market_service.get_snapshots(db, [1]) == []
-
-
 def test_official_sdk_frequency_and_qfq_are_not_reaggregated(monkeypatch):
     from app.data_providers.stockdb import StockDBProvider
     client = Mock()
@@ -240,24 +218,3 @@ def test_manual_sync_offline_fails_before_external_fallback(monkeypatch):
         local_market_sync.run('local-only')
     fallback.assert_not_called()
     assert row.status == 'failed'
-
-
-@pytest.mark.asyncio
-async def test_websocket_snapshot_paths_respect_policy_and_revision(monkeypatch):
-    from unittest.mock import AsyncMock
-    from app.api.v1 import ws_market
-    broadcast = AsyncMock()
-    monkeypatch.setattr(ws_market.manager, 'broadcast_snapshots', broadcast)
-    monkeypatch.setattr(market_policy, 'read', lambda: dict(akshare_enabled=False, snapshots_enabled=False, revision=2))
-    monkeypatch.setattr(market_policy, 'snapshots_enabled', lambda: False)
-    db = Mock()
-    monkeypatch.setattr(ws_market, 'get_session', db)
-    await ws_market._dispatch(None, dict(type='snapshot', symbol_id=1, data={'policy_revision': 2}))
-    await ws_market._handle_sync(SimpleNamespace(subscribed={1}), datetime.now(UTC).isoformat())
-    db.assert_not_called()
-    broadcast.assert_not_called()
-    monkeypatch.setattr(market_policy, 'read', lambda: dict(akshare_enabled=True, snapshots_enabled=True, revision=3))
-    await ws_market._dispatch(None, dict(type='snapshot', symbol_id=1, data={'policy_revision': 2}))
-    broadcast.assert_not_called()
-    await ws_market._dispatch(None, dict(type='snapshot', symbol_id=1, data={'policy_revision': 3}))
-    broadcast.assert_awaited_once()

@@ -37,11 +37,11 @@ class KlineBarOut(BaseModel):
     amount: float
 
 
-class SnapshotOut(BaseModel):
-    """实时快照（合并特殊字段）。特殊字段按类型注入 extra。"""
+class LatestQuoteOut(BaseModel):
+    """最新本地行情，特殊字段按类型注入 extra。"""
 
     symbol_id: int
-    source: str = "snapshot"
+    source: str = "stockdb"
     code: str
     name: str
     type: str
@@ -57,7 +57,6 @@ class SnapshotOut(BaseModel):
     turnover: float | None = None
     amplitude: float | None = None
     updated_at: datetime | None = None
-    data_age_seconds: int | None = None  # 快照数据龄（当前时间 - updated_at），前端标注"数据时间"
     data_date: str | None = None
     policy_revision: int = 0
     extra: dict[str, Any] = {}  # stock: {market_cap, pe} / etf: {nav, premium} / index: {pe}

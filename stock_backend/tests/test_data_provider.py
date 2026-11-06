@@ -3,7 +3,6 @@
 from datetime import UTC, datetime
 
 import pandas as pd
-from app.data_providers.base import RealtimeSymbol
 from app.data_providers.eastmoney import EastMoneyProvider
 
 
@@ -173,41 +172,10 @@ def test_fetch_kline_15m_converts_tz_to_utc():
     assert bars[0].ts.tzinfo is not None  # 已转 UTC
 
 
-def test_direct_weekly_fetch_is_disabled():
+def test_week_month_source_periods_are_supported():
     p = _provider()
-    assert p.can_fetch_kline("index", "1w") is False
-    assert p.fetch_kline("000001", "1w", datetime(2026, 7, 1, tzinfo=UTC),
-                         datetime(2026, 8, 1, tzinfo=UTC), asset_type="index") == []
-
-
-def test_fetch_realtime_stock_batch():
-    p = _provider()
-    symbols = [
-        RealtimeSymbol(code="600519", name="贵州茅台", asset_type="stock"),
-        RealtimeSymbol(code="999999", name="不存在", asset_type="stock"),
-    ]
-    quotes = p.fetch_realtime(symbols)
-    assert quotes[0].price == 1350.6
-    assert quotes[0].turnover == 0.8
-    assert quotes[1].available is False  # 未命中降级
-
-
-def test_fetch_realtime_index_matches_by_code_and_name():
-    p = _provider()
-    symbols = [
-        RealtimeSymbol(code="000001", name="上证指数", asset_type="index"),
-        RealtimeSymbol(code="DJI", name="道琼斯指数", asset_type="index"),
-    ]  # 名称为子串匹配
-    quotes = p.fetch_realtime(symbols)
-    assert quotes[0].price == 3896.49
-    assert quotes[1].available is True and quotes[1].change_pct == 0.25
-
-
-def test_fetch_realtime_industry_index():
-    p = _provider()
-    quotes = p.fetch_realtime([RealtimeSymbol(name="半导体", asset_type="industry_index")])
-    assert quotes[0].price == 2000.0
-    assert quotes[0].change_pct == 1.01
+    assert p.can_fetch_kline('index', '1w')
+    assert p.can_fetch_kline('stock', '1mon')
 
 
 def test_resolve_index_code_by_name():
@@ -215,45 +183,6 @@ def test_resolve_index_code_by_name():
     assert p.resolve_index_code("半导体") == "BK0447"
     assert p.resolve_index_code("油气开采及服务") == "BK0426"  # 评分模糊匹配回填 code
     assert p.resolve_index_code("不存在") is None
-
-
-def test_fetch_realtime_stock_extracts_fundamentals():
-    p = _provider()
-    quotes = p.fetch_realtime([RealtimeSymbol(code="600519", name="贵州茅台", asset_type="stock")])
-    assert quotes[0].extra["market_cap"] == 1.7e12
-    assert quotes[0].extra["pe"] == 25.3
-
-
-def test_fetch_realtime_etf_extracts_premium():
-    p = _provider()
-    quotes = p.fetch_realtime([RealtimeSymbol(code="510300", name="沪深300ETF", asset_type="etf")])
-    assert quotes[0].extra["nav"] == 4.19
-    assert quotes[0].extra["premium"] == 0.24  # 基金折价率 -0.24 → 溢价率 +0.24
-
-
-def test_fetch_realtime_overseas_index_volume_none():
-    p = _provider()
-    # 海外指数 index_global_spot_em 无"成交量/额"列，volume/amount 应为 None（而非 0）
-    quotes = p.fetch_realtime([RealtimeSymbol(code="DJI", name="道琼斯指数", asset_type="index")])
-    assert quotes[0].available is True
-    assert quotes[0].volume is None
-    assert quotes[0].amount is None
-
-
-def test_fetch_realtime_industry_fuzzy_match():
-    p = _provider()
-    # 种子名"油气开采及服务"与东财板块名"油气开采"不一致，用名称前3字子串兜底匹配
-    quotes = p.fetch_realtime([RealtimeSymbol(code="", name="油气开采及服务", asset_type="industry_index")])
-    assert quotes[0].available is True
-    assert quotes[0].price == 3000.0
-
-
-def test_fetch_realtime_industry_code_match():
-    p = _provider()
-    # 板块 code 已回填（BKxxxx）时优先按板块代码精确匹配，名称不一致也能命中
-    quotes = p.fetch_realtime([RealtimeSymbol(code="BK1036", name="通信设备(名称不一致)", asset_type="industry_index")])
-    assert quotes[0].available is True
-    assert quotes[0].price == 1500.0
 
 
 def test_fetch_catalog_handles_english_columns():
@@ -272,15 +201,6 @@ def test_search_ak_stock_handles_english_columns():
     assert p.search_ak_stock("601127") == [("601127", "赛力斯")]  # 代码匹配
 
 
-def test_fetch_index_pe_covered_and_uncovered():
-    p = _provider()
-    result = p.fetch_index_pe(["沪深300", "上证50", "道琼斯指数", "现货黄金"])
-    assert result["沪深300"] == 12.5  # 取最新日期"滚动市盈率"
-    assert result["上证50"] == 12.5
-    assert result["道琼斯指数"] is None  # 不在乐咕覆盖范围
-    assert result["现货黄金"] is None
-
-
 def test_industry_score_rules():
     """通用评分模糊匹配：正确匹配分类后缀/前后缀差异，拒绝否定词与过长扩展。"""
     from app.data_providers.eastmoney import _industry_score
@@ -297,23 +217,3 @@ def test_industry_score_rules():
     assert _industry_score("消费", "消费电子") < 75         # 2字短词前缀误配（消费≠消费电子）
     assert _industry_score("军工", "军工电子") < 75         # 2字短词前缀误配
     assert _industry_score("创新药", "化学制药") < 75       # 无语义/字面关联
-
-
-def test_map_industry_rejects_bad_name_match():
-    """板块名与种子行业语义不符（否定/过长扩展）时不得匹配，诚实返回不可用。"""
-    from app.data_providers.eastmoney import _map_industry_spot
-
-    df = pd.DataFrame(
-        {
-            "板块代码": ["BK1001", "BK1002"],
-            "板块名称": ["非白酒", "消费电子零部件及组装"],
-            "最新价": [1000.0, 2000.0],
-            "涨跌额": [1.0, 2.0],
-            "涨跌幅": [0.1, 0.2],
-            "换手率": [0.5, 0.6],
-        }
-    )
-    q1 = _map_industry_spot(df, RealtimeSymbol(name="白酒", asset_type="industry_index"))
-    assert q1.available is False
-    q2 = _map_industry_spot(df, RealtimeSymbol(name="消费", asset_type="industry_index"))
-    assert q2.available is False

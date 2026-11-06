@@ -124,6 +124,14 @@ def watchlist_delivery_reconcile() -> dict:
     return dispatch_watchlist_sync()
 
 
+@celery_app.task(name='app.worker.tasks.sync_tasks.local_market_after_close')
+def local_market_after_close():
+    from app.services import market_policy, local_market_sync
+    if not market_policy.read()['auto_sync_enabled']:
+        return {'skipped': 'automatic local sync disabled'}
+    return local_market_sync.request_sync()
+
+
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_backfill",
                  acks_late=True, reject_on_worker_lost=True,
                  soft_time_limit=900, time_limit=1200)
@@ -218,25 +226,6 @@ def kline_incremental(self, symbol_id: int | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.exception("kline_incremental failed")
         _log("kline_incremental", self.request.id, "failed", str(exc))
-        raise
-
-
-@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.realtime_poll")
-def realtime_poll(self, symbol_id: int | None = None, force: bool = False) -> dict:
-    """交易时段实时快照轮询；非交易时段跳过（beat 周期触发，force 用于手动验证/运维）。"""
-    from app.services.market_policy import snapshots_enabled
-    if not snapshots_enabled():
-        return {"skipped": "snapshots disabled"}
-    if not force and not sync_service.is_market_open():
-        return {"skipped": "market closed"}
-    _log("realtime", self.request.id, "running", f"start symbol_id={symbol_id}")
-    try:
-        result = sync_service.run_realtime_poll(symbol_id=symbol_id)
-        _log("realtime", self.request.id, "success", f"done: {result}")
-        return result
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("realtime_poll failed")
-        _log("realtime", self.request.id, "failed", str(exc))
         raise
 
 

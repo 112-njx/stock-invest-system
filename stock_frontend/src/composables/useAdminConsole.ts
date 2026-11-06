@@ -70,7 +70,7 @@ export function useAdminConsole(section: Ref<AdminSection>) {
     sync: resource<LocalSync>(),
     requests: resource<{ requests: ProviderRequest[] }>(),
     display: resource<DisplaySettings>(),
-    policyForm: { akshare_enabled: false, snapshots_enabled: false },
+    policyForm: { akshare_enabled: false, history_storage_enabled: false, auto_sync_enabled: false },
     limitsForm: { interval_seconds: 2, retry_interval_seconds: 10, daily_budget: 2000 },
     displayForm: { synthetic_wick_factor: 0.5 },
     dirty: { policy: false, limits: false, display: false },
@@ -175,7 +175,7 @@ export function useAdminConsole(section: Ref<AdminSection>) {
       if (kind === 'policy') {
         const draft = {
           ...state.policyForm,
-          snapshots_enabled: state.policyForm.akshare_enabled && state.policyForm.snapshots_enabled,
+          history_storage_enabled: state.policyForm.history_storage_enabled,
         }
         const result = await adminApi.savePolicy(draft)
         invalidate(target)

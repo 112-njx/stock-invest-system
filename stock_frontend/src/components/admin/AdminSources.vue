@@ -6,7 +6,6 @@ const s = props.controller.state
 function policyChanged() {
   s.dirty.policy = true
   s.feedback.policy = ''
-  if (!s.policyForm.akshare_enabled) s.policyForm.snapshots_enabled = false
 }
 </script>
 <template>
@@ -22,7 +21,7 @@ function policyChanged() {
     <div class="service-grid">
       <article class="service">
         <div class="split">
-          <h3>行情数据库</h3>
+          <h3>StockDB RD · 7899</h3>
           <span
             class="badge"
             :class="{ danger: s.services.data?.stockdb.state === 'unavailable' }"
@@ -36,7 +35,7 @@ function policyChanged() {
       </article>
       <article class="service">
         <div class="split">
-          <h3>历史计算服务</h3>
+          <h3>SDK 查询桥 · 7900</h3>
           <span class="badge" :class="{ danger: s.services.data?.sdk.state === 'unavailable' }">{{
             s.services.data ? stateLabel(s.services.data.sdk.state) : '等待读取'
           }}</span>
@@ -50,7 +49,7 @@ function policyChanged() {
     <div class="card-title">
       <div>
         <h2>本地行情同步</h2>
-        <p>将已更新的本地数据导入项目</p>
+        <p>同步 StockDB 行情；AkShare 是否入库由下方独立开关控制</p>
       </div>
       <span class="badge" :class="{ danger: s.sync.data?.status === 'failed' }">{{
         s.sync.data ? stateLabel(s.sync.data.status) : '等待读取'
@@ -103,13 +102,13 @@ function policyChanged() {
             type="checkbox"
             @change="policyChanged" /></label
         ><label class="switch-row"
-          ><div><b>启用实时快照</b><small>依赖 AkShare；关闭外部补充时会一并关闭。</small></div>
+          ><div><b>保留 AkShare 历史 K 线入库</b><small>默认关闭：AkShare 历史行情只缓存，不写入项目数据库。StockDB 历史入库不受影响。</small></div>
           <input
-            v-model="s.policyForm.snapshots_enabled"
+            v-model="s.policyForm.history_storage_enabled"
             type="checkbox"
-            :disabled="!s.policyForm.akshare_enabled"
             @change="policyChanged"
         /></label>
+        <label class="switch-row"><div><b>每日 16:30 自动同步</b><small>默认关闭，使用手动同步。此操作不运行数据更新.exe。</small></div><input v-model="s.policyForm.auto_sync_enabled" type="checkbox" @change="policyChanged" /></label>
       </fieldset>
       <div class="form-actions">
         <button class="primary" :disabled="!s.policy.data || s.saving.policy || !s.dirty.policy">
@@ -160,6 +159,7 @@ function policyChanged() {
             required
             @input="controller.edit('limits')"
         /></label>
+        <label class="switch-row"><div><b>每日 16:30 自动同步</b><small>默认关闭，使用手动同步。此操作不运行数据更新.exe。</small></div><input v-model="s.policyForm.auto_sync_enabled" type="checkbox" @change="policyChanged" /></label>
       </fieldset>
       <div class="form-actions">
         <button class="primary" :disabled="!s.traffic.data || s.saving.limits || !s.dirty.limits">

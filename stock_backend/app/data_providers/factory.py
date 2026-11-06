@@ -2,7 +2,7 @@
 
 - 有序 Provider 链（默认 stockdb → eastmoney → sina → ths），顺序/启用由 `DATA_PROVIDER_PRIORITY` 配置。
 - 每个 Provider 独立熔断：连续失败 N 次熔断 M 秒，熔断期内跳过，半开探测自动恢复，互不影响。
-- 业务代码仍通过 `get_provider()` 获取工厂实例，`fetch_kline/fetch_realtime/resolve_index_code/fetch_index_pe`
+- 业务代码仍通过 `get_provider()` 获取工厂实例，`fetch_kline/resolve_index_code`
   调用方式与单 Provider 一致，不影响现有同步链路。
 """
 
@@ -15,8 +15,8 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.config import get_settings
 
-from .base import BaseDataProvider, KlineBar, RealtimeQuote, RealtimeSymbol, unavailable_quote
-from .request_activity import kline_scope, realtime_scope
+from .base import BaseDataProvider, KlineBar
+from .request_activity import kline_scope
 from .stockdb import StockDBProvider
 
 logger = logging.getLogger(__name__)
@@ -55,10 +55,6 @@ class LazyExternalProvider:
     def can_fetch_kline(self, *args):
         method = self.__getattr__('can_fetch_kline')
         return bool(method and method(*args))
-
-    def can_fetch_realtime(self):
-        method = self.__getattr__('can_fetch_realtime')
-        return bool(method and method())
 
 
 class ProviderCircuit:
@@ -173,11 +169,13 @@ class DataProviderFactory:
         )
         return result or []
 
-    def fetch_kline_checked(self, symbol: str, period: str, start, end, asset_type: str = "stock") -> tuple[list, bool]:
+    def fetch_kline_checked(self, symbol: str, period: str, start, end, asset_type: str = "stock", *, external_only: bool = False) -> tuple[list, bool]:
         """历史补拉专用：返回 K 线及空区间是否已由全部可用来源确认。"""
         confirmed = True
         attempted = False
         for p in self._active_providers():
+            if external_only and p.name == 'stockdb':
+                continue
             if not p.can_fetch_kline(asset_type, period):
                 continue
             circuit = self._circuits[p.name]
@@ -206,57 +204,6 @@ class DataProviderFactory:
         """Use the same local-first fallback for watchlist initialization and history reads."""
         return self.fetch_kline(symbol, period, start, end, asset_type)
 
-    def fetch_realtime(self, symbols) -> list:
-        """实时快照：按资产类型分组逐类型走优先级链（首个含 available 结果的 Provider 覆盖该类型）。
-
-        单一 Provider 可能只覆盖部分类型（sina 覆盖 stock/index、ths 覆盖 industry_index），
-        若按整批请求取"第一个非空结果"，sina 会截断 ths 导致行业指数无兜底；
-        故按类型分别降级，使优先级链 [eastmoney, sina, ths] 真正生效。
-        """
-        by_type: dict[str, list[RealtimeSymbol]] = {}
-        order: list[str] = []
-        for s in symbols:
-            if s.asset_type not in by_type:
-                by_type[s.asset_type] = []
-                order.append(s.asset_type)
-            by_type[s.asset_type].append(s)
-
-        quote_map: dict[tuple[str, str, str], RealtimeQuote] = {}
-        for atype in order:
-            items = by_type[atype]
-            quotes = self._fetch_realtime_type(atype, items)
-            for s, q in zip(items, quotes, strict=True):
-                quote_map[(s.code, s.name, s.asset_type)] = q
-        # 全部失败：返回对齐请求的不可用快照，保持调用方 zip 对齐契约（run_realtime_poll 不抛错）
-        return [quote_map[(s.code, s.name, s.asset_type)] for s in symbols]
-
-    def _fetch_realtime_type(self, atype: str, items: list[RealtimeSymbol]) -> list:
-        """单资产类型走优先级链：熔断跳过、异常降级、全 unavailable 视作未覆盖继续降级。"""
-        now = time.time()
-        for p in self._active_providers():
-            if not p.can_fetch_realtime_type(atype):
-                continue
-            circuit = self._circuits[p.name]
-            with self._lock:
-                allow = circuit.allow(now)
-            if not allow:
-                logger.info(
-                    "[provider] %s open (cooldown %ds), skip %s", p.name, int(circuit.cooldown_until - now), atype
-                )
-                continue
-            try:
-                with realtime_scope(items, atype):
-                    result = p.fetch_realtime(items)
-                if result and any(getattr(q, "available", False) for q in result):
-                    with self._lock:
-                        circuit.record_success(now)
-                    return result
-                logger.warning("[provider] %s no available realtime (%s), fallback", p.name, atype)
-            except Exception as exc:  # noqa: BLE001
-                with self._lock:
-                    circuit.record_failure(now)
-                logger.warning("[provider] %s realtime failed (%s), fallback", p.name, str(exc)[:120], exc_info=False)
-        return [unavailable_quote(s) for s in items]
 
     def resolve_index_code(self, name: str) -> str | None:
         """行业指数名称 → 板块代码（best-effort，仅东方财富提供）。"""
@@ -297,19 +244,6 @@ class DataProviderFactory:
                 continue
         return []
 
-    def fetch_index_pe(self, names: list[str]) -> dict:
-        """指数 PE（best-effort，仅东方财富提供，失败静默跳过）。"""
-        for p in self._active_providers():
-            fn = getattr(p, "fetch_index_pe", None)
-            if fn is None:
-                continue
-            try:
-                result = fn(names)
-                if result:
-                    return result
-            except Exception:  # noqa: BLE001
-                continue
-        return {}
 
     # ---- 健康检查 / 熔断探测 ----
     def health(self) -> list[dict]:

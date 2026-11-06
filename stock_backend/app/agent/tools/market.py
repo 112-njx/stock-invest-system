@@ -1,4 +1,4 @@
-"""行情工具：实时快照 / K 线。返回结构化 dict（工具内不生成自然语言，供 Agent 组织语言）。
+"""行情工具：最新本地行情 / K 线。返回结构化 dict（工具内不生成自然语言，供 Agent 组织语言）。
 
 借鉴 TradingAgents-CN tools 分层 + 详细 description 规范：description 写清何时用/怎么用/返回什么。
 """
@@ -14,9 +14,9 @@ from app.services import market_service
 def build_market_tools(db: Session) -> list[Callable]:
     """按请求级 db 会话绑定行情工具。"""
 
-    @tool("market_snapshot")
-    def market_snapshot(symbol: str) -> dict:
-        """获取指定标的（股票/ETF/指数）的实时行情快照，含最新价、涨跌幅、成交量额、换手率，以及个股总市值/PE、ETF 溢价、指数 PE 等特殊字段。
+    @tool("latest_market_quote")
+    def latest_market_quote(symbol: str) -> dict:
+        """获取指定标的（股票/ETF/指数）的最新本地行情，含数据日期、最新收盘价、涨跌幅、成交量额、换手率和本地个股基础字段。
 
         适用于询问「当前价格/涨跌幅/市场状态」时取数；symbol 为 6 位代码（如 600519）或 symbol_id。
 
@@ -26,8 +26,8 @@ def build_market_tools(db: Session) -> list[Callable]:
         symbol_id = market_service.resolve_symbol_id(db, symbol)
         if symbol_id is None:
             return {"error": f"标的不存在: {symbol}"}
-        snaps = market_service.get_snapshots(db, [symbol_id])
-        return snaps[0] if snaps else {"error": f"暂无 {symbol} 实时快照数据"}
+        snaps = market_service.get_latest_quotes(db, [symbol_id])
+        return snaps[0] if snaps else {"error": f"暂无 {symbol} 最新本地行情数据"}
 
     @tool("get_kline")
     def get_kline(symbol: str, period: str = "1d", limit: int = 60) -> dict:
@@ -67,4 +67,4 @@ def build_market_tools(db: Session) -> list[Callable]:
             ],
         }
 
-    return [market_snapshot, get_kline]
+    return [latest_market_quote, get_kline]

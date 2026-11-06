@@ -7,7 +7,7 @@
 import logging
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 from app.core.config import get_settings
@@ -31,11 +31,6 @@ def _to_float(v) -> float | None:
         return None
 
 
-def unavailable_quote(s: "RealtimeSymbol") -> "RealtimeQuote":
-    """构造不可用快照（数据源未命中/全失败时返回，保持调用方 zip 对齐契约）。"""
-    return RealtimeQuote(code=s.code, name=s.name, asset_type=s.asset_type, available=False)
-
-
 @dataclass
 class KlineBar:
     """单根 K 线（ts 为 UTC）。"""
@@ -48,38 +43,6 @@ class KlineBar:
     volume: int
     amount: float
     source: str = "stockdb"
-
-
-@dataclass
-class RealtimeSymbol:
-    """待查询实时快照的标的（行业指数 code 可能为空，用 name 匹配）。"""
-
-    code: str = ""
-    name: str = ""
-    asset_type: str = "stock"  # stock / etf / index / industry_index
-
-
-@dataclass
-class RealtimeQuote:
-    """实时快照（字段与 snapshot_realtime 对齐；无数据时置 None）。"""
-
-    code: str = ""
-    name: str = ""
-    asset_type: str = "stock"
-    price: float | None = None
-    change: float | None = None
-    change_pct: float | None = None
-    open: float | None = None
-    high: float | None = None
-    low: float | None = None
-    pre_close: float | None = None
-    volume: int | None = None
-    amount: float | None = None
-    turnover: float | None = None
-    amplitude: float | None = None
-    updated_at: datetime | None = None
-    available: bool = True
-    extra: dict = field(default_factory=dict)  # 特殊字段（fundamentals/etf_premiums 等）
 
 
 class BaseDataProvider(ABC):
@@ -100,7 +63,7 @@ class BaseDataProvider(ABC):
         """带指数退避重试的外部调用。
 
         raise_on_giveup=True 时重试耗尽抛 ProviderError（供工厂熔断/降级识别）；
-        默认 lenient 返回 None（best-effort 场景：指数 PE、板块名映射等）。
+        默认 lenient 返回 None（best-effort 场景：板块名映射等）。
         """
         retries = self.retry_times if retry_times is None else retry_times
         last_exc = None
@@ -144,13 +107,6 @@ class BaseDataProvider(ABC):
         """是否支持该资产类型/周期的历史K线。"""
         return True
 
-    def can_fetch_realtime(self) -> bool:
-        """是否支持实时快照。"""
-        return True
-
-    def can_fetch_realtime_type(self, asset_type: str) -> bool:
-        """是否支持该资产类型的实时快照（工厂按类型路由降级用；默认委托 can_fetch_realtime）。"""
-        return self.can_fetch_realtime()
 
     @abstractmethod
     def fetch_kline(
@@ -167,9 +123,6 @@ class BaseDataProvider(ABC):
         asset_type: stock / etf / index / industry_index（industry_index 时 symbol 传板块名称）
         """
 
-    @abstractmethod
-    def fetch_realtime(self, symbols: list[RealtimeSymbol]) -> list[RealtimeQuote]:
-        """批量实时快照（内部按资产类型分组拉取，缺数置 available=False）。"""
 
     @abstractmethod
     def resolve_index_code(self, name: str) -> str | None:

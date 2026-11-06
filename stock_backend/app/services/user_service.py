@@ -1,7 +1,7 @@
 """用户域服务：资料更新、重点关注股票（合并实时价 + 自动同步 + Redis 缓存）、支撑/压力位、账户删除。"""
 
 import logging
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ApiError
 from app.models.symbol import Symbol
 from app.models.user import User, UserWatchlist
-from app.repositories import kline_repo, ops_repo, symbol_repo, user_repo
+from app.repositories import symbol_repo, user_repo
 from app.schemas.user import WatchlistOut
 from app.services import kline_quality_service, market_service
 from app.utils import market_cache
@@ -237,7 +237,7 @@ def _resolve_symbol_id(db: Session, symbol: str) -> int:
 def _watchlist_rows(db: Session, entries: list[UserWatchlist]) -> list[dict]:
     """批量合并实时快照构造关注列表行（一次查快照，避免 N+1）。"""
     symbol_ids = [e.symbol_id for e in entries]
-    snaps = {s["symbol_id"]: s for s in market_service.get_snapshots(db, symbol_ids)} if symbol_ids else {}
+    snaps = {s["symbol_id"]: s for s in market_service.get_latest_quotes(db, symbol_ids)} if symbol_ids else {}
     rows: list[dict] = []
     for e in entries:
         snap = snaps.get(e.symbol_id, {})
@@ -328,20 +328,16 @@ def list_watchlist(db: Session, user_id: int) -> list[dict]:
 
 def _queue_watchlist_stock(db: Session, entry: UserWatchlist, sym: Symbol, *, force: bool = False) -> None:
     """按数据质量建立持久待发布任务；调度器负责实际投递。"""
-    from app.models.kline_quality import TradingDay
-    from app.services import kline_quality_service
     from app.services.watchlist_delivery import queue_watchlist_sync
-
+    from app.models.ops import SyncTask
     now = datetime.now(UTC)
-    latest = kline_repo.latest_ts(db, "1d", sym.id)
-    quality = kline_quality_service.get_quality(db, sym.id, "1d")
-    local_now = now.astimezone(kline_quality_service.settings.tz)
-    last_day = db.scalar(select(TradingDay.day).where(TradingDay.day <= local_now.date()).order_by(TradingDay.day.desc()).limit(1))
-    if last_day == local_now.date() and local_now.time() < time(16, 30):
-        last_day = db.scalar(select(TradingDay.day).where(TradingDay.day < local_now.date()).order_by(TradingDay.day.desc()).limit(1))
-    needs_sync = force or latest is None or quality is None or quality.status != "complete" or (
-        last_day is not None and (quality.checked_to is None or quality.checked_to < last_day)
-    )
+    quality = kline_quality_service.get_quality(db, sym.id, '1d')
+    latest = quality.checked_to if quality else None
+    if not force and db.scalar(select(SyncTask.id).where(
+            SyncTask.symbol_id == sym.id,
+            SyncTask.task_type.in_(('kline_init', 'kline_incremental'))).limit(1)) is not None:
+        return
+    needs_sync = force or quality is None or quality.status != 'complete'
     if not needs_sync:
         return
     queue_watchlist_sync(db, sym.id, initialize=latest is None, force=force, now=now)

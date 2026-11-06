@@ -21,15 +21,6 @@ def _publish(payload: dict) -> None:
         logger.warning("market update publish failed (skip)")
 
 
-def publish_snapshot(symbol_id: int, data: dict) -> None:
-    from app.services.market_policy import read
-    policy = read()
-    if not (policy['akshare_enabled'] and policy['snapshots_enabled']):
-        return
-    data = {**data, 'policy_revision': policy['revision'], 'source': 'snapshot', 'volume_unit': 'lot'}
-    _publish({"symbol_id": symbol_id, "type": "snapshot", "data": data})
-
-
 def publish_kline(symbol_id: int, period: str, bar: dict) -> None:
     _publish({"symbol_id": symbol_id, "type": "kline", "period": period, "bar": bar})
 

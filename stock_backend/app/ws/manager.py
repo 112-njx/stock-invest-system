@@ -88,16 +88,6 @@ class ConnectionManager:
             for state in list(conns):
                 await self._send(state, message)
 
-    async def broadcast_snapshots(self, updates: dict[int, dict]) -> None:
-        """按订阅集合推送有更新的快照：{"type":"snapshot","data":{symbol_id:{...}}}。"""
-        per_user: dict[int, dict[int, dict]] = {}
-        for conns in list(self._connections.values()):
-            for state in conns:
-                hit = {sid: d for sid, d in updates.items() if sid in state.subscribed}
-                if hit:
-                    per_user.setdefault(state.user_id, {}).update(hit)
-        for user_id, data in per_user.items():
-            await self.send_to_user(user_id, {"type": "snapshot", "data": data})
 
     async def broadcast_kline(self, payload: dict) -> None:
         """推送新K线末根：{"type":"kline","symbol_id":...,"period":...,"bar":{...}}。"""

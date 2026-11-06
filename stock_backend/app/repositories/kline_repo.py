@@ -19,6 +19,9 @@ def _model(period: str):
 
 def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) -> int:
     """幂等写入：按 (symbol_id, ts) 更新变化记录（支持前复权历史刷新）。"""
+    from app.services.market_policy import history_storage_enabled
+    if not history_storage_enabled():
+        bars = [bar for bar in bars if bar.source != 'akshare']
     if not bars:
         return 0
     model = _model(period)
@@ -70,8 +73,8 @@ def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) 
 
 
 def source_filter(model, symbol_id, start=None, end=None):
-    from app.services.market_policy import akshare_enabled
-    if not akshare_enabled():
+    from app.services.market_policy import akshare_enabled, history_storage_enabled
+    if not akshare_enabled() or not history_storage_enabled():
         return model.source == "stockdb"
     local = model.__table__.alias("local_history")
     if start is not None or end is not None:
@@ -102,6 +105,28 @@ def source_filter(model, symbol_id, start=None, end=None):
     return model.source == case((has_local, "stockdb"), else_="akshare")
 
 
+def use_transient_source(db, model, symbol_id, start=None, end=None):
+    from app.services import market_policy, source_history
+    policy = market_policy.read()
+    if not policy['akshare_enabled'] or policy['history_storage_enabled']:
+        return False
+    conditions = [model.symbol_id == symbol_id, model.source == 'stockdb']
+    if start is not None:
+        conditions.append(model.ts >= start)
+    if end is not None:
+        conditions.append(model.ts <= end)
+    first, last = db.execute(select(func.min(model.ts), func.max(model.ts)).where(*conditions)).one()
+    if first is None:
+        return True
+    if start is None and end is None:
+        return False
+    from app.utils.market_cache import as_utc
+    remote = [bar for bar in (source_history.cached(symbol_id, next(k for k,v in KLINE_MODELS.items() if v is model)) or [])
+              if (start is None or as_utc(bar.ts) >= as_utc(start)) and (end is None or as_utc(bar.ts) <= as_utc(end))]
+    return bool(remote and as_utc(remote[0].ts) <= as_utc(first) and as_utc(remote[-1].ts) >= as_utc(last)
+                and (as_utc(remote[0].ts) < as_utc(first) or as_utc(remote[-1].ts) > as_utc(last)))
+
+
 def get_bars(
     db: Session,
     period: str,
@@ -113,6 +138,9 @@ def get_bars(
     source_window: tuple[datetime, datetime] | None = None,
 ) -> list:
     model = _model(period)
+    if use_transient_source(db, model, symbol_id, *(source_window or (start, end))):
+        from app.services.source_history import window
+        return window(db, symbol_id, period, start, end, limit, offset)
     stmt = (
         select(model)
         .where(model.symbol_id == symbol_id,
@@ -128,6 +156,9 @@ def get_bars(
 def latest_bars(db: Session, period: str, symbol_id: int, limit: int = 1000) -> list:
     """最近 N 根 K 线（返回按 ts 升序），供"最新N根"缓存与默认查询。"""
     model = _model(period)
+    if use_transient_source(db, model, symbol_id):
+        from app.services.source_history import load
+        return load(db, symbol_id, period)[-limit:]
     stmt = (
         select(model)
         .where(model.symbol_id == symbol_id, source_filter(model, symbol_id))
@@ -141,4 +172,8 @@ def latest_bars(db: Session, period: str, symbol_id: int, limit: int = 1000) -> 
 
 def latest_ts(db: Session, period: str, symbol_id: int) -> datetime | None:
     model = _model(period)
+    if use_transient_source(db, model, symbol_id):
+        from app.services.source_history import cached
+        rows = cached(symbol_id, period) or []
+        return rows[-1].ts if rows else None
     return db.scalar(select(model.ts).where(model.symbol_id == symbol_id, source_filter(model, symbol_id)).order_by(model.ts.desc()).limit(1))

@@ -45,7 +45,7 @@ let syncTimer: ReturnType<typeof setInterval> | null = null
 /** 关注行合并实时快照（轮询写入 store），无快照回退列表原值 */
 const displayList = computed(() =>
   market.watchlist.map((w) => {
-    const s = market.snapshots[w.symbol_id]
+    const s = market.quotes[w.symbol_id]
     return {
       ...w,
       price: s?.price ?? w.price,

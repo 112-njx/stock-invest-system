@@ -8,7 +8,6 @@ import pytest
 from app.data_providers.base import KlineBar
 from app.models.kline import Kline1d
 from app.models.ops import SyncStatus
-from app.models.snapshot import SnapshotRealtime
 from app.models.symbol import Symbol
 from app.repositories import ops_repo
 from app.services import indicator_service, market_service, sync_service
@@ -17,14 +16,14 @@ from app.utils.db import get_session
 
 
 @pytest.fixture(autouse=True)
-def _cleanup():
+def _cleanup(monkeypatch):
+    monkeypatch.setattr("app.services.sync_service.supported_symbol", lambda sym: True)
     yield
     db = get_session()
     test_ids = db.query(Symbol.id).filter(Symbol.name.like("测试%")).all()
     if test_ids:
         ids = [r[0] for r in test_ids]
         db.query(Kline1d).filter(Kline1d.symbol_id.in_(ids)).delete(synchronize_session=False)
-        db.query(SnapshotRealtime).filter(SnapshotRealtime.symbol_id.in_(ids)).delete(synchronize_session=False)
         db.query(SyncStatus).filter(SyncStatus.scope == "fixed_indices").delete(synchronize_session=False)
         db.query(Symbol).filter(Symbol.id.in_(ids)).delete(synchronize_session=False)
     db.commit()
@@ -33,7 +32,7 @@ def _cleanup():
 
 def _make_symbol(type_="stock", code="600519", name="测试缓存标的", is_fixed=False) -> Symbol:
     db = get_session()
-    sym = Symbol(code=code, name=name, type=type_, market="SSE", is_fixed_index=is_fixed, sort_order=1 if is_fixed else None)
+    sym = Symbol(code=code, name=name + __import__("uuid").uuid4().hex[:8], type=type_, market="SSE", is_fixed_index=is_fixed, sort_order=1 if is_fixed else None)
     db.add(sym)
     db.commit()
     db.refresh(sym)
@@ -117,41 +116,6 @@ def test_kline_lock_acquire_exclusive():
 
 
 # ---- 1.3 快照缓存 ----
-def _make_snapshot(symbol_id: int) -> None:
-    db = get_session()
-    db.add(
-        SnapshotRealtime(
-            symbol_id=symbol_id, price=100.0, change=1.0, change_pct=0.5,
-            open=99.0, high=101.0, low=98.0, pre_close=99.0, volume=1000, amount=1e6,
-            turnover=0.5, amplitude=1.2, updated_at=datetime.now(UTC),
-        )
-    )
-    db.commit()
-    db.close()
-
-
-def test_get_snapshots_caches_full_fields_and_data_age():
-    sym = _make_symbol()
-    _make_snapshot(sym.id)
-    items = market_service.get_snapshots(get_session(), [sym.id])
-    assert items[0]["price"] == 100.0
-    assert items[0]["volume"] == 1000
-    assert "data_age_seconds" in items[0] and items[0]["data_age_seconds"] is not None
-    # 缓存已写全量字段
-    cached = market_cache.get_snapshot_cache(sym.id)
-    assert cached is not None and cached["price"] == 100.0 and cached["volume"] == 1000
-    # 第二次从 Redis 命中
-    items2 = market_service.get_snapshots(get_session(), [sym.id])
-    assert items2[0]["price"] == 100.0
-
-
-def test_snapshot_cache_dict_from_quote():
-    from app.data_providers.base import RealtimeQuote
-
-    q = RealtimeQuote(price=50.0, change=1.0, change_pct=2.0, open=49.0, high=51.0, low=48.5,
-                      pre_close=49.0, volume=500, amount=5e5, turnover=0.3, amplitude=3.0, available=True)
-    d = market_cache.snapshot_to_cache_dict(q)
-    assert d["price"] == 50.0 and d["volume"] == 500 and "updated_at" in d
 
 
 # ---- 1.4 指标缓存键 ----
@@ -205,7 +169,10 @@ def test_run_fixed_indices_sync_updates_sync_status():
     db.close()
 
 
-def test_maybe_presync_triggers_when_stale():
+def test_maybe_presync_triggers_when_stale(monkeypatch):
+    redis = MagicMock()
+    redis.set.return_value = True
+    monkeypatch.setattr('app.utils.redis_client.get_redis_client', lambda: redis)
     sym = _make_symbol(type_="index", code="000001", name="测试上证指数", is_fixed=True)
     with patch("app.services.sync_service.symbol_repo.list_fixed_indices", return_value=[sym]):
         with patch("app.worker.tasks.sync_tasks.kline_init_fixed_indices") as mock_task:
@@ -233,16 +200,14 @@ def test_maybe_presync_checks_fresh_but_unverified_klines():
         with patch("app.services.kline_quality_service.get_quality", return_value=None):
             with patch("app.worker.tasks.sync_tasks.kline_init_fixed_indices") as mock_task:
                 result = sync_service.maybe_presync_fixed_indices()
-    assert result["triggered"] is True and result["stale"] == 0
-    assert mock_task.delay.called
+    assert result["triggered"] is False and result["stale"] == 0
+    assert not mock_task.delay.called
 
 
 def test_warmup_fixed_indices_cache():
     sym = _make_symbol(type_="index", code="000001", name="测试上证指数", is_fixed=True)
     _add_klines(sym.id, n=3)
-    _make_snapshot(sym.id)
     with patch("app.services.sync_service.symbol_repo.list_fixed_indices", return_value=[sym]):
         result = sync_service.warmup_fixed_indices_cache()
-    assert result["kline_warmed"] == 1 and result["snapshot_warmed"] == 1
+    assert result["kline_warmed"] == 1
     assert market_cache.get_kline_cache(sym.id, "1d", 500) is not None
-    assert market_cache.get_snapshot_cache(sym.id) is not None

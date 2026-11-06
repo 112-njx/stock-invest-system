@@ -103,12 +103,12 @@ def run(task_id: str) -> dict:
         if source_day is not None:
             try:
                 StockDBProvider().refresh_sdk()
-            except ProviderError:
-                if not akshare_enabled():
-                    raise
-                logger.warning('local SDK unavailable; explicit AkShare fallback is enabled')
+            except ProviderError as exc:
+                logger.warning('SDK 7900 unavailable; continuing supported RD queries: %s', exc)
         target_day = source_day or datetime.now(get_settings().tz).date()
         source_label = f"本地源日期 {source_day}" if source_day else f"本地源不可用，AkShare 请求截至 {target_day}"
+        from app.services import market_policy
+        market_policy.invalidate_caches()
         get_provider().probe()
         catalog = sync_service.run_catalog_sync(force=True)
         if catalog.get("status") == "partial":

@@ -26,17 +26,6 @@ def kline_scope(symbol: str, period: str, start: datetime, end: datetime, asset_
         _context.reset(token)
 
 
-@contextmanager
-def realtime_scope(symbols, asset_type: str):
-    token = _context.set({"asset_type": asset_type, "symbols": [
-        {"code": item.code, "name": item.name} for item in symbols[:50]],
-        "symbol_count": len(symbols)})
-    try:
-        yield
-    finally:
-        _context.reset(token)
-
-
 class ActiveProviderRequest:
     def __init__(self, provider: str, fn, kwargs: dict) -> None:
         self.key = ""

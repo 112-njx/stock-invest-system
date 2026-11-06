@@ -120,7 +120,7 @@ const qualityWarning = computed(() => {
   if (quality.value?.status === 'unchecked') return '历史数据尚未初始化'
   return ''
 })
-const currentPrice = computed(() => props.symbol ? market.snapshots[props.symbol.id]?.price : null)
+const currentPrice = computed(() => props.symbol ? market.quotes[props.symbol.id]?.price : null)
 
 let chart: IChartApi | null = null
 let candleSeries: ISeriesApi<'Candlestick'> | null = null

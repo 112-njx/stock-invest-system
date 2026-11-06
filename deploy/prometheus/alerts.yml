@@ -40,15 +40,6 @@ groups:
           summary: "关注股同步队列积压"
           description: "关注股队列已有 {{ $value }} 个待消费任务。"
 
-      - alert: MarketDataStale
-        expr: market_data_freshness_seconds > 300
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "行情快照过期"
-          description: "snapshot_realtime 最新快照已超过 {{ $value | humanizeDuration }} 未更新，检查行情同步任务。"
-
       - alert: LLMErrorRateHigh
         expr: |
           sum(rate(llm_calls_total{status="failed"}[10m]))

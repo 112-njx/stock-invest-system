@@ -43,7 +43,6 @@ class Settings(BaseSettings):
 
     # ---- Redis（缓存 + Celery 队列）----
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
-    SNAPSHOT_CACHE_TTL: int = 300  # 实时快照缓存秒数（V0.2 从 5s 延长至 300s，交易时段由 realtime_poll 覆盖刷新）
     KLINE_CACHE_TTL: int = 300  # K线缓存秒数
     SEARCH_CACHE_TTL: int = 3600  # 搜索联想缓存秒数（catalog_sync 完成后批量删除）
     WATCHLIST_CACHE_TTL: int = 300  # 关注列表缓存秒数
@@ -59,7 +58,6 @@ class Settings(BaseSettings):
     PROVIDER_CIRCUIT_COOLDOWN: int = 600  # Provider 熔断冷却（秒），冷却后半开探测
     PROVIDER_PROBE_INTERVAL: int = 600  # 熔断中 Provider 后台探测间隔（秒）
     KLINE_INIT_DAYS: int = 730  # 首次全量拉取天数（约2年）
-    REALTIME_POLL_INTERVAL: int = 1800  # 实时轮询间隔（秒）
     PROVIDER_MIN_INTERVAL_SECONDS: int = 2  # 单数据源跨进程请求间隔
     PROVIDER_DAILY_BUDGET: int = 2000  # 单数据源每日请求预算
     SYNC_INCREMENTAL_HOUR: int = 16  # 每日增量同步时刻（本地时区小时）

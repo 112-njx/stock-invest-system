@@ -8,8 +8,7 @@
 
 - 心跳：服务端每 15s 发 {"type":"ping"}，30s 无活动断开。
 - 订阅：{"action":"subscribe","symbol_ids":[...]} / unsubscribe。
-- 断线补拉：{"action":"sync","since":"ISO时间"} → 批量返回该时间后更新的快照。
-- 增量推送：realtime_poll 写快照后经 Redis pub/sub 桥接，本进程市场监听器按订阅集合推送。
+- K线更新与刷新通知经 Redis pub/sub 按订阅集合推送。
 """
 
 import asyncio
@@ -146,39 +145,6 @@ async def _receive_loop(state: ConnectionState) -> None:
         elif action == "unsubscribe":
             ids = [int(x) for x in msg.get("symbol_ids", []) if str(x).isdigit()]
             state.subscribed.difference_update(ids)
-        elif action == "sync":
-            await _handle_sync(state, msg.get("since"))
-
-
-async def _handle_sync(state: ConnectionState, since: str) -> None:
-    """断线增量补拉：查询 since 之后更新的快照，仅返回订阅范围内标的。"""
-    from datetime import UTC, datetime
-    from app.services import market_policy, market_service
-    from app.utils.market_cache import as_utc
-
-    if not market_policy.snapshots_enabled():
-        return
-
-    if not since or not state.subscribed:
-        return
-    try:
-        since_dt = datetime.fromisoformat(since.replace("Z", "+00:00")).astimezone(UTC)
-    except ValueError:
-        return
-    db = get_session()
-    try:
-        updates = market_service.get_snapshots(db, list(state.subscribed))
-    finally:
-        db.close()
-    data = {}
-    for row in updates:
-        stamp = row.get('updated_at')
-        if isinstance(stamp, str):
-            stamp = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
-        if stamp and as_utc(stamp) > since_dt:
-            data[row['symbol_id']] = {**row, 'volume_unit': 'share'}
-    if data:
-        await manager.send_to_user(state.user_id, {"type": "snapshot", "data": data})
 
 
 # ---- 市场监听器（Redis pub/sub → 本进程 WS 推送）----
@@ -192,15 +158,7 @@ async def _dispatch(loop: asyncio.AbstractEventLoop, payload: dict) -> None:
     kind = payload.get("type")
     if symbol_id is None:
         return
-    if kind == "snapshot":
-        from app.services.market_policy import read
-        policy = read()
-        if not (policy['akshare_enabled'] and policy['snapshots_enabled']):
-            return
-        if payload.get('data', {}).get('policy_revision') != policy['revision']:
-            return
-        await manager.broadcast_snapshots({int(symbol_id): payload.get("data", {})})
-    elif kind == "kline":
+    if kind == "kline":
         await manager.broadcast_kline(payload)
     elif kind == "kline_refresh":
         await manager.broadcast_kline_refresh(payload)

@@ -65,7 +65,7 @@ def test_index_code_collision_never_queries_local_stock_prices(monkeypatch):
     monkeypatch.setattr(provider, "query", query)
     assert provider.fetch_kline("000001", "1d", datetime.now(UTC), datetime.now(UTC), "index") == []
     query.assert_not_called()
-    assert not provider.can_fetch_realtime()
+    assert not hasattr(provider, "fetch_realtime")
 
 
 @pytest.mark.parametrize("local", [[], ProviderError("offline")])
@@ -87,7 +87,8 @@ def test_watchlist_history_falls_back_when_local_is_empty_or_offline(local, monk
 def test_automatic_kline_incremental_schedule_removed():
     schedule = build_beat_schedule()
     assert not any(item["task"].endswith(".kline_incremental") for item in schedule.values())
-    assert "realtime-poll" in schedule
+    assert "realtime-poll" not in schedule
+    assert "local-market-after-close" in schedule
 
 
 def test_manual_sync_and_status_require_admin(client):
@@ -132,7 +133,7 @@ def test_completed_watchlist_is_not_queued_again_when_source_date_is_old(monkeyp
     from app.worker.celery_app import celery_app
 
     db = Mock()
-    db.scalars.side_effect = [[7], []]
+    db.scalars.side_effect = [[7], [], []]
     db.get.side_effect = [SimpleNamespace(type="stock", code="600519", market="SSE"),
                           SimpleNamespace(status="complete", checked_to=datetime(2000, 1, 1).date())]
     db.scalar.return_value = None
@@ -144,10 +145,7 @@ def test_completed_watchlist_is_not_queued_again_when_source_date_is_old(monkeyp
     queue = Mock()
     monkeypatch.setattr(watchlist_delivery, "queue_watchlist_sync", queue)
     assert watchlist_delivery.dispatch_watchlist_sync() == {"published": 0}
-    if missing_period:
-        queue.assert_called_once()
-    else:
-        queue.assert_not_called()
+    queue.assert_not_called()
 
 
 def test_postgres_upsert_replaces_old_qfq_prices_and_is_idempotent():

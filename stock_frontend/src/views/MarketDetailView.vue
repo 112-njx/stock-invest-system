@@ -19,7 +19,7 @@ import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore, type Period } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
 import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
-import { useSnapshotPolling } from '@/composables/useSnapshotPolling'
+import { useLatestQuotes } from '@/composables/useLatestQuotes'
 import KLineChart from '@/components/trading/KLineChart.vue'
 import BasicInfoPanel from '@/components/trading/BasicInfoPanel.vue'
 import WatchlistPanel from '@/components/trading/WatchlistPanel.vue'
@@ -34,7 +34,7 @@ const authModal = useAuthModalStore()
 /** 回测显示跳转：带 strategy_id 时 D 区替换为策略指标面板（4.5） */
 const strategyId = computed(() => (route.query.strategy_id ? Number(route.query.strategy_id) : null))
 
-const { start } = useSnapshotPolling(4000)
+const { start } = useLatestQuotes()
 
 /* ---------- G32：回测买卖点标注 ---------- */
 /** 最新一条回测结果的买卖流水（后端已算好，前端只渲染） */

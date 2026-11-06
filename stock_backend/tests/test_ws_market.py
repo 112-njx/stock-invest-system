@@ -6,7 +6,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from app.models.snapshot import SnapshotRealtime
 from app.models.symbol import Symbol
 from app.models.user import User
 from app.utils.db import get_session
@@ -164,39 +163,6 @@ def test_ws_unsubscribe(ws_client: TestClient):
         assert conns[0].subscribed == {6}
 
 
-def test_ws_sync_catches_up_missing_snapshots(ws_client: TestClient, monkeypatch):
-    monkeypatch.setattr("app.services.market_policy.snapshots_enabled", lambda: True)
-    monkeypatch.setattr("app.services.market_policy.read", lambda: {"akshare_enabled": True, "snapshots_enabled": True, "revision": 1})
-    """断线补拉：sync since 之后更新的快照批量返回。"""
-    db = get_session()
-    sym = Symbol(code="600519", name="测试WS快照", type="stock", market="SSE")
-    db.add(sym)
-    db.commit()
-    db.refresh(sym)
-    db.add(
-        SnapshotRealtime(
-            symbol_id=sym.id, price=100.0, change=1.0, change_pct=0.5,
-            open=99.0, high=101.0, low=98.0, pre_close=99.0, volume=1000, amount=1e6,
-            turnover=0.5, amplitude=1.2, updated_at=datetime.now(UTC),
-        )
-    )
-    db.commit()
-    try:
-        since = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
-        with ws_client.websocket_connect("/api/v1/ws/market") as ws:
-            ws.send_text(json.dumps({"action": "subscribe", "symbol_ids": [sym.id]}))
-            ws.send_text(json.dumps({"action": "sync", "since": since}))
-            msg = json.loads(ws.receive_text())
-            assert msg["type"] == "snapshot"
-            assert str(sym.id) in msg["data"] or sym.id in msg["data"]
-    finally:
-        db = get_session()
-        db.query(SnapshotRealtime).filter_by(symbol_id=sym.id).delete()
-        db.query(Symbol).filter_by(id=sym.id).delete()
-        db.commit()
-        db.close()
-
-
 # ---- ConnectionManager 单元测试 ----
 class _FakeWS:
     def __init__(self):
@@ -221,11 +187,14 @@ async def test_manager_broadcast_filters_by_subscription():
     s2 = await m.connect(2, ws2)
     s1.subscribed = {10, 11}
     s2.subscribed = {11, 12}
-    await m.broadcast_snapshots({10: {"price": 1.0}, 11: {"price": 2.0}})
+    await m.broadcast_kline({'symbol_id': 10, 'period': '1d', 'bar': {'close': 1.0}})
+    await m.broadcast_kline({'symbol_id': 11, 'period': '1d', 'bar': {'close': 2.0}})
     m1 = json.loads(ws1.sent[0])  # 用户1 订阅 10/11 → 两条都收到
-    assert m1["type"] == "snapshot" and set(m1["data"].keys()) == {"10", "11"}
+    assert m1["type"] == "kline" and m1["symbol_id"] == 10
+    assert len(ws1.sent) == 2
     m2 = json.loads(ws2.sent[0])  # 用户2 只订阅 11 → 仅收到 11
-    assert set(m2["data"].keys()) == {"11"}
+    assert m2["symbol_id"] == 11
+    assert len(ws2.sent) == 1
     await m.disconnect(s1)
     await m.disconnect(s2)
 

@@ -1,17 +1,16 @@
-"""行情同步服务：K线全量/增量、实时轮询。被 Celery 任务调用，不阻塞主线程。
+"""行情同步服务：K线全量/增量、缓存准备。被 Celery 任务调用，不阻塞主线程。
 
-写入链路：分区K线 upsert → snapshot_realtime → Redis 缓存（快照按 TTL）。
+写入链路：StockDB K线入库；AkShare历史按独立开关入库或仅缓存。
 """
 
 import logging
 from datetime import UTC, datetime, timedelta
 
 from app.core.config import get_settings
-from app.data_providers.base import RealtimeQuote, RealtimeSymbol
 from app.data_providers.factory import get_provider
 from app.models.symbol import Symbol
 from app.models.user import UserWatchlist
-from app.repositories import kline_repo, ops_repo, snapshot_repo, symbol_repo, user_repo
+from app.repositories import kline_repo, ops_repo, symbol_repo, user_repo
 from app.utils import market_cache
 from app.utils.db import get_session
 from app.utils.kline_partition import ensure_current_partitions
@@ -19,15 +18,6 @@ from app.utils.kline_partition import ensure_current_partitions
 logger = logging.getLogger(__name__)
 settings = get_settings()
 ALL_PERIODS = ("1d", "15m", "1w", "1mon")
-
-
-def is_market_open(now: datetime | None = None) -> bool:
-    """A股交易时段判断（本地时区 工作日 9:30-11:30 / 13:00-15:00）。"""
-    now = now or datetime.now(settings.tz)
-    if now.weekday() >= 5:
-        return False
-    hm = now.hour * 100 + now.minute
-    return (930 <= hm <= 1130) or (1300 <= hm <= 1500)
 
 
 def _provider_params(sym: Symbol) -> tuple[str, str]:
@@ -46,6 +36,17 @@ def _provider_params(sym: Symbol) -> tuple[str, str]:
 
 def _write_bars(db, period: str, symbol_id: int, bars) -> int:
     """幂等写 K 线 + 失效缓存 + 推送最新末根（WS 增量）。"""
+    from app.services.market_policy import history_storage_enabled
+    if bars and bars[0].source == 'akshare' and not history_storage_enabled():
+        from app.services import source_history
+        if not source_history.load(db, symbol_id, period, refresh=True, external_only=True):
+            raise RuntimeError('AkShare 历史缓存未准备完成')
+        market_cache.invalidate_kline_cache(symbol_id, period)
+        from app.services.indicator_service import invalidate_indicator_cache
+        from app.ws.publisher import publish_kline_refresh
+        invalidate_indicator_cache(symbol_id, period)
+        publish_kline_refresh(symbol_id, period)
+        return 0
     previous_latest = kline_repo.latest_ts(db, period, symbol_id) if bars else None
     added = kline_repo.upsert_bars(db, period, symbol_id, bars)
     if added:
@@ -78,7 +79,8 @@ def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetim
             raise RuntimeError(f"{sym.name} 的所有数据源均未返回日 K")
         if asset_type in {'stock', 'etf', 'sw_index'} and period in {'1w', '1mon'} and not bars:
             raise RuntimeError(f'{sym.name} 的 {period} 数据获取失败，未完成同步，请检查数据源后重试')
-        if asset_type in {"stock", "etf"}:
+        from app.services.market_policy import history_storage_enabled
+        if asset_type in {"stock", "etf"} and not (bars and bars[0].source == 'akshare' and not history_storage_enabled()):
             from sqlalchemy import func, select
             from app.models.kline import KLINE_MODELS
 
@@ -253,21 +255,17 @@ def maybe_catalog_sync() -> dict:
 
 
 def warmup_fixed_indices_cache() -> dict:
-    """固定指数最近500根日K + 最新快照写 Redis（best-effort，失败不阻断启动）。"""
+    """固定指数最近500根日K 写 Redis（best-effort，失败不阻断启动）。"""
     db = get_session()
     try:
         symbols = [sym for sym in symbol_repo.list_fixed_indices(db) if supported_symbol(sym)]
-        kline_warmed, snap_warmed = 0, 0
+        kline_warmed = 0
         for sym in symbols:
             bars = kline_repo.latest_bars(db, "1d", sym.id, 500)
             if bars:
                 market_cache.set_kline_cache(sym.id, "1d", 500, [market_cache.kline_bar_to_dict(b) for b in bars])
                 kline_warmed += 1
-            snap = snapshot_repo.get_snapshot(db, sym.id)
-            if snap:
-                market_cache.set_snapshot_cache(sym.id, market_cache.snapshot_to_cache_dict(snap))
-                snap_warmed += 1
-        return {"kline_warmed": kline_warmed, "snapshot_warmed": snap_warmed, "total": len(symbols)}
+        return {"kline_warmed": kline_warmed, "total": len(symbols)}
     except Exception:  # noqa: BLE001 预热失败不阻断启动
         logger.warning("fixed indices cache warmup failed", exc_info=True)
         return {"warmup_error": True}
@@ -340,144 +338,3 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: d
 def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> dict:
     """Compatibility entry point for explicitly requested watchlist refreshes."""
     return run_kline_init(symbol_id=symbol_id)
-
-
-# ---- 实时快照 ----
-def run_realtime_poll(symbol_id: int | None = None) -> dict:
-    """实时快照轮询：拉取 → 特殊字段补全（行业K线推导/指数PE/市值/溢价） → 写快照与特殊表 → Redis 缓存。"""
-    from app.services.market_policy import snapshots_enabled
-    if not snapshots_enabled():
-        return {"skipped": "snapshots disabled"}
-    db = get_session()
-    try:
-        provider = get_provider()
-        symbols: list[Symbol] = [db.get(Symbol, symbol_id)] if symbol_id else symbol_repo.list_realtime_symbols(db)
-        symbols = [s for s in symbols if s is not None]
-        if not symbols:
-            return {"synced": 0}
-        ops_repo.upsert_sync_task(db, "realtime", symbol_id, "running", datetime.now(UTC))
-        req = [RealtimeSymbol(code=sym.code, name=sym.name, asset_type=_provider_params(sym)[1]) for sym in symbols]
-        quotes = provider.fetch_realtime(req)
-
-        index_pe = {}
-
-        synced = 0
-        for sym, quote in zip(symbols, quotes, strict=True):
-            if not quote.available or quote.price is None:
-                # 实时源全部不可用 → K线推导兜底快照（updated_at 为K线时间，页面据 data_age_seconds 标注而非显示 '--'）
-                derived = derive_snapshot_from_kline(db, sym)
-                if derived is None:
-                    continue
-                quote = derived
-            atype = _provider_params(sym)[1]
-            quote.extra["symbol_id"] = sym.id
-            if atype == "industry_index":
-                _fill_industry_quote_from_kline(db, sym, quote)
-            elif atype == "index":
-                quote.extra["pe"] = index_pe.get(sym.name)
-            snapshot_repo.upsert_snapshot(db, quote)
-            _cache_snapshot(sym.id, quote)
-            from app.ws import publisher
-
-            publisher.publish_snapshot(sym.id, market_cache.snapshot_to_cache_dict(quote))
-            # 特殊字段表：个股总市值/PE、ETF净值/溢价、指数PE（best-effort，任一字段非 None 才写避免覆盖旧值）
-            if atype == "stock" and (quote.extra.get("market_cap") is not None or quote.extra.get("pe") is not None):
-                snapshot_repo.upsert_fundamentals(db, sym.id, quote.extra.get("market_cap"), quote.extra.get("pe"))
-            elif atype == "etf" and (quote.extra.get("nav") is not None or quote.extra.get("premium") is not None):
-                snapshot_repo.upsert_etf_premium(db, sym.id, quote.extra.get("nav"), quote.extra.get("premium"))
-            elif atype == "index" and quote.extra.get("pe") is not None:
-                snapshot_repo.upsert_index_valuation(db, sym.id, quote.extra.get("pe"))
-            synced += 1
-        ops_repo.upsert_sync_task(
-            db,
-            "realtime",
-            symbol_id,
-            "success",
-            datetime.now(UTC),
-            next_run_at=datetime.now(UTC) + timedelta(seconds=settings.REALTIME_POLL_INTERVAL),
-        )
-        db.commit()
-        return {"synced": synced}
-    finally:
-        db.close()
-
-
-def _fill_industry_quote_from_kline(db, sym: Symbol, quote) -> None:
-    """行业指数基本数据补全：板块实时接口仅最新价/涨跌额/涨跌幅/换手率，缺昨收/今开/高低/量/额/振幅，用日K推导。
-
-    昨收=前一根日K close，今开/最高/最低/量/额=最新根对应值，振幅=(high-low)/pre_close×100。
-    """
-    try:
-        end = datetime.now(UTC)
-        start = end - timedelta(days=30)
-        bars = kline_repo.get_bars(db, "1d", sym.id, start, end, limit=2)
-        if not bars:
-            return
-        latest = bars[-1]
-        prev = bars[-2] if len(bars) >= 2 else None
-        if quote.open is None:
-            quote.open = float(latest.open)
-        if quote.high is None:
-            quote.high = float(latest.high)
-        if quote.low is None:
-            quote.low = float(latest.low)
-        if quote.volume is None:
-            quote.volume = int(latest.volume)
-        if quote.amount is None:
-            quote.amount = float(latest.amount)
-        if quote.pre_close is None:
-            quote.pre_close = float(prev.close) if prev else float(latest.close)
-        if quote.amplitude is None and quote.high and quote.low and quote.pre_close:
-            quote.amplitude = (quote.high - quote.low) / quote.pre_close * 100 if quote.pre_close else None
-    except Exception:  # noqa: BLE001 K线推导失败不影响该行其余字段
-        logger.warning("industry kline fill failed: symbol_id=%s", sym.id, exc_info=True)
-
-
-def derive_snapshot_from_kline(db, sym: Symbol) -> RealtimeQuote | None:
-    """实时源全部不可用时，用最新日K收盘价推导全字段快照（updated_at=K线时间，前端据 data_age_seconds 标注）。
-
-    price=最新日K close，change/change_pct=与前一 close 差，OHLC/量/额取最新根，振幅=(high-low)/pre_close。
-    返回 None 表示无K线可推导（诚实留空），不硬造快照。
-    """
-    try:
-        end = datetime.now(UTC)
-        start = end - timedelta(days=30)
-        bars = kline_repo.get_bars(db, "1d", sym.id, start, end, limit=2)
-        if not bars:
-            return None
-        latest = bars[-1]
-        prev = bars[-2] if len(bars) >= 2 else None
-        pre_close = float(prev.close) if prev else float(latest.close)
-        change = float(latest.close) - pre_close
-        change_pct = (change / pre_close * 100) if pre_close else None
-        amplitude = (
-            (float(latest.high) - float(latest.low)) / pre_close * 100
-            if pre_close and latest.high is not None and latest.low is not None
-            else None
-        )
-        return RealtimeQuote(
-            code=sym.code,
-            name=sym.name,
-            asset_type=_provider_params(sym)[1],
-            price=float(latest.close),
-            change=change,
-            change_pct=change_pct,
-            open=float(latest.open),
-            high=float(latest.high),
-            low=float(latest.low),
-            pre_close=pre_close,
-            volume=int(latest.volume) if latest.volume is not None else None,
-            amount=float(latest.amount) if latest.amount is not None else None,
-            turnover=None,
-            amplitude=amplitude,
-            updated_at=latest.ts,
-            available=True,
-        )
-    except Exception:  # noqa: BLE001 K线推导失败不影响主链路
-        logger.warning("derive snapshot from kline failed: symbol_id=%s", sym.id, exc_info=True)
-        return None
-
-
-def _cache_snapshot(symbol_id: int, quote) -> None:
-    """快照写 Redis（完整 14 项字段，TTL 走配置），供行情 API 快速返回。"""
-    market_cache.set_snapshot_cache(symbol_id, market_cache.snapshot_to_cache_dict(quote))

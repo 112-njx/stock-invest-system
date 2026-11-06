@@ -2,7 +2,8 @@ import { request } from './http'
 
 export interface SourcePolicy {
   akshare_enabled: boolean
-  snapshots_enabled: boolean
+  history_storage_enabled: boolean
+  auto_sync_enabled: boolean
 }
 export interface Limits {
   interval_seconds: number
@@ -11,7 +12,6 @@ export interface Limits {
 }
 export interface Traffic extends Limits {
   day: string
-  poll_interval_seconds: number
   probe_interval_seconds: number
   providers: Array<{
     name: string

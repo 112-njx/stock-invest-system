@@ -4,18 +4,13 @@
  *   鉴权依赖 HttpOnly Cookie 在握手时自动携带（服务端从 Cookie 读 access token）
  * - 自动重连：指数退避 1s/2s/4s/8s，最大 30s
  * - 心跳：收到 {"type":"ping"} 自动回 {"type":"pong"}；30s 无消息主动断开重连
- * - 消息分发：按 type 路由（snapshot/kline/error），支持回调注册
- * - 断线补拉：重连成功后发 {"action":"sync","since":"<最后收到消息的ISO时间>"}
+ * - 消息分发：按 type 路由（kline/error），支持回调注册
  * - BroadcastChannel：同浏览器只保持一个 WS 连接，其他标签页通过 BroadcastChannel 接收消息
  * 纯基础设施，无 UI 依赖。
  */
 
-export type WsMessageType = 'snapshot' | 'kline' | 'kline_refresh' | 'ping' | 'pong' | 'error' | 'notification'
+export type WsMessageType = 'kline' | 'kline_refresh' | 'ping' | 'pong' | 'error' | 'notification'
 
-export interface WsSnapshotMessage {
-  type: 'snapshot'
-  data: Record<string, Record<string, unknown>>
-}
 
 export interface WsKlineMessage {
   type: 'kline'
@@ -45,7 +40,6 @@ export interface WsNotificationMessage {
 }
 
 export type WsMessage =
-  | WsSnapshotMessage
   | WsKlineMessage
   | WsKlineRefreshMessage
   | WsNotificationMessage
@@ -82,7 +76,6 @@ class WsClient {
   private reconnectAttempts = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
-  private lastMessageTime = ''
   private handlers = new Set<MessageHandler>()
   private statusHandlers = new Set<StatusHandler>()
   private connected = false
@@ -193,10 +186,6 @@ class WsClient {
       this.statusHandlers.forEach((h) => h(true))
       this.broadcastStatus(true)
       this.resetHeartbeat()
-      // 断线补拉
-      if (this.lastMessageTime) {
-        this.send({ action: 'sync', since: this.lastMessageTime })
-      }
     }
 
     this.ws.onmessage = (event) => {
@@ -206,11 +195,6 @@ class WsClient {
         if (msg.type === 'ping') {
           this.send({ type: 'pong' })
           return
-        }
-        if (msg.type === 'snapshot' || msg.type === 'kline' || msg.type === 'kline_refresh') {
-          // 记录最后消息时间用于断线补拉
-          const now = new Date().toISOString()
-          this.lastMessageTime = now
         }
         this.dispatch(msg)
         this.broadcastMessage(msg)

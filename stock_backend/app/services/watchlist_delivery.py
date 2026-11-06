@@ -71,27 +71,18 @@ def dispatch_watchlist_sync() -> dict:
             if sym is None:
                 continue
             from app.services.kline_quality_service import is_a_share_stock
-            from app.repositories import kline_repo
 
             if not is_a_share_stock(sym):
                 continue
-            quality = db.get(KlineQuality, (symbol_id, "1d"))
-            complete_periods = all(kline_repo.latest_ts(db, period, symbol_id) is not None
-                                   for period in ('1d', '1w', '1mon'))
-            if quality is not None and quality.status == "complete" and complete_periods:
-                if db.scalar(select(UserWatchlist.id).where(UserWatchlist.symbol_id == symbol_id,
-                                                          UserWatchlist.sync_status != "done").limit(1)):
-                    user_repo.update_watchlist_sync_status(db, symbol_id, "done")
-                    db.commit()
-                continue
-            initialize = kline_repo.latest_ts(db, "1d", symbol_id) is None
-            kind = "kline_init" if initialize else "kline_incremental"
-            row = db.scalar(select(SyncTask).where(SyncTask.task_type == kind,
-                                                  SyncTask.symbol_id == symbol_id))
-            orphaned = bool(active and row and row.status == "running" and row.last_run_at
-                            and now - as_utc(row.last_run_at) >= ORPHAN_RUNNING
-                            and row.celery_task_id not in active_ids)
-            queue_watchlist_sync(db, symbol_id, initialize=initialize, force=orphaned, now=now)
+            quality = db.get(KlineQuality, (symbol_id, '1d'))
+            previous = list(db.scalars(select(SyncTask).where(
+                SyncTask.symbol_id == symbol_id,
+                SyncTask.task_type.in_(('kline_init', 'kline_incremental')))))
+            running = next((task for task in previous if task.status == 'running'), None)
+            if running and active and running.last_run_at and now - as_utc(running.last_run_at) >= ORPHAN_RUNNING and running.celery_task_id not in active_ids:
+                queue_watchlist_sync(db, symbol_id, initialize=running.task_type == 'kline_init', force=True, now=now)
+            elif not previous and (quality is None or quality.status != 'complete'):
+                queue_watchlist_sync(db, symbol_id, initialize=True, now=now)
         rows = list(db.scalars(select(SyncTask).where(
             SyncTask.symbol_id.in_(select(UserWatchlist.symbol_id)),
             SyncTask.task_type.in_(("kline_init", "kline_incremental")),

@@ -117,7 +117,7 @@ def _build_market_context(db: Session, symbol: str) -> str:
     lines: list[str] = []
     symbol_id = market_service.resolve_symbol_id(db, symbol) if symbol else None
     if symbol_id:
-        snaps = market_service.get_snapshots(db, [symbol_id])
+        snaps = market_service.get_latest_quotes(db, [symbol_id])
         if snaps:
             s = snaps[0]
             lines.append(

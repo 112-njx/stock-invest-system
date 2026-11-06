@@ -109,9 +109,9 @@ const totals = computed(() =>
       <p>
         {{
           s.policy.data
-            ? s.policy.data.snapshots_enabled
-              ? '实时快照已启用'
-              : '实时快照未启用'
+            ? s.policy.data.history_storage_enabled
+              ? 'AkShare 历史 K 线入库已启用'
+              : 'AkShare 历史 K 线不入库'
             : '—'
         }}
       </p>

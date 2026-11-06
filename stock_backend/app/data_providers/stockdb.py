@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from app.core.config import get_settings
-from .base import BaseDataProvider, KlineBar, ProviderError, unavailable_quote
+from .base import BaseDataProvider, KlineBar, ProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,6 @@ class StockDBProvider(BaseDataProvider):
             return False
         return asset_type in {"stock", "etf", "sw_index"} and period in {"1d", "15m", "1w", "1mon"}
 
-    def can_fetch_realtime(self) -> bool:
-        return False
-
-    def fetch_realtime(self, symbols):
-        return [unavailable_quote(symbol) for symbol in symbols]
 
     def resolve_index_code(self, name: str) -> str | None:
         return None
@@ -77,7 +72,7 @@ class StockDBProvider(BaseDataProvider):
         output = []
         cursor = first_day
         while cursor <= last_day:
-            last = min(cursor + timedelta(days=29), last_day)
+            last = min(cursor + timedelta(days=365), last_day)
             first_key, last_key = cursor.strftime("%Y%m%d"), last.strftime("%Y%m%d")
             table = "日k" if period == "1d" else "分钟k"
             if period == "15m":

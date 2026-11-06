@@ -15,7 +15,8 @@ class MarketSourceSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     akshare_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
-    snapshots_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    history_storage_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
+    auto_sync_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text('false'))
     revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('1'))
     synthetic_wick_factor: Mapped[float] = mapped_column(Float, nullable=False, server_default=text('0.5'))
 
