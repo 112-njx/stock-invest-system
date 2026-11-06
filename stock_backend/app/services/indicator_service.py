@@ -65,8 +65,9 @@ def compute_indicators(
     if start is None:
         start = end - timedelta(days=_DEFAULT_BACK_DAYS)
 
+    # Keep the bounded warmup window anchored to the newest bar for latest-N queries.
     bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end,
-                               limit=100000, source_window=(start, end))
+                               limit=100000, source_window=(start, end), latest=not explicit_range)
     if not bars:
         return []
 

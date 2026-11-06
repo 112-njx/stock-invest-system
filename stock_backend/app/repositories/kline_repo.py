@@ -136,21 +136,24 @@ def get_bars(
     limit: int = 1000,
     offset: int = 0,
     source_window: tuple[datetime, datetime] | None = None,
+    latest: bool = False,
 ) -> list:
+    """Return ascending bars; latest selects the last limit bars before end."""
     model = _model(period)
     if use_transient_source(db, model, symbol_id, *(source_window or (start, end))):
         from app.services.source_history import window
-        return window(db, symbol_id, period, start, end, limit, offset)
+        return window(db, symbol_id, period, start, end, limit, offset, latest=latest)
     stmt = (
         select(model)
         .where(model.symbol_id == symbol_id,
                source_filter(model, symbol_id, *(source_window or (start, end))),
                model.ts >= start, model.ts <= end)
-        .order_by(model.ts)
+        .order_by(model.ts.desc() if latest else model.ts)
         .limit(limit)
         .offset(offset)
     )
-    return list(db.scalars(stmt))
+    rows = list(db.scalars(stmt))
+    return list(reversed(rows)) if latest else rows
 
 
 def latest_bars(db: Session, period: str, symbol_id: int, limit: int = 1000) -> list:

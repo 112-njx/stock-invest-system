@@ -96,6 +96,9 @@ def load(db, symbol_id, period, *, refresh=False):
                 logger.debug('source lock release failed', exc_info=True)
 
 
-def window(db, symbol_id, period, start, end, limit=1000, offset=0):
+def window(db, symbol_id, period, start, end, limit=1000, offset=0, *, latest=False):
     bars = [bar for bar in (cached(symbol_id, period) or []) if as_utc(start) <= as_utc(bar.ts) <= as_utc(end)]
+    if latest:
+        stop = max(0, len(bars) - offset)
+        return bars[max(0, stop - limit):stop]
     return bars[offset:offset + limit]
