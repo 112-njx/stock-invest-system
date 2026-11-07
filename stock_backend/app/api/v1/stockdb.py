@@ -138,3 +138,9 @@ def stock_minutes(code: Code, date: Annotated[int, Query(ge=19000101, le=2999123
         return rd.minutes(code, date)
     except rd.StockDBError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get('/equities')
+def equities() -> dict:
+    from app.services.equity_table import snapshot
+    return snapshot()
