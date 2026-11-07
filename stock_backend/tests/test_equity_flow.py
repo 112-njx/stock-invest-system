@@ -36,3 +36,10 @@ def test_endpoint_contract(monkeypatch):
     from app.api.v1.stockdb import equity_flows
     monkeypatch.setattr(flow,'snapshot',lambda:dict(items=[],loading=True))
     assert equity_flows()==dict(code=0,msg='ok',data=dict(items=[],loading=True))
+
+
+def test_market_wide_missing_flow_day_is_not_silently_skipped():
+    dates=list(range(20261001,20261021))
+    records={d:{'main_net':2} for d in dates if d!=20261018}
+    row=flow.aggregate([quote()],{'000001':records},{},dates)[0]
+    assert row['main_5'] is None and row['main_20'] is None

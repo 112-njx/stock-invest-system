@@ -12,7 +12,7 @@ from app.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 FIELDS = ('main_net','jumbo_net','big_net','mid_net','small_net')
-_KEY = 'equity-flow:v1'
+_KEY = 'equity-flow:v2'
 _lock = Lock()
 _state = None
 _running = False
@@ -20,8 +20,8 @@ _checked = 0
 _error = ''
 
 
-def aggregate(quotes, history, amounts):
-    dates = sorted({d for records in history.values() for d in records})
+def aggregate(quotes, history, amounts, trading_dates=None):
+    dates = sorted(set(trading_dates) if trading_dates is not None else {d for records in history.values() for d in records})
     items = []
     for quote in quotes:
         code = quote['code']
@@ -74,7 +74,13 @@ def build():
         for row in rows:
             if isinstance(row,(list,tuple)) and len(row)==2 and row[0] in needed:
                 amounts[(row[0],day)] = equity_table.number(row[1])
-    items = aggregate(quotes['items'],by_code,amounts)
+    trading_dates = set()
+    for prefix in ('0','3','6','8','9'):
+        rows = provider.query('vals','日k',k1='qz:'+prefix,k2=f'fwd:{start},99991231',ap='get.date,code')
+        for row in rows:
+            if isinstance(row,(list,tuple)) and len(row)==2 and row[1] in codes and isinstance(row[0],int):
+                trading_dates.add(row[0])
+    items = aggregate(quotes['items'],by_code,amounts,trading_dates)
     return dict(items=items,industries=quotes['industries'],date=quotes['date'],
                 flow_date=max(required_dates) if required_dates else None,
                 missing=sum(r['flow_date'] is None for r in items),source='stockdb')
