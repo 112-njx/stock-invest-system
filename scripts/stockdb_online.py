@@ -58,11 +58,11 @@ def parameters(payload):
         raise OnlineError('股票代码应为六位数字')
     if not code and method in ('get_last_tick', 'get_ticks', 'get_money_flow', 'get_mtss', 'get_locked_shares'):
         raise OnlineError('此接口需要股票代码')
-    count = payload.get('count', 20)
-    if type(count) is not int or not 1 <= count <= 1000:
-        raise OnlineError('条数应为 1 至 1000')
     args = {}
     if method in ('get_last_tick', 'get_ticks'):
+        count = payload.get('count', 20)
+        if type(count) is not int or not 1 <= count <= 1000:
+            raise OnlineError('条数应为 1 至 1000')
         args = {'security': code, 'count': count}
         if method == 'get_ticks':
             value = payload.get('end_dt', '')

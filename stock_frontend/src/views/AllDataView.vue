@@ -51,13 +51,28 @@ const columns = computed(() => [...new Set(rows.value.flatMap((row) => Object.ke
 const page = ref(1)
 const visible = computed(() => rows.value.slice((page.value - 1) * 100, page.value * 100))
 let timer: ReturnType<typeof setInterval> | undefined
+let cooldownUntil = 0
+function updateRemaining() {
+  remaining.value = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000))
+}
+function setCooldown(seconds: number) {
+  cooldownUntil = Date.now() + seconds * 1000
+  updateRemaining()
+}
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    updateRemaining()
+    // Only checks the local quota; never requests upstream market data.
+    void status()
+  }
+}
 async function status() {
   try {
     const data = await request<{ retry_after: number; interval_seconds: number }>({
       url: '/all-data/status',
       silent: true,
     })
-    remaining.value = data.retry_after
+    setCooldown(data.retry_after)
     interval.value = data.interval_seconds
   } catch {
     error.value = '无法读取在线服务状态，可稍后手动重试'
@@ -65,31 +80,40 @@ async function status() {
 }
 onMounted(() => {
   void status()
-  timer = setInterval(() => {
-    remaining.value = Math.max(0, remaining.value - 1)
-  }, 1000)
+  timer = setInterval(updateRemaining, 1000)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
-onUnmounted(() => clearInterval(timer))
+onUnmounted(() => {
+  clearInterval(timer)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
 async function run() {
+  if (busy.value || remaining.value > 0) return
   busy.value = true
   error.value = ''
   try {
     const data = await request<Result>({
       method: 'POST',
       url: '/all-data/query',
-      timeout: 190000,
+      // Backend SDK bridge: 180s; Nginx: 200s; browser: 210s.
+      timeout: 210000,
       silent: true,
       data: {
-        ...form,
         method: method.value,
         code: optionalCode.value && whole.value ? '' : form.code,
-        end_dt: form.end_dt.replace('T', ' ') + (form.end_dt.length === 16 ? ':00' : ''),
+        ...(tick.value ? { count: form.count } : {}),
+        ...(method.value === 'get_ticks'
+          ? { end_dt: form.end_dt.replace('T', ' ') + (form.end_dt.length === 16 ? ':00' : '') }
+          : {}),
+        ...(method.value === 'get_fundamentals'
+          ? { report: form.report, quarter: form.quarter }
+          : tick.value ? {} : { start_date: form.start_date, end_date: form.end_date }),
       },
     })
     result.value = data
     resultTitle.value = types.find((t) => t[0] === method.value)?.[1] || ''
     page.value = 1
-    remaining.value = data.retry_after
+    setCooldown(data.retry_after)
     interval.value = data.interval_seconds
   } catch (e: unknown) {
     const response = (e as { response?: { data?: { detail?: unknown; msg?: string } } }).response

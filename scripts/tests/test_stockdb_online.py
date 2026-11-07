@@ -62,3 +62,19 @@ def test_response_scope_mismatch_is_visible(store, monkeypatch):
     result = online.query('.', {'method': 'get_money_flow', 'code': '000001', 'start_date': '2026-11-05', 'end_date': '2026-11-06'})
     assert len(result['warnings']) == 2
     assert result['data'][0]['code'] == '603286'
+
+@pytest.mark.parametrize('count', [0, '', None, 1001])
+@pytest.mark.parametrize('method', ['get_fundamentals', 'get_billboard_list', 'get_locked_shares', 'get_money_flow', 'get_mtss'])
+def test_non_tick_queries_ignore_hidden_count(method, count):
+    payload = {'method': method, 'code': '000001', 'count': count,
+               'report': 'cash_flow', 'quarter': '2024q4',
+               'start_date': '2026-11-05', 'end_date': '2026-11-06'}
+    _, _, args = online.parameters(payload)
+    assert 'count' not in args
+
+@pytest.mark.parametrize('method', ['get_last_tick', 'get_ticks'])
+@pytest.mark.parametrize('count', [0, '', None, 1001])
+def test_tick_queries_still_reject_invalid_count(method, count):
+    with pytest.raises(online.OnlineError, match='条数'):
+        online.parameters({'method': method, 'code': '000001', 'count': count,
+                           'end_dt': '2026-11-06 15:00:00'})

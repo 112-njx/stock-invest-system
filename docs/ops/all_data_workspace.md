@@ -10,6 +10,8 @@
 
 表格动态展示上游字段，每页 100 条，可导出当前完整结果 JSON。上游返回的代码或日期范围不符时，结果区明确提醒，原始返回不被静默修改。
 
+查询参数按当前接口构造，非 Tick 接口不发送或校验条数。冷却按绝对截止时间计算，休眠或切回标签页时立即校正；可见性恢复只读取本地限频状态，不触发在线行情查询。在线查询专用代理超时为 200 秒，长于后端 180 秒等待时间，短于浏览器 210 秒等待时间；其他 API 的代理超时不变。
+
 验证：`stock_backend/.venv/Scripts/python.exe -m pytest scripts/tests/test_stockdb_online.py scripts/tests/test_stockdb_sdk_bridge.py -q`；前端目录执行 `node scripts/verify-all-data.mjs` 与 `npm run build`。
 
 2026-11-07 联调：实时 Tick、现金流量表、龙虎榜全市场、融资融券成功返回并保存。单股解禁查询成功返回空结果并保存，页面仅提供单股解禁查询。历史 Tick 两次返回 try again later；资金流向上游未遵循代码及日期参数，页面显示范围提醒。保留真实错误，不自动重试。
