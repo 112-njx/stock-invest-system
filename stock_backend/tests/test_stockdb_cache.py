@@ -183,3 +183,29 @@ def test_content_version_changes_for_same_day_corrections(monkeypatch):
     corrected = rd._load_snapshot()
     assert original.dates == corrected.dates
     assert original.version != corrected.version
+
+
+@pytest.mark.parametrize("length", [6, 61])
+def test_phase_returns_use_factor_adjustment_and_exact_history(monkeypatch, length):
+    dates = list(range(20260101, 20260101 + length))
+    def query(client, command, table, **params):
+        if command == "keys":
+            return [f"日k:600001:{day}" for day in dates] + ["日k:600001:20990101"]
+        if table == "复权":
+            return [[f"复权:600001:{dates[-1]}", 2]]
+        assert "num" not in params
+        assert params["k2"] == f"fwd:{dates[0]},{dates[-1]}"
+        return [[day, 50 if day == dates[-1] else 100] for day in dates]
+    monkeypatch.setattr(rd, "_client", lambda: nullcontext(None))
+    monkeypatch.setattr(rd, "_rd", query)
+    result = rd.performance("600001", dates[-1])
+    assert result["returns"]["5"]["value"] == 0
+    assert result["returns"]["60"]["value"] == (0 if length == 61 else None)
+    assert result["as_of"] == dates[-1]
+
+
+def test_phase_returns_reject_missing_snapshot_day(monkeypatch):
+    monkeypatch.setattr(rd, "_client", lambda: nullcontext(None))
+    monkeypatch.setattr(rd, "_rd", lambda *args, **kwargs: ["日k:600001:20260101"] if args[1] == "keys" else [])
+    with pytest.raises(rd.StockDBError):
+        rd.performance("600001", 20260102)

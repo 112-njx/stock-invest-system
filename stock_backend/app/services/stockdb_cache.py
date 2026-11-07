@@ -19,7 +19,7 @@ from app.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 # Include algorithm schema and source identity to isolate deployments and future calculation changes.
-_namespace = "stockdb:v2:" + sha256(get_settings().STOCKDB_URL.encode()).hexdigest()[:12]
+_namespace = "stockdb:v3:" + sha256(get_settings().STOCKDB_URL.encode()).hexdigest()[:12]
 _snapshot: rd.Snapshot | None = None
 _built_at = 0.0
 _last_error = ""

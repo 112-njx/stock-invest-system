@@ -10,7 +10,14 @@ export type Weight = typeof algorithms[number][0]
 export type Bar = [date: number, open: number, high: number, low: number, close: number,
   volume: number, amount: number, previous: number]
 export interface Board { id: string; name: string; count: number; price: number | null; changes: Record<string, number | null> }
-export interface Member { code: string; name: string; bar: Bar }
+export interface Member {
+  code: string; name: string; bar: Bar
+  metrics?: { volume?: number | null; amount?: number | null; turnover?: number | null; float_mv?: number | null; total_mv?: number | null }
+}
+export interface StockPerformance {
+  version: string; as_of: number
+  returns: Record<string, { value: number | null; start_date: number | null; end_date: number }>
+}
 export interface Members {
   members: Member[]
   count: number

@@ -1,6 +1,7 @@
 """Read-only RD queries for the independent stockdb index workspace."""
 
 import json
+import math
 from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -15,7 +16,7 @@ from app.core.config import get_settings
 
 CATEGORIES = {"sw1": "申万一级", "sw2": "申万二级", "sw3": "申万三级", "concept": "概念"}
 WEIGHTS = ("equal", "float_mv", "amount", "volume", "total_mv")
-BAR_FIELDS = "date,code,name,open,high,low,close,pre_close,volume,amount,float_mv,total_mv"
+BAR_FIELDS = "date,code,name,open,high,low,close,pre_close,volume,amount,float_mv,total_mv,turnover"
 # The reference page starts its trading window ten calendar weeks before the latest local session.
 LOOKBACK_DAYS = 70
 CACHE_SECONDS = 300
@@ -108,7 +109,8 @@ class Snapshot:
 
     def members(self, codes: list[str]) -> list:
         return [
-            {"code": code, "name": self.stocks[code]["name"], "bar": self.stocks[code]["latest"]}
+            {"code": code, "name": self.stocks[code]["name"], "bar": self.stocks[code]["latest"],
+             "metrics": self.stocks[code].get("metrics", {})}
             for code in codes if code in self.stocks
         ]
 
@@ -143,8 +145,8 @@ def _load_snapshot() -> Snapshot:
                         k2=f"fwd:{dates[0]},{dates[-1]}", ap=f"get.{BAR_FIELDS}")
             digest.update(json.dumps(batch, ensure_ascii=False, separators=(",", ":")).encode())
             for row in batch:
-                if len(row) == 12 and all(row[3:7]) and row[0] and row[1]:
-                    rows[row[1]].append(row)
+                if len(row) in (12, 13) and all(row[3:7]) and row[0] and row[1]:
+                    rows[row[1]].append([*row, None] if len(row) == 12 else row)
 
     stocks = {}
     date_position = {date: i for i, date in enumerate(dates)}
@@ -157,7 +159,8 @@ def _load_snapshot() -> Snapshot:
         bars = []
         latest_bar = None
         previous = 0
-        for date, _, name, open_, high, low, close, pre_close, volume, amount, float_mv, total_mv in sorted(
+        metrics = {}
+        for date, _, name, open_, high, low, close, pre_close, volume, amount, float_mv, total_mv, turnover in sorted(
             history, key=lambda row: row[0],
         ):
             if date not in date_position:
@@ -165,6 +168,9 @@ def _load_snapshot() -> Snapshot:
             offset = bisect_right(factor_dates, date)
             multiplier = (timeline[offset - 1][1] if offset else 1) / latest_factor
             adjusted = [round(price * multiplier, 2) for price in (open_, high, low, close)]
+            metrics = {key: value if isinstance(value, (int, float)) and math.isfinite(value) else None
+                       for key, value in {"volume": volume, "amount": amount, "float_mv": float_mv,
+                                          "total_mv": total_mv, "turnover": turnover}.items()}
             volume, amount = volume or 0, amount or 0
             values[positions[code], date_position[date]] = [
                 *adjusted, volume, amount, float_mv or 0, total_mv or 0, previous,
@@ -174,8 +180,39 @@ def _load_snapshot() -> Snapshot:
             latest_bar = [date, open_, high, low, close, volume, amount, pre_close or 0]
             latest_name = name or code
         if latest_bar is not None:
-            stocks[code] = {"name": latest_name, "latest": latest_bar, "bars": bars}
-    return Snapshot(dates, boards, stocks, values, positions, "v2-" + digest.hexdigest()[:24])
+            stocks[code] = {"name": latest_name, "latest": latest_bar, "bars": bars, "metrics": metrics}
+    return Snapshot(dates, boards, stocks, values, positions, "v3-" + digest.hexdigest()[:24])
+
+
+def performance(code: str, as_of: int) -> dict:
+    """Read just the selected equity's last 61 sessions, without changing index inception."""
+    with _client() as client:
+        keys = _rd(client, "keys", "日k", k1=f"key:{code}", k2="all:")
+        dates = sorted(int(key.rsplit(":", 1)[-1]) for key in keys
+                       if int(key.rsplit(":", 1)[-1]) <= as_of)[-61:]
+        if not dates:
+            raise StockDBError("所选股票缺少历史行情。")
+        # A negative num on an RD fwd range reverses its first rows, not its last rows.
+        rows = _rd(client, "vals", "日k", k1=f"key:{code}", k2=f"fwd:{dates[0]},{as_of}", ap="get.date,close")
+        factors = _rd(client, "get", "复权", k1=f"key:{code}", k2="all:", ap="get.cum")
+    timeline = sorted((int(key.rsplit(":", 1)[-1]), cumulative) for key, cumulative in factors
+                      if isinstance(cumulative, (int, float)) and math.isfinite(cumulative) and cumulative > 0)
+    factor_dates = [day for day, _ in timeline]
+    history = []
+    for day, close in sorted(rows):
+        if day > as_of or not isinstance(close, (int, float)) or not math.isfinite(close) or close <= 0:
+            continue
+        offset = bisect_right(factor_dates, day)
+        factor = timeline[offset - 1][1] if offset else 1
+        history.append((day, close * factor))
+    if not history or history[-1][0] != as_of:
+        raise StockDBError("所选股票的阶段行情暂不可用，请刷新后重试。")
+    result = {}
+    for days in (5, 20, 60):
+        baseline = history[-days - 1] if len(history) > days else None
+        result[str(days)] = {"value": (history[-1][1] / baseline[1] - 1) * 100 if baseline else None,
+                             "start_date": baseline[0] if baseline else None, "end_date": as_of}
+    return {"as_of": as_of, "returns": result}
 
 
 def snapshot() -> Snapshot:

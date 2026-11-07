@@ -62,7 +62,7 @@ await build({
           };
         `,
       }))
-      builder.onLoad({ filter: /StockDbView[.]vue$/ }, async ({ path }) => {
+      builder.onLoad({ filter: /(StockDbView|StockSummary)[.]vue$/ }, async ({ path }) => {
         const { descriptor } = parse(await readFile(path, 'utf8'), { filename: path })
         return { contents: compileScript(descriptor, { id: 'workspace-test', inlineTemplate: true }).content, loader: 'ts' }
       })
@@ -113,7 +113,7 @@ async function fixture(run, legacy = false) {
       changes: Object.fromEntries([1, 3, 5, 10, 15, 30].map(days => [days, i])),
     })),
     bundle: (selected = '600001') => ({
-      members: ['600001', '600002'].map(code => ({ code, name: code, bar: state.bars()[0] })),
+      members: ['600001', '600002'].map(code => ({ code, name: code, bar: state.bars()[0], metrics: { amount: code === '600001' ? 0 : null, turnover: code === '600001' ? 2 : null, float_mv: code === '600001' ? 100000000 : null } })),
       count: 2, stockCode: selected, stockBars: state.bars(),
     }),
     async request(path) {
@@ -130,6 +130,7 @@ async function fixture(run, legacy = false) {
         charts: Object.fromEntries(url.searchParams.get('ids').split(',').map(id => [id, state.bars()])),
       }
       if (url.pathname.startsWith('/members/')) return state.bundle(url.searchParams.get('selected') || '600001')
+      if (url.pathname.endsWith('/performance')) return { as_of: 20261104, returns: { '5': {value: 2, start_date: 20261028, end_date: 20261104} } }
       if (url.pathname.startsWith('/stocks/')) return { bars: state.bars() }
       if (url.pathname === '/status') return { refreshing: false, error: '' }
       throw new Error('Unexpected request ' + path)
@@ -143,7 +144,7 @@ async function fixture(run, legacy = false) {
   const app = createApp(Workspace)
   app.mount('#test-app')
   try {
-    await until(() => chartCount() === 10 && selectedStock()?.includes('600001'), 'initial workspace')
+    await until(() => chartCount() === 1 && selectedStock()?.includes('600001'), 'initial workspace')
     await run(state)
   } finally {
     app.unmount()
@@ -156,12 +157,12 @@ await fixture(async state => {
   query('.ranking select').dispatchEvent(new dom.window.Event('click', { bubbles: true }))
   await until(() => state.calls.some(path => path.startsWith('/charts?')), 'pending sorted curves')
   assert.equal(boardName(), 'Board 0')
-  assert.equal(chartCount(), 10, 'keep all previous curves while sorting')
+  assert.equal(chartCount(), 1, 'keep all previous curves while sorting')
   assert.equal(selectedBoard(), 'Board 0')
   pending.resolve()
   await until(() => boardName() === 'Board 23', 'sorted workspace')
   assert.equal(selectedBoard(), 'Board 23', 'unfixed selection follows the new leader')
-  assert.equal(chartCount(), 10)
+  assert.equal(chartCount(), 1)
 })
 console.log('Passed atomic ranking/curves and default selection follow')
 
@@ -169,7 +170,8 @@ await fixture(async () => {
   clickBoard('Board 1')
   await until(() => selectedBoard() === 'Board 1', 'manually selected board')
   query('.ranking select').dispatchEvent(new dom.window.Event('click', { bubbles: true }))
-  await until(() => boardName() === 'Board 23', 'new ranking with fixed board')
+  await until(() => all('.board-row')[0].title === 'Board 23', 'new ranking with fixed board')
+  assert.equal(boardName(), 'Board 1')
   assert.equal(selectedBoard(), 'Board 1', 'preserve manual board selection')
 })
 console.log('Passed manually fixed selection preservation')
@@ -201,10 +203,9 @@ await fixture(async state => {
 console.log('Passed rapid stock re-selection')
 
 await fixture(async state => {
-  const cards = query('.cards')
-  cards.scrollTop = 4000
-  cards.dispatchEvent(new dom.window.Event('scroll'))
-  await until(() => chartCount() === 10 && query('.rank').textContent.trim() === 'TOP 11', 'scrolled curves')
+  clickBoard('Board 12')
+  await until(() => boardName() === 'Board 12', 'selected index outside initial home')
+  assert(!query('.rank'), 'ranking badge removed')
   state.version = 'v2'
   const pending = deferred()
   state.hold = path => path.startsWith('/charts?') ? pending.promise : undefined
@@ -213,9 +214,9 @@ await fixture(async state => {
   assert(all('.card .test-chart').every(chart => chart.dataset.close === '100'), 'keep old generation until ready')
   pending.resolve()
   await until(() => all('.card .test-chart').every(chart => chart.dataset.close === '200'), 'new generation viewport')
-  assert.equal(chartCount(), 10)
-  assert.equal(cards.scrollTop, 4000)
-  assert.equal(query('.rank').textContent.trim(), 'TOP 11')
+  assert.equal(chartCount(), 1)
+  assert.equal(boardName(), 'Board 12')
+  assert(!query('.rank'))
 })
 console.log('Passed version replacement at the current viewport')
 await fixture(async state => {
@@ -226,4 +227,20 @@ await fixture(async state => {
 }, true)
 console.log('Passed retired category cache recovery and removed editor')
 
+await fixture(async () => {
+  const amount = all('.member-sorts button')[4]
+  amount.click()
+  await nextTick()
+  assert.equal(all('.stock-row')[0].querySelector('strong').textContent, '600001')
+  amount.click()
+  await nextTick()
+  assert.equal(all('.stock-row')[0].querySelector('strong').textContent, '600001', 'missing values remain last')
+  assert.match(row('600002').textContent, /—/)
+  assert.match(row('600001').textContent, /1.00亿/)
+  await until(() => query('.performance-grid')?.textContent.includes('+2.00%'), 'phase returns')
+  assert.match(query('.performance-grid').textContent, /—/)
+  assert(query('.indices .member-table'))
+  assert(!query('.constituents .stock-row'))
+})
+console.log('Passed expanded stock columns, missing-value sorting and phase performance')
 dom.window.close()
