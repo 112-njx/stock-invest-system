@@ -140,11 +140,11 @@ onBeforeUnmount(() => {
     <div class="detail-topbar">
       <button class="detail-back" @click="goBack">← 返回</button>
       <span class="detail-hint">按 Esc 返回行情页</span>
+      <div class="chart-tabs" role="group" aria-label="详情图表视图"><button :aria-pressed="chartView==='quotes'" @click="chartView='quotes'">行情图</button><button :aria-pressed="chartView==='flows'" :disabled="market.current?.type!=='stock'" @click="chartView='flows'">资金流向</button></div>
     </div>
 
     <div class="detail-body">
       <div class="col-left">
-        <div class="chart-tabs" role="group" aria-label="详情图表视图"><button :aria-pressed="chartView==='quotes'" @click="chartView='quotes'">行情图</button><button :aria-pressed="chartView==='flows'" :disabled="market.current?.type!=='stock'" @click="chartView='flows'">资金流向</button></div>
         <div v-show="chartView==='quotes'" class="chart-content">
         <!-- A+B 合并：K 线 + 技术指标多 pane，共享时间轴；G32：叠加回测买卖点 -->
         <KLineChart
