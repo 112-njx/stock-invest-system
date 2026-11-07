@@ -89,6 +89,8 @@ def main():
                 if job:
                     worker = threading.Thread(target=controller.execute, args=(job,), daemon=True)
                     worker.start()
+                elif controller.recover_orphan():
+                    pass
                 elif not (root/'maintenance.json').exists():
                     for child in children:
                         if child.poll() is not None:

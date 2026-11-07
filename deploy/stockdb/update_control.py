@@ -149,6 +149,24 @@ class Controller:
             write_json(self.root/'version.json', {'status':'failed', 'version':None})
             self.report('failed', 0, '容器在更新过程中中断，本地源保持维护状态，请检查日志后重试', 'failed', 'interrupted container update')
 
+    def recover_orphan(self, now=None):
+        """Called only when no update worker is alive; allow an API submission grace period."""
+        marker = self.root/'maintenance.json'
+        if not marker.exists() or (self.root/'request.json').exists():
+            return False
+        if (time.time() if now is None else now) - marker.stat().st_mtime < 30:
+            return False
+        state = read_json(self.root/'status.json', {})
+        if state.get('status') == 'failed':
+            return False
+        self.stop()
+        self.task = state.get('task_id')
+        (self.root/'active-request.json').unlink(missing_ok=True)
+        write_json(self.root/'version.json', {'status':'failed', 'version':None})
+        self.report('failed', 0, '更新提交或执行已中断，本地源保持维护状态，可重新提交更新',
+                    'failed', 'orphaned update without an active worker')
+        return True
+
     def execute(self, job):
         self.task, self.completed, self.details = job['task_id'], False, {}
         if job.get('operation') != 'update':

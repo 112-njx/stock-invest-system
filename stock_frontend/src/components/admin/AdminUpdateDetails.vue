@@ -13,6 +13,7 @@ const more = ref(false)
 const viewport = ref<HTMLElement>()
 let generation = 0
 let loading = false
+let pendingRefresh: 'new' | 'older' | 'latest' | null = null
 let timer: ReturnType<typeof setTimeout> | undefined
 let alive = true
 const labels: Record<string,string> = { checking:'更新前检查',stopping:'暂停读取',downloading:'下载与续传',merging:'文件合并',verifying:'文件校验',starting:'恢复服务',done:'完成',failed:'失败',retrying:'重试中',deleting:'待删除',deleted:'已删除',reused:'已复用' }
@@ -21,9 +22,15 @@ function scrolled() {
   if (el) follow.value = el.scrollHeight - el.scrollTop - el.clientHeight < 32
 }
 async function load(mode: 'new' | 'older' | 'latest' = 'new') {
-  if (!props.taskId || loading || !alive) return
+  if (!props.taskId || !alive) return
+  if (loading) {
+    // Coalesce refreshes rather than dropping the terminal state or an explicit user action.
+    if (mode === 'latest' || pendingRefresh !== 'latest') pendingRefresh = mode
+    return
+  }
   loading = true
   const version = generation
+  const incremental = mode === 'new' && rows.value.length > 0
   try {
     const page = await request<Page>({url:'/admin/local-market/update/events',silent:true,params:{
       task_id:props.taskId, limit:200,
@@ -51,8 +58,15 @@ async function load(mode: 'new' | 'older' | 'latest' = 'new') {
       if (viewport.value && follow.value) viewport.value.scrollTop = viewport.value.scrollHeight
     }
     error.value = ''
+    // A completed task can have more than one page of events since the last poll.
+    if (incremental && page.has_more && !props.running && follow.value && pendingRefresh !== 'latest') pendingRefresh = 'new'
   } catch { if (alive && version === generation) error.value = '日志读取失败，已保留现有记录，可重试' }
-  finally { loading = false }
+  finally {
+    loading = false
+    const pending = pendingRefresh
+    pendingRefresh = null
+    if (pending && alive) await load(pending)
+  }
 }
 function latest() { follow.value = true; void load('latest') }
 function schedule() {
@@ -62,8 +76,8 @@ function schedule() {
 }
 watch(() => props.taskId, () => {
   generation++; rows.value=[]; files.value=[]; follow.value=true; more.value=false; error.value=''
-  // An older request may still own the in-flight slot; resume after it settles.
-  void (async () => { while (loading && alive) await new Promise(r => setTimeout(r,50)); if(alive) await load('latest') })()
+  pendingRefresh = null
+  void load('latest')
 }, { immediate:true })
 watch(() => props.running, () => { void load(); schedule() })
 function visibility() { if(!document.hidden) {void load(); schedule()} else clearTimeout(timer) }

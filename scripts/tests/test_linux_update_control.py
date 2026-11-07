@@ -86,6 +86,34 @@ class UpdateTests(unittest.TestCase):
         self.controller.recover()
         self.assertEqual(read_json(self.root/'status.json')['status'],'failed')
 
+    def test_runtime_orphan_recovery_has_a_grace_period_and_runs_once(self):
+        marker = self.root/'maintenance.json'
+        marker.touch()
+        write_json(self.root/'status.json',{'task_id':self.controller.task,'status':'queued'})
+        timestamp = marker.stat().st_mtime
+        self.assertFalse(self.controller.recover_orphan(now=timestamp+29))
+        self.assertEqual(read_json(self.root/'status.json')['status'],'queued')
+        self.assertTrue(self.controller.recover_orphan(now=timestamp+31))
+        self.assertEqual(read_json(self.root/'status.json')['status'],'failed')
+        self.assertEqual(self.calls,['stop'])
+        self.assertTrue(marker.exists())
+        self.assertFalse(self.controller.recover_orphan(now=timestamp+60))
+
+    def test_runtime_recovery_does_not_consume_a_published_job(self):
+        marker = self.root/'maintenance.json'; marker.touch()
+        job = {'task_id':self.controller.task,'operation':'update'}
+        write_json(self.root/'request.json',job)
+        self.assertFalse(self.controller.recover_orphan(now=marker.stat().st_mtime+60))
+        self.assertEqual(read_json(self.root/'request.json'),job)
+        self.assertEqual(self.calls,[])
+
+    def test_runtime_recovery_handles_idle_state_and_abandoned_claim(self):
+        marker = self.root/'maintenance.json'; marker.touch()
+        write_json(self.root/'status.json',{'task_id':self.controller.task,'status':'idle'})
+        write_json(self.root/'active-request.json',{'task_id':self.controller.task})
+        self.assertTrue(self.controller.recover_orphan(now=marker.stat().st_mtime+60))
+        self.assertFalse((self.root/'active-request.json').exists())
+
     @unittest.skipIf(sys.platform == 'win32','Linux PTY integration')
     def test_failed_hash_does_not_restart_data_readers(self):
         data = self.data/'data';data.mkdir()
