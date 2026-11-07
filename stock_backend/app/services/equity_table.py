@@ -17,7 +17,7 @@ _state = None
 _checked = 0
 _lock = Lock()
 _running = False
-_KEY = 'equity-table:v1'
+_KEY = 'equity-table:v2'
 FIELDS = ('open','high','low','close','volume','amount','turnover','amplitude','total_mv',
           'float_mv','total_share','float_share','pe_ttm','pb','vol_ratio')
 
@@ -26,8 +26,15 @@ def number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
 
 
+def valid_close(row, code):
+    return (isinstance(row, dict) and row.get('code') == code
+            and isinstance(row.get('date'), int)
+            and number(row.get('close')) is not None and row['close'] > 0)
+
+
 def returns(history, factors, baseline, latest):
-    if not baseline or not latest or not baseline[1] or baseline[0] > latest[0]:
+    if (not baseline or not latest or number(baseline[1]) is None or baseline[1] <= 0
+            or number(latest[1]) is None or latest[1] <= 0 or baseline[0] > latest[0]):
         return None
     dates = [d for d, _ in factors]
     def factor(d):
@@ -40,21 +47,37 @@ def build():
     provider = StockDBProvider()
     directory = get_directory()
     stocks = directory['items']
-    # Dates and data follow the local database, including an available current-day record.
-    keys = provider.query('keys', '日k', k1='key:600519', k2='all:')
-    dates = sorted(int(k.rsplit(':',1)[1]) for k in keys)
-    latest = dates[-1]
-    year = latest // 10000
-    year_base = next((d for d in reversed(dates) if d < year*10000+101), None)
-    start = int((datetime.strptime(str(latest),'%Y%m%d')-timedelta(days=65)).strftime('%Y%m%d'))
+    # Use the directory only to bound the lookback, never as a latest-date ceiling.
+    # The batch scans include every local date after that bound, even if a directory
+    # refresh or one individual stock is lagging behind the market.
+    anchor = max(int(stock['latest_date']) for stock in stocks)
+    start = int((datetime.strptime(str(anchor),'%Y%m%d')-timedelta(days=65)).strftime('%Y%m%d'))
+    codes = {stock['code'] for stock in stocks}
     history = defaultdict(dict)
     for prefix in ('0','3','6','8','9'):
-        rows = provider.query('vals','日k',k1='qz:'+prefix,k2=f'fwd:{start},{latest}',ap='get.date,code,close')
-        for d, code, close in rows:
-            if number(close) and close > 0: history[code][d] = close
+        rows = provider.query('vals','日k',k1='qz:'+prefix,k2=f'fwd:{start},99991231',ap='get.date,code,close')
+        for record in rows:
+            if not isinstance(record, (list, tuple)) or len(record) != 3:
+                continue
+            day, code, close = record
+            if code in codes and isinstance(day, int) and number(close) is not None and close > 0:
+                history[code][day] = close
+    if not history:
+        raise ValueError('本地股票库没有有效收盘数据')
+    latest = max(day for timeline in history.values() for day in timeline)
+    year = latest // 10000
     baseline = {}
-    if year_base:
-        baseline = {r['code']:(r['date'],r['close']) for r in provider.query('vals','日k',k1='all:',k2=f'key:{year_base}') if isinstance(r,dict) and number(r.get('close'))}
+    prior_end = (year-1)*10000+1231
+    for prefix in ('0','3','6','8','9'):
+        rows = provider.query('vals','日k',k1='qz:'+prefix,
+                              k2=f'fwd:{(year-1)*10000+1201},{prior_end}',ap='get.date,code,close')
+        for record in rows:
+            if not isinstance(record, (list, tuple)) or len(record) != 3:
+                continue
+            day, code, close = record
+            if code in codes and number(close) is not None and close > 0:
+                if code not in baseline or day > baseline[code][0]:
+                    baseline[code] = (day,close)
     factors = defaultdict(list)
     for key, cumulative in provider.query('get','复权*',ap='get.cum'):
         _, code, day = key.split(':')
@@ -69,11 +92,12 @@ def build():
     for stock in stocks:
         code = stock['code']
         row = latest_rows.get(code)
-        if not row:
+        if not valid_close(row, code):
             records = provider.query('vals','日k',k1='key:'+code,k2='all:',num=-22)
-            row = records[-1] if records else None
-            for record in records:
-                if number(record.get('close')) and record['close']>0: history[code][record['date']] = record['close']
+            valid_records = [r for r in records if valid_close(r, code) and r['date'] <= latest]
+            row = max(valid_records, key=lambda r:r['date'], default=None)
+            for record in valid_records:
+                history[code][record['date']] = record['close']
         if not row: continue
         data = {k:number(row.get(k)) for k in FIELDS}
         previous, close = number(row.get('pre_close')), data['close']
@@ -92,8 +116,12 @@ def build():
         # Newly listed equities start at their first available session in the current year.
         base = baseline.get(code)
         if base is None:
+            prior = provider.query('vals','日k',k1='key:'+code,k2=f'fwd:19000101,{prior_end}',num=-1)
+            if prior and valid_close(prior[-1],code):
+                base=(prior[-1]['date'],prior[-1]['close'])
+        if base is None:
             first = provider.query('vals','日k',k1='key:'+code,k2='all:',num=1)
-            if first and first[0]['date']//10000 == year: base=(first[0]['date'],first[0]['close'])
+            if first and valid_close(first[0],code) and first[0]['date']//10000 == year: base=(first[0]['date'],first[0]['close'])
         data['return_ytd'] = returns(timeline,factors[code],base,last)
         items.append(data)
     return dict(items=items,date=latest,industries=sorted(set(industries.values())),source='stockdb',
