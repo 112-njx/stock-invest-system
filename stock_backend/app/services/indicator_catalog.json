@@ -234,5 +234,181 @@
       "sdk",
       "pandas"
     ]
+  },
+  {
+    "key": "rsi",
+    "label": "RSI 相对强弱",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "RSI",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 24,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "rsi",
+        "label": "RSI",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "rsi"
+    ],
+    "reference_lines": [
+      30,
+      70
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "wr",
+    "label": "WR 威廉指标",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "WR",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期1",
+        "type": "integer",
+        "default": 10,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "n1",
+        "label": "周期2",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "wr1",
+        "label": "WR1",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "wr2",
+        "label": "WR2",
+        "color": "#3b82f6",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "wr1",
+      "wr2"
+    ],
+    "reference_lines": [
+      20,
+      80
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "cci",
+    "label": "CCI 顺势指标",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "CCI",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 14,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "cci",
+        "label": "CCI",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "cci"
+    ],
+    "reference_lines": [
+      -100,
+      0,
+      100
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "atr",
+    "label": "ATR 真实波幅",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "ATR",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "atr",
+        "label": "ATR",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "atr"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
   }
 ]

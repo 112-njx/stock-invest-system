@@ -70,3 +70,19 @@ def test_v2_preferences_preserve_parameters_through_legacy_writes(client, accoun
     assert restored['panel_options'] == v2['panel_options']
     assert restored['panels'] == ['macd']
     assert client.put(url,json={**v2,'panel_options':{'kdj':{'params':{'n':0}}}}).status_code == 422
+
+
+def test_common_panel_parameters_save_reload_and_account_isolation(client,accounts):
+    active=[accounts[0]]
+    app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=active[0])
+    url='/api/v1/users/me/chart-settings'
+    config={'version':2,'ma':ChartSettings().model_dump()['ma'],'panels':['rsi','wr','cci'],'panel_options':{'rsi':{'params':{'n':7}},'wr':{'params':{'n':14,'n1':5}},'cci':{'params':{'n':9}},'atr':{'params':{'n':6}}}}
+    assert client.put(url,json=config).status_code==200
+    assert client.get(url,params={'version':2}).json()['data']==config
+    assert client.put(url,json={**config,'panels':['rsi','wr','cci','atr']}).status_code==422
+    config['panels']=['rsi','wr','atr']
+    assert client.put(url,json=config).json()['data']==config
+    active[0]=accounts[1]
+    assert client.get(url,params={'version':2}).json()['data']['panels']==['volume','macd']
+    active[0]=accounts[0]
+    assert client.get(url,params={'version':2}).json()['data']==config

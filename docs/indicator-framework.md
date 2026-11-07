@@ -1,6 +1,6 @@
 # 详情页指标框架（第一批）
 
-当前目录仅开放 MA、MACD、KDJ、成交量、成交额；不提前开放未验证的指标。
+当前目录开放 MA、MACD、KDJ、RSI、WR、CCI、ATR，以及成交量、成交额；技术指标进度为 7/39，不提前开放未验证的项目。
 
 ## 单一指标目录
 
@@ -27,3 +27,18 @@ panels 数组同时表示开启状态和排列顺序，最多三个且不得重�
 核对 SDK 函数签名、输出和空值规则；添加目录项与必要原生适配；对照容器原生输出补回归；验证参数表单、多曲线、参考线、时间对齐、账号参数保存及三个副图上限。下一批为 RSI、WR、CCI、ATR。
 
 验证入口：后端 test_indicator_registry / test_chart_settings / test_indicators / test_price_ma，前端 scripts/verify-detail-chart-settings.mjs 与 scripts/verify-indicator-isolation.mjs，原生 scripts/tests/test_price_ma.py。
+
+## 第二批：RSI / WR / CCI / ATR
+
+四项均为 SDK-only，开启全局 pandas 开关也不会改用 pandas 重算；仅在详情页目录中提供，每项占一个副图名额。目录驱动现有参数编辑器、账号设置、图例、曲线与参考线，无需修改首页或增加逐项渲染分支。
+
+| 指标 | 原生签名 | 输出字段 | 默认参考线 |
+| --- | --- | --- | --- |
+| RSI | RSI(close, n=24) | rsi | 30、70 |
+| WR | WR(close, high, low, n=10, n1=6) | wr1、wr2 | 20、80 |
+| CCI | CCI(close, high, low, n=14) | cci | -100、0、100 |
+| ATR | ATR(close, high, low, n=20) | atr | 无 |
+
+WR 原生输出使用正向 0～100，不转换为负值。RSI 使用 SDK 默认单线 24 周期；WR 两条线合计一个名额。原生 NaN/Inf 仅转为 JSON null；保留原始数值、初始化和预热规则，例如 ATR 默认首个有限值需要前置有效收盘价，不本地补零或补公式。参数可独立修改、恢复默认并随账号保存，关闭再开启保留参数。
+
+数值对照验证：`scripts/tests/test_common_indicators.py`（Windows/Linux 实际原生模块）；API、四周期路由、分页预热及引擎开关验证：`stock_backend/tests/test_common_indicators.py`。现有前端回归增加了四项的选择上限、参数持久化、账号切换、四种时间标签、参考线、空值显示及独立失败重试检查。

@@ -132,7 +132,7 @@ def test_indicators_api_columns(client: TestClient, _indicator_data):
 
 
 def test_indicators_api_invalid_name(client: TestClient, _indicator_data):
-    resp = client.get("/api/v1/indicators", params={"symbol": "666888", "names": "rsi"})
+    resp = client.get("/api/v1/indicators", params={"symbol": "666888", "names": "unknown_indicator"})
     assert resp.status_code == 400
 
 

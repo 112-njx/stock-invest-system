@@ -139,3 +139,57 @@ assert.match(document.body.textContent,/已开启 1\/3/)
 assert.equal(panel('KDJ').classList.contains('active'),true)
 app.unmount()
 console.log('Catalog outage: guest/account MA saves preserve panels and parameters; catalog recovery passed.')
+
+// Batch 2 panels are catalog-driven, consume one slot each and persist custom parameters.
+const commonKeys=['rsi','wr','cci','atr']
+const commonParams={rsi:{n:7},wr:{n:14,n1:5},cci:{n:9},atr:{n:6}}
+saved.set(4,{version:2,ma:defaults().ma,panels:[],panel_options:{}})
+user.setAuth('fixture',{id:4,username:'four'})
+app=mount(true);await settle();await click(document.querySelector('[title="选择技术指标"]'))
+assert.equal(document.querySelectorAll('.picker-item').length,8)
+for(const key of ['rsi','wr','cci']) await click(panel(key.toUpperCase()))
+assert.match(document.body.textContent,/已开启 3\/3/)
+assert.equal(panel('ATR').disabled,true)
+for(const key of commonKeys){
+  if(key==='atr'){await click(panel('CCI'));await click(panel('ATR'))}
+  const definition=definitions.find(d=>d.key===key)
+  await click(button(`${definition.label} 参数`))
+  for(const param of definition.parameters){
+    const el=document.querySelector(`[aria-label="${definition.label} ${param.label}"]`)
+    assert.equal(Number(el.value),param.default)
+    await input(el,String(commonParams[key][param.key]))
+  }
+  await click(button('保存参数'))
+  assert.deepEqual(saved.get(4).panel_options[key].params,commonParams[key])
+  await click(button(`${definition.label} 参数`))
+  for(const param of definition.parameters) assert.equal(Number(document.querySelector(`[aria-label="${definition.label} ${param.label}"]`).value),commonParams[key][param.key])
+  await click(button('恢复默认参数'))
+  for(const param of definition.parameters) assert.equal(Number(document.querySelector(`[aria-label="${definition.label} ${param.label}"]`).value),param.default)
+  await click(button('取消'))
+  const fake=m.createIndicatorSeries(pane,definition,'#aaa')
+  assert.equal(fake.series.length,key==='wr'?2:1)
+  assert.deepEqual(fake.referenceLines.map(l=>l.price),definition.reference_lines)
+  for(const ts of ['2026-11-05T00:00:00Z','2026-11-06T00:00:00Z','2026-11-30T00:00:00Z','2026-11-05T01:45:00Z']){
+    const row={ts,...Object.fromEntries(definition.native_outputs.map((f,i)=>[f,42+i]))}
+    m.fillIndicatorSeries(fake.series,definition,[row],stamp=>Date.parse(stamp)/1000,{up:'red',down:'green'})
+    fake.series.forEach((line,i)=>assert.deepEqual(line.data,[{time:Date.parse(ts)/1000,value:42+i}]))
+    m.fillIndicatorSeries(fake.series,definition,[{ts,...Object.fromEntries(definition.native_outputs.map(f=>[f,null]))}],stamp=>Date.parse(stamp)/1000,{up:'red',down:'green'})
+    fake.series.forEach(line=>assert.deepEqual(line.data,[{time:Date.parse(ts)/1000}]))
+  }
+}
+assert.deepEqual(saved.get(4).panels,['rsi','wr','atr'])
+app.unmount();app=mount(true);await settle()
+await click(document.querySelector('[title="选择技术指标"]'))
+assert.match(document.body.textContent,/已开启 3\/3/)
+assert.equal(panel('WR').classList.contains('active'),true)
+await click(button('WR 威廉指标 参数'))
+assert.equal(document.querySelector('[aria-label="WR 威廉指标 周期1"]').value,'14')
+await click(button('取消'))
+user.setAuth('fixture',{id:5,username:'five'});await settle()
+assert.match(document.body.textContent,/已开启 2\/3/)
+assert.equal(panel('WR').classList.contains('active'),false)
+user.setAuth('fixture',{id:4,username:'four'});await settle()
+assert.match(document.body.textContent,/已开启 3\/3/)
+assert.equal(panel('WR').classList.contains('active'),true)
+app.unmount()
+console.log('RSI/WR/CCI/ATR: parameter defaults/custom/reload/reset, 3-panel limit, account isolation, all-period timestamps and null rendering passed.')
