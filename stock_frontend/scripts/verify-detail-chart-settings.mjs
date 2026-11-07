@@ -24,10 +24,10 @@ const m = await import(pathToFileURL(out).href)
 const defaults = () => ({ma:{lines:[5,10,20,30].map(period=>({period,visible:true}))},panels:['volume','macd']})
 const definitions = JSON.parse(await readFile(resolve('../stock_backend/app/services/indicator_catalog.json'),'utf8'))
 const saved = new Map()
-let fail = false, pending
+let fail = false, catalogFails = false, pending
 const pinia = m.createPinia(), user = m.useUserStore(pinia)
 globalThis.chartFixture = { async request(c) {
-  if (c.url === '/indicators/catalog') return {version:1,indicators:definitions}
+  if (c.url === '/indicators/catalog') { if (catalogFails) throw Error('catalog offline'); return {version:1,indicators:definitions} }
   if (c.url !== '/users/me/chart-settings') return []
   const id = user.user?.id
   if (c.method === 'put') {
@@ -109,3 +109,33 @@ m.fillIndicatorSeries(bars.series,histogram,[{ts:'3',macd_hist:-1,macd_dif:2,mac
 assert.equal(bars.series[0].data[0].color,'green')
 assert.equal(bars.series[0].options.priceFormat.precision,3)
 console.log('Catalog-driven parameter forms, saved parameters, generic channels/histograms and reference lines passed.')
+
+// A catalog outage must not block an independent MA edit or mutate saved panels/options.
+catalogFails=true
+const guest={version:2,ma:defaults().ma,panels:['macd','volume'],panel_options:{macd:{params:{fast:7,slow:20,signal:5}}}}
+localStorage.setItem('detail_chart_settings_v1',JSON.stringify(guest))
+app=mount(true);await settle()
+assert.match(document.body.textContent,/指标目录加载失败/)
+await click(button('MA 设置'))
+await input(periods()[0],'0');assert.equal(button('保存').disabled,true)
+await input(periods()[0],'7');await click(button('保存'))
+const guestAfter=JSON.parse(localStorage.getItem('detail_chart_settings_v1'))
+assert.equal(guestAfter.ma.lines[0].period,7)
+assert.deepEqual(guestAfter.panels,guest.panels)
+assert.deepEqual(guestAfter.panel_options,guest.panel_options)
+assert.doesNotMatch(document.body.textContent,/MA须为/)
+// Authenticated preferences use the same independent MA-save path.
+saved.set(3,{version:2,ma:defaults().ma,panels:['kdj'],panel_options:{kdj:{params:{n:14}}}})
+user.setAuth('fixture',{id:3,username:'three'});await settle()
+await click(button('MA 设置'));await input(periods()[0],'9');await click(button('保存'))
+assert.equal(saved.get(3).ma.lines[0].period,9)
+assert.deepEqual(saved.get(3).panels,['kdj'])
+assert.deepEqual(saved.get(3).panel_options,{kdj:{params:{n:14}}})
+catalogFails=false
+await click(button('重试目录'))
+assert.doesNotMatch(document.body.textContent,/指标目录加载失败/)
+await click(document.querySelector('[title="选择技术指标"]'))
+assert.match(document.body.textContent,/已开启 1\/3/)
+assert.equal(panel('KDJ').classList.contains('active'),true)
+app.unmount()
+console.log('Catalog outage: guest/account MA saves preserve panels and parameters; catalog recovery passed.')

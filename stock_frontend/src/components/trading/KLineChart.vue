@@ -667,7 +667,7 @@ function reasonText(t: BacktestTrade): string {
 
 /* ---------- 数据 ---------- */
 const indicators = useChartIndicators(fetchIndicators)
-const { indicatorRows, priceMaRows, indicatorError, priceMaError, panelErrors } = indicators
+const { indicatorRows, priceMaRows, indicatorError, priceMaError, panelErrors, panelRetrying } = indicators
 function drawPriceMas(rows: IndicatorRow[]) {
   const times = new Set(loadedBars.map(bar => toUtcSeconds(bar.ts)))
   for (const ma of priceMas.value) {
@@ -1326,7 +1326,7 @@ async function savePanelParameters(params: Record<string,number | number[]>) {
 function legendValue(row: unknown, field: string) { return row ? (row as Record<string,number | null>)[field] : null }
 const maSettingsOpen = ref(false)
 async function saveMa(lines: MaLine[]) {
-  if (await detailSettings.save({ ...detailSettings.settings.value, ma: { lines } })) maSettingsOpen.value = false
+  if (await detailSettings.saveMa(lines)) maSettingsOpen.value = false
 }
 watch(() => user.user?.id, () => { maSettingsOpen.value = false; parameterKey.value = '' })
 const indicatorPickerOpen = ref(false)
@@ -1406,7 +1406,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
       >
         <template v-if="customizeIndicators">
           <span>{{ indicator.label }}({{ catalogPanels.find(d=>d.key===indicator.key)?.parameters.map(p => detailSettings.settings.value.panel_options?.[indicator.key]?.params[p.key] ?? p.default).join(',') }})</span>
-          <span v-if="panelErrors[indicator.key]" role="alert">{{ panelErrors[indicator.key] }} <button style="pointer-events:auto" @click="reloadIndicatorEngine">重试</button></span>
+          <span v-if="panelErrors[indicator.key]" role="alert">{{ panelErrors[indicator.key] }} <button style="pointer-events:auto" :disabled="panelRetrying[indicator.key]" @click="indicators.retryPanel(indicator.key)">{{ panelRetrying[indicator.key] ? '重试中…' : '重试' }}</button></span>
           <span v-for="line in catalogPanels.find(d=>d.key===indicator.key)?.series || []" :key="line.field" :style="{color:line.color}">{{ line.label }}:{{ catalogPanels.find(d=>d.key===indicator.key)?.format === 'volume' ? indicatorQuantity(legendValue(selectedIndicator, line.field)) : indicatorNumber(legendValue(selectedIndicator, line.field)) }}</span>
           <span v-if="indicator.key === 'macd'">金叉:{{ selectedIndicator ? selectedMacdCrosses.golden : '—' }} 死叉:{{ selectedIndicator ? selectedMacdCrosses.death : '—' }}</span>
         </template>

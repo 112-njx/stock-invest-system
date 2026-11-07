@@ -49,9 +49,9 @@ export function useDetailChartSettings(enabled: () => boolean, keys: () => strin
   }
   watch(() => [enabled(), user.user?.id] as const, load, { immediate: true })
   onScopeDispose(() => { generation++ })
-  async function save(value: DetailChartSettings) {
+  async function persist(value: DetailChartSettings, maOnly = false) {
     if (!ready.value || saving.value) return false
-    if (!validateMa(value.ma.lines) || value.panels.length > 3 || new Set(value.panels).size !== value.panels.length || value.panels.some(p => !keys().includes(p))) {
+    if (!validateMa(value.ma.lines) || value.panels.length > 3 || new Set(value.panels).size !== value.panels.length || (!maOnly && value.panels.some(p => !keys().includes(p)))) {
       error.value = 'MA须为1～6个不重复的整数周期（1～10000），副图最多3个'
       return false
     }
@@ -69,5 +69,10 @@ export function useDetailChartSettings(enabled: () => boolean, keys: () => strin
     } catch { if (token === generation) error.value = '保存失败，仍使用上次成功保存的配置'; return false }
     finally { if (token === generation) saving.value = false }
   }
-  return { settings, ready, saving, error, save, load }
+  async function save(value: DetailChartSettings) { return persist(value) }
+  // Only change MA; existing panel choices/options remain untouched even without a catalog.
+  async function saveMa(lines: MaLine[]) {
+    return persist({ ...settings.value, ma: { lines } }, true)
+  }
+  return { settings, ready, saving, error, save, saveMa, load }
 }

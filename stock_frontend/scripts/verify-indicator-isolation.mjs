@@ -111,5 +111,52 @@ assert.equal(state.indicatorRows.value[0].volume,100)
 assert.equal(state.indicatorRows.value[0].kdj_k,55)
 assert.ok(state.panelErrors.value.macd)
 assert.equal(state.panelErrors.value.kdj,undefined)
+// Retrying one failed panel neither re-fetches MA/healthy panels nor clears their data.
+let retryIndex = queue.length
+const healthy = JSON.stringify(state.indicatorRows.value)
+const maBefore = state.priceMaRows.value
+job = state.retryPanel('macd')
+assert.equal(queue.length, retryIndex+1)
+assert.equal(queue[retryIndex].params.names,'macd')
+assert.equal(JSON.stringify(state.indicatorRows.value),healthy)
+assert.equal(state.priceMaRows.value,maBefore)
+assert.equal(state.panelRetrying.value.macd,true)
+await state.retryPanel('macd')
+assert.equal(queue.length,retryIndex+1,'duplicate retries are suppressed')
+queue[retryIndex].reject(Error('MACD is still unavailable'))
+await job
+assert.equal(JSON.stringify(state.indicatorRows.value),healthy)
+assert.ok(state.panelErrors.value.macd)
+assert.equal(state.panelRetrying.value.macd,false)
+retryIndex=queue.length
+job=state.retryPanel('macd')
+queue[retryIndex].resolve([{ts:'2026-11-05',macd_hist:1.5}])
+await job
+assert.equal(state.indicatorRows.value[0].volume,100)
+assert.equal(state.indicatorRows.value[0].kdj_k,55)
+assert.equal(state.indicatorRows.value[0].macd_hist,1.5)
+assert.equal(state.panelErrors.value.macd,undefined)
+assert.equal(state.priceMaRows.value,maBefore)
+// A retry cannot overwrite data following a symbol/period/parameter change.
+retryIndex=queue.length
+const oldRetry=state.retryPanel('macd')
+job=state.load({symbol:2,period:'1w'},true,()=>true,{periods:[20],panels:['kdj'],parameters:{kdj:{params:{n:21}}}})
+queue[retryIndex+1].resolve([{ts:'new',ma20:20}])
+queue[retryIndex+2].resolve([{ts:'new',kdj_k:70}])
+await job
+queue[retryIndex].resolve([{ts:'old',macd_hist:999}])
+await oldRetry
+assert.deepEqual(JSON.parse(JSON.stringify(state.indicatorRows.value)),[{ts:'new',kdj_k:70}])
+retryIndex=queue.length
+await state.retryPanel('macd')
+assert.equal(queue.length,retryIndex,'closed panels cannot be retried')
+job=state.retryPanel('kdj')
+state.reset()
+queue[retryIndex].resolve([{ts:'removed',kdj_k:999}])
+await job
+assert.equal(state.indicatorRows.value.length,0)
+assert.deepEqual(state.panelRetrying.value,{})
+await state.retryPanel('kdj')
+assert.equal(queue.length,retryIndex+1)
 app.unmount()
 console.log('Independent chart rendering, failure recovery, delayed MA and stale-response protection passed.')
