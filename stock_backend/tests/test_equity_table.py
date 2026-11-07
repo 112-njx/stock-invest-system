@@ -47,3 +47,11 @@ def test_snapshot_returns_existing_data_while_refresh_blocks(monkeypatch):
         import time
         deadline=time.monotonic()+2
         while table._running and time.monotonic()<deadline: time.sleep(.01)
+
+
+def test_endpoint_uses_shared_frontend_response_contract(monkeypatch):
+    from app.api.v1.stockdb import equities
+    monkeypatch.setattr(table, 'snapshot', lambda: dict(items=[], loading=True))
+    response = equities()
+    assert response['code'] == 0
+    assert response['data']['loading'] is True
