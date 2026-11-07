@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { type AdminConsole, providerNames, stateLabel } from '@/composables/useAdminConsole'
 import AdminNotice from './AdminNotice.vue'
+import AdminOnlineData from './AdminOnlineData.vue'
 import AdminIndicators from './AdminIndicators.vue'
 const props = defineProps<{ controller: AdminConsole }>()
 const s = props.controller.state
@@ -10,6 +11,7 @@ function policyChanged() {
 }
 </script>
 <template>
+  <AdminOnlineData />
   <section class="admin-card">
     <div class="card-title">
       <div>

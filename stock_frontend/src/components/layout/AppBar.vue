@@ -37,6 +37,7 @@ onBeforeUnmount(() => clearTimeout(prepareTimer))
       <RouterLink to="/ai" class="appbar__link">AI 策略</RouterLink>
       <RouterLink to="/stockdb" class="appbar__link" @pointerenter="prepareBlueprint" @focus="prepareBlueprint">指数蓝图</RouterLink>
       <RouterLink to="/heatmap" class="appbar__link">大盘云图</RouterLink>
+      <RouterLink to="/all-data" class="appbar__link">全数据</RouterLink>
     </nav>
 
     <div class="appbar__right">
