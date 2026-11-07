@@ -108,3 +108,23 @@ def test_main_overlays_do_not_use_panel_slots_and_survive_old_clients(client,acc
         assert client.put(url,json={**config,**invalid}).status_code==422
     config['overlays']=[]
     assert client.put(url,json=config).json()['data']['overlay_options']==config['overlay_options']
+
+
+def test_momentum_panels_preserve_defaults_other_options_and_account_isolation(client,accounts):
+    active=[accounts[0]]
+    app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=active[0])
+    url='/api/v1/users/me/chart-settings'
+    config={'version':2,'ma':ChartSettings().model_dump()['ma'],'panels':['bias','psy','dpo'],'overlays':['boll'],'overlay_options':{'boll':{'params':{'p':2.5}}},'panel_options':{'bias':{'params':{'l1':3,'l2':9,'l3':18}},'psy':{'params':{'n':9,'m':3}},'dpo':{'params':{'m1':12,'m2':6,'m3':3}},'mtm':{'params':{'n':7,'m':3}},'roc':{'params':{'n':7,'m':3}}}}
+    assert client.put(url,json=config).json()['data']==config
+    assert client.get(url,params={'version':2}).json()['data']==config
+    assert client.put(url,json={**config,'panels':['bias','psy','dpo','mtm']}).status_code==422
+    config['panels']=['bias','mtm','roc']
+    assert client.put(url,json=config).json()['data']==config
+    active[0]=accounts[1]
+    assert client.get(url,params={'version':2}).json()['data']['panels']==['volume','macd']
+    active[0]=accounts[0]
+    assert client.get(url,params={'version':2}).json()['data']==config
+    legacy=client.get(url).json()['data']
+    assert client.put(url,json=legacy).json()['data']==legacy
+    assert client.get(url,params={'version':2}).json()['data']==config
+    assert client.put(url,json={**config,'panel_options':{'bias':{'params':{'l1':0}}}}).status_code==422

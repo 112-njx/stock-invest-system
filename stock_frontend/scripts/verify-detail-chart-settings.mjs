@@ -146,7 +146,7 @@ const commonParams={rsi:{n:7},wr:{n:14,n1:5},cci:{n:9},atr:{n:6}}
 saved.set(4,{version:2,ma:defaults().ma,panels:[],panel_options:{}})
 user.setAuth('fixture',{id:4,username:'four'})
 app=mount(true);await settle();await click(document.querySelector('[title="选择技术指标"]'))
-assert.equal(document.querySelectorAll('.picker-item').length,8)
+assert.equal(document.querySelectorAll('.picker-item').length,definitions.filter(d=>d.placement==='panel').length)
 for(const key of ['rsi','wr','cci']) await click(panel(key.toUpperCase()))
 assert.match(document.body.textContent,/已开启 3\/3/)
 assert.equal(panel('ATR').disabled,true)
@@ -263,3 +263,58 @@ assert.equal(saved.get(6).overlays.length,7)
 assert.deepEqual(saved.get(6).overlay_options.dma.params,{a:.25})
 app.unmount();catalogFails=false
 console.log('BOLL/EMA/EXPMA/BBI/WMA/SMA/DMA: main price axis, free overlay slots, floating parameters, account persistence and outage compatibility passed.')
+
+const momentumKeys=['bias','psy','dpo','mtm','roc']
+const momentumParams={bias:{l1:3,l2:9,l3:18},psy:{n:9,m:3},dpo:{m1:12,m2:6,m3:3},mtm:{n:7,m:3},roc:{n:7,m:3}}
+saved.set(8,{version:2,ma:defaults().ma,panels:[],panel_options:{},overlays:['boll'],overlay_options:{boll:{params:{p:2.5}}}})
+user.setAuth('fixture',{id:8,username:'eight'})
+app=mount(true);await settle();await click(document.querySelector('[title="选择技术指标"]'))
+assert.ok(document.querySelector('.modal--indicator-detail'),'detail picker has a bounded scroll body')
+assert.equal(document.querySelectorAll('.picker-item').length,13)
+for(const key of ['bias','psy','dpo']) await click(panel(key.toUpperCase()))
+assert.match(document.body.textContent,/已开启 3\/3/)
+assert.equal(panel('MTM').disabled,true);assert.equal(panel('ROC').disabled,true)
+for(const key of momentumKeys){
+  if(key==='mtm'){await click(panel('DPO'));await click(panel('MTM'))}
+  if(key==='roc'){await click(panel('PSY'));await click(panel('ROC'))}
+  const definition=definitions.find(d=>d.key===key)
+  await click(button(`${definition.label} 参数`))
+  for(const param of definition.parameters){
+    const el=document.querySelector(`[aria-label="${definition.label} ${param.label}"]`)
+    assert.equal(Number(el.value),param.default)
+    await input(el,String(momentumParams[key][param.key]))
+  }
+  await click(button('保存参数'))
+  assert.deepEqual(saved.get(8).panel_options[key].params,momentumParams[key])
+  await click(button(`${definition.label} 参数`))
+  for(const param of definition.parameters) assert.equal(Number(document.querySelector(`[aria-label="${definition.label} ${param.label}"]`).value),momentumParams[key][param.key])
+  await click(button('恢复默认参数'))
+  for(const param of definition.parameters) assert.equal(Number(document.querySelector(`[aria-label="${definition.label} ${param.label}"]`).value),param.default)
+  await click(button('取消'))
+  const drawn=m.createIndicatorSeries(pane,definition,'#aaa')
+  assert.equal(drawn.series.length,key==='bias'?3:2)
+  assert.deepEqual(drawn.referenceLines.map(l=>l.price),key==='psy'?[25,75]:[0])
+  for(const ts of ['2026-11-05T00:00:00Z','2026-11-06T00:00:00Z','2026-11-30T00:00:00Z','2026-11-05T01:45:00Z']){
+    const row={ts,...Object.fromEntries(definition.native_outputs.map((f,i)=>[f,i===0?-12.5:25+i]))}
+    m.fillIndicatorSeries(drawn.series,definition,[row],s=>Date.parse(s)/1000,{up:'red',down:'green'})
+    drawn.series.forEach((line,i)=>assert.deepEqual(line.data,[{time:Date.parse(ts)/1000,value:i===0?-12.5:25+i}]))
+    m.fillIndicatorSeries(drawn.series,definition,[{ts,...Object.fromEntries(definition.native_outputs.map(f=>[f,null]))}],s=>Date.parse(s)/1000,{up:'red',down:'green'})
+    drawn.series.forEach(line=>assert.deepEqual(line.data,[{time:Date.parse(ts)/1000}]))
+  }
+}
+assert.deepEqual(saved.get(8).panels,['bias','mtm','roc'])
+assert.deepEqual(saved.get(8).overlays,['boll'])
+assert.deepEqual(saved.get(8).overlay_options.boll.params,{p:2.5})
+app.unmount();app=mount(true);await settle();await click(document.querySelector('[title="选择技术指标"]'))
+assert.match(document.body.textContent,/已开启 3\/3/)
+assert.equal(panel('BIAS').classList.contains('active'),true)
+await click(button('BIAS 乖离率 参数'))
+assert.equal(document.querySelector('[aria-label="BIAS 乖离率 周期1"]').value,'3')
+await click(button('取消'))
+user.setAuth('fixture',{id:9,username:'nine'});await settle()
+assert.match(document.body.textContent,/已开启 2\/3/)
+assert.equal(panel('BIAS').classList.contains('active'),false)
+user.setAuth('fixture',{id:8,username:'eight'});await settle()
+assert.equal(panel('BIAS').classList.contains('active'),true)
+app.unmount()
+console.log('BIAS/PSY/DPO/MTM/ROC: defaults/custom/reset/reload, 3-panel cap, reference lines, signed/null/all-period values, account isolation and overlay preservation passed.')

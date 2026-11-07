@@ -743,5 +743,300 @@
       "sdk"
     ],
     "precision": 3
+  },
+  {
+    "key": "bias",
+    "label": "BIAS 乖离率",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "BIAS",
+    "parameters": [
+      {
+        "key": "l1",
+        "label": "周期1",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "l2",
+        "label": "周期2",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "l3",
+        "label": "周期3",
+        "type": "integer",
+        "default": 24,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "bias1",
+        "label": "BIAS1",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "bias2",
+        "label": "BIAS2",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "bias3",
+        "label": "BIAS3",
+        "color": "#c084fc",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "bias1",
+      "bias2",
+      "bias3"
+    ],
+    "reference_lines": [
+      0
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "psy",
+    "label": "PSY 心理线",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "PSY",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "统计周期",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "psy",
+        "label": "PSY",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "psy_ma",
+        "label": "PSYMA",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "psy",
+      "psy_ma"
+    ],
+    "reference_lines": [
+      25,
+      75
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "dpo",
+    "label": "DPO 区间震荡",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "DPO",
+    "parameters": [
+      {
+        "key": "m1",
+        "label": "统计周期",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m2",
+        "label": "位移周期",
+        "type": "integer",
+        "default": 10,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m3",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "dpo",
+        "label": "DPO",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "dpo_ma",
+        "label": "MADPO",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "dpo",
+      "dpo_ma"
+    ],
+    "reference_lines": [
+      0
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "mtm",
+    "label": "MTM 动量指标",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "MTM",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "动量周期",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "mtm",
+        "label": "MTM",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "mtm_ma",
+        "label": "MTMMA",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "mtm",
+      "mtm_ma"
+    ],
+    "reference_lines": [
+      0
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "roc",
+    "label": "ROC 变动率",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "ROC",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "变动周期",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "roc",
+        "label": "ROC",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "roc_ma",
+        "label": "MAROC",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "roc",
+      "roc_ma"
+    ],
+    "reference_lines": [
+      0
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
   }
 ]

@@ -1564,7 +1564,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
     <!-- 指标选择弹窗 -->
     <Teleport to="body">
       <div v-if="indicatorPickerOpen" class="modal-mask" @click.self="closeIndicatorPicker">
-        <div class="modal">
+        <div class="modal" :class="{ 'modal--indicator-detail': customizeIndicators }">
           <header class="modal__header">
             <span>选择技术指标</span>
             <button class="modal__close" @click="closeIndicatorPicker">×</button>
@@ -1865,6 +1865,9 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   flex-direction: column;
   gap: 10px;
 }
+.modal--indicator-detail { display:flex; flex-direction:column; max-height:calc(100dvh - 32px); }
+.modal--indicator-detail .modal__header { flex-shrink:0; }
+.modal--indicator-detail .modal__body { min-height:0; overflow-y:auto; }
 .modal__symbol {
   font-size: 13px;
   font-weight: 600;

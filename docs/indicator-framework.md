@@ -1,6 +1,6 @@
 # 详情页指标框架（第一批）
 
-当前目录开放 MA、MACD、KDJ、RSI、WR、CCI、ATR、BOLL、EMA、EXPMA、BBI、WMA、SMA、DMA，以及成交量、成交额；技术指标进度为 14/39，不提前开放未验证的项目。
+当前目录开放 MA、MACD、KDJ、RSI、WR、CCI、ATR、BOLL、EMA、EXPMA、BBI、WMA、SMA、DMA、BIAS、PSY、DPO、MTM、ROC，以及成交量、成交额；技术指标进度为 19/39，不提前开放未验证的项目。
 
 ## 单一指标目录
 
@@ -64,3 +64,21 @@ BOLL 的原生输出顺序是上轨、中轨、下轨，倍数 p 支持小数（
 叠加请求与 MA/副图独立，按队列逐项调用本地 SDK，及时发布已完成结果；单项失败只显示自己的错误与重试入口。重试不清空其他叠加线，不重发 MA/副图请求。股票、周期、参数、账号或组件生命周期变化使旧响应失效；离开旧队列后不再启动剩余请求。只把当前已加载 K 线时间范围中的叠加数据交给主图，避免扩张横轴。
 
 本批原生对照：scripts/tests/test_main_overlays.py（Windows/Linux）；API与四周期预热：stock_backend/tests/test_main_overlays.py；前端回归包含共享价格轴、七项全开不占副图名额、小数与关联校验、参数读回/恢复、账号切换、旧客户端保留、异常重试和队列失效。
+
+## 第四批：动量与强弱副图
+
+新增 BIAS、PSY、DPO、MTM、ROC，均为独立副图、SDK-only；无论全局是否开启 pandas，仍用原生引擎计算。BIAS 的三条线或其余每项的两条线均只占一个副图名额，总计仍最多开启三个。默认关闭新项，现有 MA、主图叠加和默认成交量/MACD 选择保持不变。
+
+| 指标 | SDK 默认参数 | 返回字段 | 展示参考线 |
+| --- | --- | --- | --- |
+| BIAS | l1=6、l2=12、l3=24 | bias1、bias2、bias3 | 0 |
+| PSY | n=12、m=6 | psy、psy_ma | 25、75 |
+| DPO | m1=20、m2=10、m3=6 | dpo、dpo_ma | 0 |
+| MTM | n=12、m=6 | mtm、mtm_ma | 0 |
+| ROC | n=12、m=6 | roc、roc_ma | 0 |
+
+参数是1～10000的整数。PSY/DPO/MTM/ROC 的第二条线按 SDK 返回的平滑线顺序映射，不另行在项目中计算。BIAS、ROC 保留原生百分比尺度，PSY 保留0～100尺度；DPO、MTM 等正负值不截断、不取绝对值。NaN/Inf 只转 JSON null，短历史和预热不足不补零。
+
+目录自动驱动选择器、参数编辑、图例、多线曲线和参考线。账号和访客配置沿用现有结构，关闭后保留参数；保存新副图选择时保留 MA 与主图叠加配置。详情页指标弹窗使用视口高度限制与可滚动正文，避免目录扩展后底部参数无法操作；首页样式与行为不变。
+
+本批原生对照：scripts/tests/test_momentum_indicators.py，覆盖 Windows/Linux 默认、自定义、短历史、平盘和参数边界。API四周期与分页预热：stock_backend/tests/test_momentum_indicators.py；前端回归新增三副图上限、参数恢复/读回、账号切换、正负值/空值/时间标签、参考线、单项失败与重试及过期响应保护。

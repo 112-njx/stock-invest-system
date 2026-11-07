@@ -216,3 +216,32 @@ main.reset();overlayQueue[6].resolve([{ts:'removed',sma:999}]);await overlayJob
 assert.equal(overlayQueue.length,7,'reset prevents queued overlays from starting')
 assert.deepEqual(main.rows.value,{})
 console.log('Independent main overlays: native queue, failures, targeted retries and stale-response protection passed.')
+
+const momentumQueue=[]
+const momentum=useChartIndicators(p=>{const task=deferred();momentumQueue.push({...task,params:p});return task.promise})
+let momentumJob=momentum.load(params,true,()=>true,{periods:[5],panels:['bias','psy','dpo'],parameters:{bias:{params:{l1:3,l2:9,l3:18}}}})
+assert.deepEqual(momentumQueue.map(q=>q.params.names),['ma','bias','psy','dpo'])
+momentumQueue[0].resolve(maRows)
+momentumQueue[1].reject(Error('BIAS unavailable'))
+momentumQueue[2].resolve([{ts:'2026-11-05',psy:60,psy_ma:55}])
+momentumQueue[3].resolve([{ts:'2026-11-05',dpo:-2,dpo_ma:-1}])
+await momentumJob
+const retained=momentum.indicatorRows.value
+momentumJob=momentum.retryPanel('bias')
+assert.equal(momentumQueue.length,5)
+assert.equal(momentum.indicatorRows.value,retained)
+assert.deepEqual(JSON.parse(momentumQueue[4].params.params),{bias:{l1:3,l2:9,l3:18}})
+momentumQueue[4].resolve([{ts:'2026-11-05',bias1:-3,bias2:2,bias3:1}]);await momentumJob
+assert.equal(momentum.indicatorRows.value[0].psy,60)
+assert.equal(momentum.indicatorRows.value[0].bias1,-3)
+const oldMomentum=momentum.retryPanel('bias')
+momentumJob=momentum.load({symbol:2,period:'15m'},true,()=>true,{periods:[20],panels:['mtm','roc'],parameters:{roc:{params:{n:7,m:3}}}})
+momentumQueue[6].resolve(maRows)
+momentumQueue[7].resolve([{ts:'new',mtm:-5,mtm_ma:1}])
+momentumQueue[8].resolve([{ts:'new',roc:-2,roc_ma:3}])
+await momentumJob
+momentumQueue[5].resolve([{ts:'old',bias1:999}]);await oldMomentum
+assert.equal(momentum.indicatorRows.value[0].mtm,-5)
+assert.equal(momentum.indicatorRows.value[0].bias1,undefined)
+momentum.reset()
+console.log('Momentum panel failures, targeted retries, preserved successful results and stale responses passed.')
