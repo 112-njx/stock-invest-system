@@ -15,7 +15,7 @@ def bridge(path, payload):
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(503, '在线查询桥暂不可用') from exc
     if response.status_code != 200:
-        raise HTTPException(response.status_code, body.get('detail', '在线查询失败'), headers={'Retry-After': str(body.get('retry_after', 30))})
+        raise HTTPException(response.status_code, body.get('detail', '在线查询失败'), headers={'Retry-After': str(body.get('retry_after', 40))})
     return ok(data=body)
 
 @router.post('/all-data/query')
@@ -27,8 +27,13 @@ def status():
     return bridge('/online/policy', {})
 
 class Policy(BaseModel):
-    interval_seconds: int = Field(ge=30, le=86400)
+    interval_seconds: int = Field(ge=40, le=86400)
 
 @router.put('/admin/online-data-policy')
 def save_policy(payload: Policy, admin=Depends(get_current_admin)):
     return bridge('/online/policy', payload.model_dump())
+
+
+@router.get('/all-data/catalog')
+def catalog():
+    return bridge('/online/catalog', {})

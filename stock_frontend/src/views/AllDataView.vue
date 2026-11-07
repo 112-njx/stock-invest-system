@@ -1,44 +1,162 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { request } from '@/api/http'
-const types = [
-  ['get_last_tick', '实时逐笔'],
-  ['get_ticks', '历史逐笔'],
-  ['get_fundamentals', '财务报表'],
-  ['get_billboard_list', '龙虎榜'],
-  ['get_locked_shares', '限售解禁'],
-  ['get_money_flow', '资金流向'],
-  ['get_mtss', '融资融券'],
-]
-const method = ref('get_last_tick')
-const form = reactive({
-  code: '000001',
-  count: 20,
-  end_dt: '',
-  start_date: '',
-  end_date: '',
-  report: 'cash_flow',
-  quarter: '2024q4',
-})
-const whole = ref(false)
-const optionalCode = computed(() =>
-  ['get_fundamentals', 'get_billboard_list'].includes(method.value)
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { getCatalog, getStatus, queryData, type Dataset, type Result } from '@/api/allData'
+const datasets = ref<Dataset[]>([])
+const selected = ref('get_last_tick')
+const active = computed(() => datasets.value.find((item) => item.id === selected.value))
+const groups = computed(() => [...new Set(datasets.value.map((item) => item.group))])
+const group = ref('实时逐笔')
+const search = ref('')
+const choices = computed(() =>
+  datasets.value.filter(
+    (item) =>
+      item.group === group.value &&
+      `${item.title} ${item.id}`.toLowerCase().includes(search.value.toLowerCase())
+  )
 )
-const tick = computed(() => ['get_last_tick', 'get_ticks'].includes(method.value))
-const busy = ref(false),
-  error = ref(''),
-  remaining = ref(0),
-  interval = ref(30)
-interface Result {
-  warnings?: string[]
-  data: unknown
-  fetched_at: string
-  saved_path: string
-  retry_after: number
-  interval_seconds: number
+const form = reactive<Record<string, string | number>>({})
+interface Filter {
+  field: string
+  op: string
+  value: string
+  type: string
 }
-const result = ref<Result | null>(null)
-const resultTitle = ref('')
+const filters = ref<Filter[]>([])
+const fields = ref<string[]>([])
+const orderField = ref(''),
+  direction = ref('desc'),
+  limit = ref(100)
+const busy = ref(false),
+  loading = ref(false),
+  error = ref(''),
+  catalogError = ref('')
+const remaining = ref(0),
+  interval = ref(40),
+  page = ref(1),
+  raw = ref(false)
+const result = ref<Result | null>(null),
+  resultTitle = ref('')
+let cooldownUntil = 0
+let timer: ReturnType<typeof setInterval> | undefined
+function updateRemaining() {
+  remaining.value = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000))
+}
+function setCooldown(seconds: number) {
+  cooldownUntil = Date.now() + seconds * 1000
+  updateRemaining()
+}
+async function status() {
+  try {
+    const data = await getStatus()
+    setCooldown(data.retry_after)
+    interval.value = data.interval_seconds
+  } catch {
+    error.value = '无法读取在线服务状态，可稍后手动重试'
+  }
+}
+async function loadCatalog() {
+  loading.value = true
+  catalogError.value = ''
+  try {
+    datasets.value = (await getCatalog()).entries
+    resetForm()
+  } catch {
+    catalogError.value = '本地接口目录读取失败，请检查查询桥后重试'
+  } finally {
+    loading.value = false
+  }
+}
+function resetForm() {
+  Object.keys(form).forEach((key) => delete form[key])
+  for (const param of active.value?.params || []) form[param.name] = param.default ?? ''
+  filters.value = []
+  fields.value = []
+  orderField.value = ''
+  limit.value = 100
+}
+watch(selected, resetForm)
+function chooseGroup(value: string) {
+  group.value = value
+  search.value = ''
+  selected.value = datasets.value.find((item) => item.group === value)?.id || ''
+}
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    updateRemaining()
+    void status()
+  }
+}
+onMounted(() => {
+  void loadCatalog()
+  void status()
+  timer = setInterval(updateRemaining, 1000)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+})
+onUnmounted(() => {
+  clearInterval(timer)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
+function filterValue(filter: Filter) {
+  const convert = (value: string) => {
+    if (filter.type === 'number') {
+      if (!value.trim() || !Number.isFinite(Number(value))) throw new Error('筛选值必须为有效数值')
+      return Number(value)
+    }
+    if (filter.type === 'boolean') {
+      if (!['true', 'false'].includes(value.trim())) throw new Error('布尔筛选值应为 true 或 false')
+      return value.trim() === 'true'
+    }
+    return value.trim()
+  }
+  return filter.op === 'in' ? filter.value.split(',').map(convert) : convert(filter.value)
+}
+async function run() {
+  if (busy.value || remaining.value > 0 || !active.value) return
+  busy.value = true
+  error.value = ''
+  const target = active.value
+  try {
+    const payload: Record<string, unknown> = { method: target.id }
+    if (target.kind === 'table') {
+      Object.assign(payload, {
+        filters: filters.value.map((item) => ({
+          field: item.field,
+          op: item.op,
+          value: filterValue(item),
+        })),
+        fields: fields.value,
+        limit: limit.value,
+        order_field: orderField.value,
+        order_direction: direction.value,
+      })
+    } else {
+      for (const param of target.params || []) {
+        const value = form[param.name]
+        if (value === '' || value === undefined) continue
+        payload[param.name] =
+          param.type === 'datetime-local'
+            ? String(value).replace('T', ' ') + (String(value).length === 16 ? ':00' : '')
+            : param.type === 'number'
+              ? Number(value)
+              : value
+      }
+    }
+    const data = await queryData(payload)
+    result.value = data
+    resultTitle.value = target.title
+    page.value = 1
+    raw.value = false
+    setCooldown(data.retry_after)
+    interval.value = data.interval_seconds
+  } catch (e: unknown) {
+    error.value =
+      (e as { response?: { data?: { msg?: string } } }).response?.data?.msg ||
+      (e instanceof Error ? e.message : '查询失败，系统不会自动重试')
+    await status()
+  } finally {
+    busy.value = false
+  }
+}
 const rows = computed<Record<string, unknown>[]>(() => {
   const data = result.value?.data
   if (data == null) return []
@@ -48,89 +166,12 @@ const rows = computed<Record<string, unknown>[]>(() => {
   )
 })
 const columns = computed(() => [...new Set(rows.value.flatMap((row) => Object.keys(row)))])
-const page = ref(1)
 const visible = computed(() => rows.value.slice((page.value - 1) * 100, page.value * 100))
-let timer: ReturnType<typeof setInterval> | undefined
-let cooldownUntil = 0
-function updateRemaining() {
-  remaining.value = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000))
-}
-function setCooldown(seconds: number) {
-  cooldownUntil = Date.now() + seconds * 1000
-  updateRemaining()
-}
-function onVisibilityChange() {
-  if (document.visibilityState === 'visible') {
-    updateRemaining()
-    // Only checks the local quota; never requests upstream market data.
-    void status()
-  }
-}
-async function status() {
-  try {
-    const data = await request<{ retry_after: number; interval_seconds: number }>({
-      url: '/all-data/status',
-      silent: true,
-    })
-    setCooldown(data.retry_after)
-    interval.value = data.interval_seconds
-  } catch {
-    error.value = '无法读取在线服务状态，可稍后手动重试'
-  }
-}
-onMounted(() => {
-  void status()
-  timer = setInterval(updateRemaining, 1000)
-  document.addEventListener('visibilitychange', onVisibilityChange)
-})
-onUnmounted(() => {
-  clearInterval(timer)
-  document.removeEventListener('visibilitychange', onVisibilityChange)
-})
-async function run() {
-  if (busy.value || remaining.value > 0) return
-  busy.value = true
-  error.value = ''
-  try {
-    const data = await request<Result>({
-      method: 'POST',
-      url: '/all-data/query',
-      // Backend SDK bridge: 180s; Nginx: 200s; browser: 210s.
-      timeout: 210000,
-      silent: true,
-      data: {
-        method: method.value,
-        code: optionalCode.value && whole.value ? '' : form.code,
-        ...(tick.value ? { count: form.count } : {}),
-        ...(method.value === 'get_ticks'
-          ? { end_dt: form.end_dt.replace('T', ' ') + (form.end_dt.length === 16 ? ':00' : '') }
-          : {}),
-        ...(method.value === 'get_fundamentals'
-          ? { report: form.report, quarter: form.quarter }
-          : tick.value ? {} : { start_date: form.start_date, end_date: form.end_date }),
-      },
-    })
-    result.value = data
-    resultTitle.value = types.find((t) => t[0] === method.value)?.[1] || ''
-    page.value = 1
-    setCooldown(data.retry_after)
-    interval.value = data.interval_seconds
-  } catch (e: unknown) {
-    const response = (e as { response?: { data?: { detail?: unknown; msg?: string } } }).response
-    const detail = response?.data?.detail
-    error.value =
-      typeof detail === 'string'
-        ? detail
-        : response?.data?.msg ||
-          (detail as { detail?: string })?.detail ||
-          '查询失败，请检查参数或服务状态；系统不会自动重试'
-    await status()
-  } finally {
-    busy.value = false
-  }
-}
 function display(value: unknown) {
   return value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value)
+}
+function fieldLabel(name: string) {
+  return datasets.value.find((item) => item.id === result.value?.method)?.fields?.[name] || name
 }
 function download() {
   const url = URL.createObjectURL(
@@ -152,65 +193,160 @@ function download() {
       </div>
       <b>{{ busy ? '● 请求处理中' : remaining ? `● 冷却 ${remaining}s` : '● 等待手动查询' }}</b>
     </header>
+    <p v-if="catalogError" class="error" role="alert">
+      {{ catalogError }} <button @click="loadCatalog">重试读取目录</button>
+    </p>
+    <p v-if="loading">正在读取本地接口目录…</p>
     <div class="layout">
       <aside>
-        <h3>数据目录</h3>
+        <h3>数据目录 · {{ datasets.length }}</h3>
         <button
-          v-for="item in types"
-          :key="item[0]"
-          :class="{ active: method === item[0] }"
+          v-for="name in groups"
+          :key="name"
+          :data-group="name"
+          :class="{ active: group === name }"
           :disabled="busy"
-          @click="method = item[0]!"
+          @click="chooseGroup(name)"
         >
-          {{ item[1] }}
+          {{ name }} <small>{{ datasets.filter((item) => item.group === name).length }}</small>
         </button>
-        <p>远程数据 · 按需获取<br />共享请求间隔 {{ interval }} 秒<br />查询成功后自动本地保存</p>
+        <p>
+          共享请求间隔 {{ interval }} 秒<br />手动查询 · 成功后本地保存<br />不可用接口仍保留查询入口
+        </p>
       </aside>
       <section>
         <form @submit.prevent="run">
-          <h2>
-            {{ types.find((t) => t[0] === method)?.[1] }} <small>{{ method }}</small>
-          </h2>
-          <div class="fields">
-            <label v-if="optionalCode"
-              >查询范围<select v-model="whole">
-                <option :value="false">指定股票</option>
-                <option :value="true">全市场</option>
+          <div class="dataset-picker">
+            <label
+              >搜索当前分类<input
+                v-model="search"
+                placeholder="数据名称或接口名"
+                :disabled="busy" /></label
+            ><label
+              >数据项目<select v-model="selected" :disabled="busy || !choices.length">
+                <option v-for="item in choices" :key="item.id" :value="item.id">
+                  {{ item.title }}
+                </option>
               </select></label
             >
-            <label v-if="!optionalCode || !whole"
-              >股票代码<input
-                v-model="form.code"
-                required
-                pattern="[0-9]{6}"
-                placeholder="六位股票代码"
-            /></label>
-            <label v-if="tick"
-              >返回条数<input v-model.number="form.count" required type="number" min="1" max="1000"
-            /></label>
-            <label v-if="method === 'get_ticks'"
-              >截止时间<input v-model="form.end_dt" required type="datetime-local"
-            /></label>
-            <template v-if="!tick && method !== 'get_fundamentals'"
-              ><label>开始日期<input v-model="form.start_date" required type="date" /></label
-              ><label>结束日期<input v-model="form.end_date" required type="date" /></label
-            ></template>
-            <template v-if="method === 'get_fundamentals'"
-              ><label
-                >报表<select v-model="form.report">
-                  <option value="cash_flow">现金流量表</option>
-                  <option value="income">利润表</option>
-                  <option value="balance">资产负债表</option>
-                </select></label
-              ><label
-                >报告期<input
-                  v-model="form.quarter"
-                  required
-                  pattern="20[0-9]{2}q[1-4]"
-                  placeholder="2024q4" /></label
-            ></template>
           </div>
-          <button class="submit" :disabled="busy || remaining > 0">
+          <template v-if="active"
+            ><h2>
+              {{ active.title }} <small>{{ active.id }}</small>
+            </h2>
+            <p class="hint">{{ active.coverage }}</p>
+            <fieldset :disabled="busy">
+              <div v-if="active.kind === 'api'" class="fields">
+                <label v-for="param in active.params" :key="`${active.id}:${param.name}`"
+                  >{{ param.label }}<span v-if="param.required" class="required">必填</span>
+                  <select
+                    v-if="param.type === 'select'"
+                    v-model="form[param.name]"
+                    :required="param.required"
+                  >
+                    <option v-for="(label, value) in param.options" :key="value" :value="value">
+                      {{ label }}
+                    </option>
+                  </select>
+                  <input
+                    v-else
+                    v-model="form[param.name]"
+                    :data-param="param.name"
+                    :type="param.type"
+                    :required="param.required"
+                    :min="param.min"
+                    :max="param.max"
+                    :placeholder="param.placeholder"
+                  />
+                </label>
+              </div>
+              <template v-else>
+                <p class="hint">
+                  筛选条件同时满足；未设置筛选时查询表内前
+                  {{ limit }} 条。列表值用英文逗号分隔，代码请使用文本类型以保留前导零。
+                </p>
+                <p v-if="!Object.keys(active.fields || {}).length" class="hint">
+                  文档未提供此表的字段清单，可填写字段名查询；字段不支持时显示接口错误。
+                </p>
+                <datalist id="table-fields">
+                  <option v-for="(description, name) in active.fields" :key="name" :value="name">
+                    {{ description }}
+                  </option>
+                </datalist>
+                <div v-for="(filter, index) in filters" :key="index" class="filter-row">
+                  <label
+                    >字段<input
+                      v-model="filter.field"
+                      list="table-fields"
+                      required
+                      placeholder="字段名称"
+                  /></label>
+                  <label
+                    >运算<select v-model="filter.op">
+                      <option
+                        v-for="op in ['==', '!=', '>', '>=', '<', '<=', 'in', 'like']"
+                        :key="op"
+                      >
+                        {{ op }}
+                      </option>
+                    </select></label
+                  >
+                  <label
+                    >值类型<select v-model="filter.type">
+                      <option value="text">文本 / 日期</option>
+                      <option value="number">数值</option>
+                      <option value="boolean">布尔值</option>
+                    </select></label
+                  >
+                  <label
+                    >值<input v-model="filter.value" required placeholder="文本、日期或列表值"
+                  /></label>
+                  <button type="button" @click="filters.splice(index, 1)">移除</button>
+                </div>
+                <button
+                  type="button"
+                  :disabled="filters.length >= 10"
+                  @click="filters.push({ field: '', op: '==', value: '', type: 'text' })"
+                >
+                  添加筛选条件
+                </button>
+                <div class="fields table-options">
+                  <label
+                    >返回条数（单次最多5000）<input
+                      v-model.number="limit"
+                      type="number"
+                      required
+                      min="1"
+                      max="5000"
+                  /></label>
+                  <label
+                    >排序字段（可选）<input
+                      v-model="orderField"
+                      list="table-fields"
+                      placeholder="留空使用上游默认顺序"
+                  /></label>
+                  <label
+                    >排序方向<select v-model="direction">
+                      <option value="desc">降序</option>
+                      <option value="asc">升序</option>
+                    </select></label
+                  >
+                  <label v-if="Object.keys(active.fields || {}).length"
+                    >返回字段（可选，多选；留空返回全部）<select v-model="fields" multiple size="4">
+                      <option
+                        v-for="(description, name) in active.fields"
+                        :key="name"
+                        :value="name"
+                      >
+                        {{ name }} · {{ description }}
+                      </option>
+                    </select></label
+                  >
+                </div>
+              </template>
+            </fieldset>
+          </template>
+          <button class="submit" :disabled="busy || remaining > 0 || !active || loading">
             {{ busy ? '查询并保存中…' : remaining ? `等待 ${remaining} 秒` : '查询并保存' }}
           </button>
           <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -218,40 +354,107 @@ function download() {
         <article class="results">
           <div class="result-head">
             <h2>{{ result ? `${resultTitle} · ${rows.length} 条` : '查询结果' }}</h2>
-            <button v-if="result" @click="download">导出 JSON</button>
+            <div v-if="result">
+              <button @click="raw = !raw">{{ raw ? '表格视图' : '原始结果' }}</button>
+              <button @click="download">导出 JSON</button>
+            </div>
           </div>
           <template v-if="result"
             ><p>获取时间 {{ result.fetched_at }}</p>
-            <p v-for="warning in result.warnings" :key="warning" class="error" role="alert">{{ warning }}</p>
+            <p class="request-summary">查询条件：{{ JSON.stringify(result.parameters) }}</p>
+            <p v-for="warning in result.warnings" :key="warning" class="error" role="alert">
+              {{ warning }}
+            </p>
             <p class="path">已保存：{{ result.saved_path }}</p>
-            <div v-if="rows.length" class="table">
-              <table>
-                <thead>
-                  <tr>
-                    <th v-for="column in columns" :key="column">{{ column }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(row, index) in visible" :key="index">
-                    <td v-for="column in columns" :key="column">{{ display(row[column]) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <p v-else>查询成功，当前条件下无数据。空结果已保存。</p>
-            <div v-if="rows.length > 100">
-              <button :disabled="page === 1" @click="page--">上一页</button> {{ page }} /
-              {{ Math.ceil(rows.length / 100) }}
-              <button :disabled="page * 100 >= rows.length" @click="page++">下一页</button>
-            </div></template
-          >
-          <p v-else class="empty">选择数据类型并填写条件，点击“查询并保存”获取数据。</p>
+            <pre v-if="raw">{{ JSON.stringify(result.data, null, 2) }}</pre>
+            <template v-else
+              ><div v-if="rows.length" class="table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th v-for="column in columns" :key="column" :title="fieldLabel(column)">
+                        {{ column }}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, index) in visible" :key="index">
+                      <td v-for="column in columns" :key="column">{{ display(row[column]) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p v-else>查询成功，当前条件下无数据。空结果已保存。</p>
+              <div v-if="rows.length > 100">
+                <button :disabled="page === 1" @click="page--">上一页</button> {{ page }} /
+                {{ Math.ceil(rows.length / 100) }}
+                <button :disabled="page * 100 >= rows.length" @click="page++">下一页</button>
+              </div></template
+            >
+          </template>
+          <p v-else class="empty">选择数据项目并填写条件，点击“查询并保存”获取数据。</p>
         </article>
       </section>
     </div>
   </main>
 </template>
 <style scoped>
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.dataset-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.dataset-picker select {
+  width: min(500px, 70vw);
+}
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin: 12px 0;
+}
+.filter-row input {
+  width: 160px;
+}
+.filter-row select {
+  width: 120px;
+}
+.table-options {
+  margin-top: 20px;
+}
+.hint {
+  color: #8394ad;
+  line-height: 1.7;
+}
+.required {
+  font-size: 10px;
+  color: #75afbc;
+}
+.request-summary {
+  overflow-wrap: anywhere;
+  color: #8394ad;
+}
+pre {
+  max-height: 560px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+aside {
+  align-self: start;
+}
+aside small {
+  float: right;
+  opacity: 0.6;
+}
+
 .workspace {
   background: #0c1422;
   color: #cad6e7;

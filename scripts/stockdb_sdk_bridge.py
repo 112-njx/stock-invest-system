@@ -376,14 +376,14 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
-            if self.path in ('/online/query', '/online/policy'):
-                from stockdb_online import query, policy, OnlineError
+            if self.path in ('/online/query', '/online/policy', '/online/catalog'):
+                from stockdb_online import query, policy, catalog, OnlineError
                 try:
                     size = int(self.headers.get('Content-Length', '0'))
                     if not 0 < size <= 8192:
                         raise OnlineError('Invalid request size')
                     payload = json.loads(self.rfile.read(size))
-                    result = query(sdk_dir, payload) if self.path.endswith('/query') else policy(payload.get('interval_seconds'))
+                    result = catalog() if self.path.endswith('/catalog') else query(sdk_dir, payload) if self.path.endswith('/query') else policy(payload.get('interval_seconds'))
                     self.respond(json.dumps(result, ensure_ascii=False).encode(), 200)
                 except OnlineError as exc:
                     self.respond(json.dumps({'detail': str(exc), 'retry_after': exc.retry_after}, ensure_ascii=False).encode(), exc.status)

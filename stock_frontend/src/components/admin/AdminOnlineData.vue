@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { request } from '@/api/http'
-const interval = ref(30)
+const interval = ref(40)
 const feedback = ref('')
 const busy = ref(false)
 onMounted(async () => {
@@ -32,9 +32,9 @@ async function save() {
 <template>
   <section class="admin-card">
     <h2>在线数据接口请求频率</h2>
-    <p>所有用户、标签页共享请求间隔，默认 30 秒。配置持久保存，失败请求也计入冷却。</p>
+    <p>所有用户、标签页共享请求间隔，默认 40 秒，最小 40 秒。配置持久保存，失败请求也计入冷却。</p>
     <label
-      >请求间隔（秒） <input v-model.number="interval" type="number" min="30" max="86400"
+      >请求间隔（秒） <input v-model.number="interval" type="number" min="40" max="86400"
     /></label>
     <button :disabled="busy" @click="save">{{ busy ? '保存中' : '保存配置' }}</button>
     <p role="status">{{ feedback }}</p>
