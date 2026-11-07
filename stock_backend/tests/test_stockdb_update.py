@@ -13,7 +13,7 @@ from app.services.stockdb_files import read_json, write_json
 @pytest.fixture
 def control(tmp_path, monkeypatch):
     monkeypatch.setattr(update, 'directory', lambda: tmp_path)
-    write_json(tmp_path / 'heartbeat.json', {'time': time.time()})
+    write_json(tmp_path / 'heartbeat.json', {'time': time.time(), 'kind':'linux-container'})
     db = Mock()
     db.scalar.return_value = None
     monkeypatch.setattr(update, 'get_session', lambda: db)
@@ -99,3 +99,33 @@ def test_queue_write_failure_is_retryable_without_orphan_files(control, monkeypa
     retried = update.request_update()
     assert retried['status'] == 'queued'
     assert read_json(root / 'request.json')['task_id'] == retried['task_id']
+
+
+def test_windows_heartbeat_is_not_container_control(control):
+    root, _ = control
+    write_json(root/'heartbeat.json', {'time':time.time(),'pid':123})
+    assert not update.status()['helper_online']
+
+
+def test_events_are_paged_and_task_scoped(control, client):
+    import sqlite3
+    from uuid import uuid4
+    root, _ = control
+    task = str(uuid4())
+    with sqlite3.connect(root/'update-events.sqlite3') as db:
+        db.execute('CREATE TABLE events(seq INTEGER PRIMARY KEY,task TEXT,time REAL,phase TEXT,level TEXT,file TEXT,message TEXT)')
+        db.execute('CREATE TABLE files(task TEXT,file TEXT,status TEXT,retries INTEGER)')
+        db.executemany('INSERT INTO events VALUES(?,?,?,?,?,?,?)',[(i,task,time.time(),'downloading','info',None,str(i)) for i in range(1,6)])
+        db.execute('INSERT INTO events VALUES(6,?,0,?,?,NULL,?)',(str(uuid4()),'failed','error','other task'))
+    page = update.events(task,0,limit=2)
+    assert [r['seq'] for r in page['events']] == [1,2] and page['has_more']
+    assert [r['seq'] for r in update.events(task,2,limit=2)['events']] == [3,4]
+    assert [r['seq'] for r in update.events(task,before_seq=6,limit=2)['events']] == [4,5]
+    assert client.get('/api/v1/admin/local-market/update/events',params={'task_id':task}).status_code == 401
+    app.dependency_overrides[get_current_admin] = lambda: SimpleNamespace(id=1)
+    try:
+        assert client.get('/api/v1/admin/local-market/update/events',params={'task_id':'../../x'}).status_code == 400
+        assert client.get('/api/v1/admin/local-market/update/events',params={'task_id':task,'limit':501}).status_code == 422
+        assert len(client.get('/api/v1/admin/local-market/update/events',params={'task_id':task}).json()['data']['events']) == 5
+    finally:
+        app.dependency_overrides.pop(get_current_admin,None)

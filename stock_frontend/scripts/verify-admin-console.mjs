@@ -39,7 +39,7 @@ await build({
           resolveDir: root,
           contents:
             path === '@/api/http'
-              ? 'export const request=async()=>({interval_seconds:30})'
+              ? 'export const request=async config=>globalThis.adminFixture.http(config)'
               : path === 'vue-router'
               ? 'export const useRoute=()=>globalThis.adminFixture.route;export const useRouter=()=>({replace:async ({query})=>{globalThis.adminFixture.route.query=query}})'
               : path.endsWith('useSyntheticWicks')
@@ -70,7 +70,7 @@ const replies={
  sync:{status:'idle',task_id:null,error:null,progress:0,message:'尚未同步本地行情'},display:{synthetic_wick_factor:.5},
  requests:{requests:[{id:'1',task_id:'test-task',queue:'fixed_indices',provider:'stockdb',interface:'日k',symbol:'600519',symbol_name:'贵州茅台',symbols:[],period:'1d',phase:'requesting',attempt:1,attempts:1,started_at:'2026-11-06T00:00:00Z',updated_at:'2026-11-06T00:00:00Z'}]},
 };
-const fixture={calls:[],failSave:false,reply:replies,route:null,async call(key,data){this.calls.push(key);if(key.startsWith('save')){if(this.failSave)throw Error('save failed');if(key==='saveIndicatorSettings')return this.reply.indicatorSettings={...data,revision:2};if(key==='savePolicy')return this.reply.policy={...data};if(key==='saveLimits')return this.reply.traffic={...this.reply.traffic,...data};return this.reply.display={...data}}if(key==='startUpdate'){this.reply.update={...this.reply.update,status:'queued',maintenance:true,task_id:'update-task'};return this.reply.update}if(key==='startSync'){this.reply.sync={status:'queued',task_id:'new-task',error:null,progress:0,message:'等待同步'};return this.reply.sync}return structuredClone(this.reply[key])}};
+const fixture={calls:[],failSave:false,reply:replies,route:null,async http(config){if(config.url.includes('/events')){const before=config.params.before_seq;const after=config.params.after_seq||0;const all=Array.from({length:10},(_,i)=>({seq:i+1,time:1794020400,phase:i<8?'downloading':'verifying',level:'info',file:'007593.ldb',message:i<8?'续传 2 007593.ldb':'正在校验原始文件'}));const rows=before?all.filter(e=>e.seq<before).slice(-3):all.filter(e=>e.seq>after);return {events:rows,files:[{file:'007593.ldb',status:'retrying',retries:2}],has_more:!!before&&rows[0]?.seq>1}}return {interval_seconds:30}},async call(key,data){this.calls.push(key);if(key.startsWith('save')){if(this.failSave)throw Error('save failed');if(key==='saveIndicatorSettings')return this.reply.indicatorSettings={...data,revision:2};if(key==='savePolicy')return this.reply.policy={...data};if(key==='saveLimits')return this.reply.traffic={...this.reply.traffic,...data};return this.reply.display={...data}}if(key==='startUpdate'){this.reply.update={...this.reply.update,status:'queued',maintenance:true,task_id:'update-task'};return this.reply.update}if(key==='startSync'){this.reply.sync={status:'queued',task_id:'new-task',error:null,progress:0,message:'等待同步'};return this.reply.sync}return structuredClone(this.reply[key])}};
 globalThis.adminFixture=fixture;
 `
 if (process.argv.includes('--preview')) {
@@ -148,6 +148,21 @@ assert.ok(updateButton && !updateButton.disabled)
 updateButton.click(); await settle()
 assert.equal(fixture.calls.filter(c => c === 'startUpdate').length, 1)
 assert.ok(syncButton.disabled, 'manual sync must be blocked during raw-file maintenance')
+assert.match(document.querySelector('.update-log').textContent, /正在校验原始文件/)
+assert.match(document.querySelector('.update-files').textContent, /007593.ldb/)
+assert.match(document.querySelector('.update-files').textContent, /重试中/)
+const logViewport = document.querySelector('.update-log')
+assert.equal(dom.window.getComputedStyle(logViewport).height, '288px')
+Object.defineProperty(logViewport, 'scrollHeight', {configurable:true,value:1000})
+Object.defineProperty(logViewport, 'clientHeight', {configurable:true,value:288})
+logViewport.scrollTop = 0
+logViewport.dispatchEvent(new dom.window.Event('scroll'))
+await nextTick()
+assert.match(document.body.textContent, /正在查看历史，已暂停跟随/)
+const earlier = [...document.querySelectorAll('button')].find(b=>b.textContent.includes('加载更早记录'))
+earlier.click(); await settle()
+assert.equal(document.querySelectorAll('.update-log time').length, 6)
+
 fixture.reply.update = {...fixture.reply.update, status:'success', maintenance:false, progress:100}
 await navigate('overview'); await navigate('sources')
 assert.equal(syncButton.isConnected, false)

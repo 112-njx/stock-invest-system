@@ -598,3 +598,15 @@
 @media (max-width: 600px) {
   .admin-console .admin-errors li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
+
+.admin-console .update-details { margin-top:16px; min-width:0; }
+.admin-console .update-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; font-variant-numeric:tabular-nums; }
+.admin-console .update-stats dt { color:var(--text-muted); }
+.admin-console .update-stats dd { margin:4px 0; overflow-wrap:anywhere; }
+.admin-console .update-log-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:12px 0; }
+.admin-console .update-log-actions span { color:var(--text-muted); }
+.admin-console .update-log { height:288px; overflow:auto; scrollbar-gutter:stable; overscroll-behavior:contain; background:var(--bg-panel-2); border:1px solid var(--border); border-radius:6px; padding:10px; }
+.admin-console .update-log p { display:grid; grid-template-columns:75px 90px minmax(0,1fr); gap:8px; font-family:monospace; font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.admin-console .update-log time { color:var(--text-muted); }
+.admin-console .update-files { max-height:260px; overflow:auto; }
+@media(max-width:600px) { .admin-console .update-log p { grid-template-columns:65px minmax(0,1fr); } .admin-console .update-log p span { grid-column:1/-1; } }

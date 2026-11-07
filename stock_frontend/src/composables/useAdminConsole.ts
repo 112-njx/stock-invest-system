@@ -249,7 +249,7 @@ export function useAdminConsole(section: Ref<AdminSection>) {
       state.feedback.update = '已提交原始数据更新；完成后请再同步本地行情'
     } catch (error: unknown) {
       const e = error as { response?: { data?: { msg?: string } } }
-      state.saveError.update = e.response?.data?.msg || '提交失败，请刷新检查更新助手和同步任务状态'
+      state.saveError.update = e.response?.data?.msg || '提交失败，请刷新检查容器更新控制器和同步任务状态'
     } finally {
       state.saving.update = false
     }
@@ -277,7 +277,7 @@ export function useAdminConsole(section: Ref<AdminSection>) {
           schedule()
         }
       },
-      section.value === 'requests' || busySync.value || busyUpdate.value ? 3000 : 10000
+      busyUpdate.value ? 1000 : section.value === 'requests' || busySync.value ? 3000 : 10000
     )
   }
   function visibility() {

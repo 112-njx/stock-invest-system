@@ -2,6 +2,7 @@
 import { type AdminConsole, providerNames, stateLabel } from '@/composables/useAdminConsole'
 import AdminNotice from './AdminNotice.vue'
 import AdminErrors from './AdminErrors.vue'
+import AdminUpdateDetails from './AdminUpdateDetails.vue'
 import AdminOnlineData from './AdminOnlineData.vue'
 import AdminIndicators from './AdminIndicators.vue'
 const props = defineProps<{ controller: AdminConsole }>()
@@ -55,17 +56,18 @@ function policyChanged() {
       <span class="badge" :class="{ danger: s.update.data?.status === 'failed' }">{{ stateLabel(s.update.data?.status || 'idle') }}</span>
     </div>
     <div class="notice">
-      此操作会暂停本地源读取，停止 StockDB 服务，运行本机“数据更新.exe”下载原始文件，
+      此操作会暂停本地源读取，暂停 RD 和 SDK 读取进程，运行容器内 Linux 更新器下载原始文件，
       按清单校验后生成新的数据版本，再启动服务并检查真实查询。不会创建备份，也不会自动导入项目数据库。
       原有项目库历史仍可查看，需要补拉的数据暂不可用。
     </div>
     <p>请等待正在执行的行情同步结束，再更新原始数据。更新成功后，点击下方“同步本地行情”完成第二步。</p>
     <AdminNotice :resource="s.update" />
-    <p v-if="s.update.data && !s.update.data.helper_online" class="notice danger">本机更新助手未连接，暂时无法从页面更新原始文件。</p>
+    <p v-if="s.update.data && !s.update.data.helper_online" class="notice danger">容器更新控制器未连接，请检查 stockdb-local 容器。</p>
     <template v-if="s.update.data">
       <p class="sync-message">{{ s.update.data.message }}</p>
       <progress :value="s.update.data.progress" max="100" />
       <AdminErrors v-if="s.update.data.error" :error="s.update.data.error" />
+      <AdminUpdateDetails :task-id="s.update.data.task_id" :running="controller.busyUpdate.value" :details="s.update.data.details" />
       <small v-if="s.update.data.data_version">当前数据版本 {{ s.update.data.data_version }}</small>
     </template>
     <div class="form-actions">
