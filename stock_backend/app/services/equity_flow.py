@@ -12,7 +12,7 @@ from app.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 FIELDS = ('main_net','jumbo_net','big_net','mid_net','small_net')
-_KEY = 'equity-flow:v2'
+_KEY = 'equity-flow:v3'
 _lock = Lock()
 _state = None
 _running = False
@@ -46,6 +46,21 @@ def aggregate(quotes, history, amounts, trading_dates=None):
     return items
 
 
+def calendar_ranges(start, history):
+    """Include fallback windows without scanning the years between old and recent data."""
+    ranges = [(start, 99991231)]
+    for records in history.values():
+        if records and min(records) < start:
+            ranges.append((min(records), max(records)))
+    merged = []
+    for left, right in sorted(ranges):
+        if merged and left <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(right, merged[-1][1]))
+        else:
+            merged.append((left, right))
+    return merged
+
+
 def build():
     quotes = equity_table.snapshot()
     if quotes.get('loading') or not quotes.get('items'):
@@ -75,11 +90,12 @@ def build():
             if isinstance(row,(list,tuple)) and len(row)==2 and row[0] in needed:
                 amounts[(row[0],day)] = equity_table.number(row[1])
     trading_dates = set()
-    for prefix in ('0','3','6','8','9'):
-        rows = provider.query('vals','日k',k1='qz:'+prefix,k2=f'fwd:{start},99991231',ap='get.date,code')
-        for row in rows:
-            if isinstance(row,(list,tuple)) and len(row)==2 and row[1] in codes and isinstance(row[0],int):
-                trading_dates.add(row[0])
+    for left, right in calendar_ranges(start, by_code):
+        for prefix in ('0','3','6','8','9'):
+            rows = provider.query('vals','日k',k1='qz:'+prefix,k2=f'fwd:{left},{right}',ap='get.date,code')
+            for row in rows:
+                if isinstance(row,(list,tuple)) and len(row)==2 and row[1] in codes and isinstance(row[0],int):
+                    trading_dates.add(row[0])
     items = aggregate(quotes['items'],by_code,amounts,trading_dates)
     return dict(items=items,industries=quotes['industries'],date=quotes['date'],
                 flow_date=max(required_dates) if required_dates else None,
