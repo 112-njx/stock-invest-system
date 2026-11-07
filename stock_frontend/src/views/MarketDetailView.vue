@@ -8,7 +8,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { searchSymbols } from '@/api/market'
+import { searchSymbols, fetchSymbols } from '@/api/market'
 import {
   fetchBacktestResultDetail,
   fetchBacktestResults,
@@ -106,10 +106,11 @@ async function resolveSymbolParam() {
   const q = route.query.symbol
   if (q == null) return
   const kw = String(q)
-  if (market.current && (String(market.current.code) === kw || String(market.current.id) === kw)) return
+  const stockOnly = route.query.asset_type === 'stock'
+  if (market.current && (!stockOnly || market.current.type === 'stock') && (String(market.current.code) === kw || String(market.current.id) === kw)) return
   try {
-    const list = await searchSymbols(kw)
-    const found = list.find((s) => s.code === kw || String(s.id) === kw)
+    const list = stockOnly ? await fetchSymbols({ search: kw }) : await searchSymbols(kw)
+    const found = list.find((s) => (!stockOnly || s.type === 'stock') && (s.code === kw || String(s.id) === kw))
     if (found) market.setCurrent(found)
   } catch {
     /* 解析失败保持当前标的，不阻塞页面 */
