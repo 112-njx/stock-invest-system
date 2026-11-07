@@ -145,3 +145,10 @@ def equities() -> dict:
     from app.services.equity_table import snapshot
     from app.core.response import ok
     return ok(data=snapshot())
+
+
+@router.get('/equities/flows')
+def equity_flows() -> dict:
+    from app.services.equity_flow import snapshot
+    from app.core.response import ok
+    return ok(data=snapshot())

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { request } from '@/api/http'
 import { addWatchlist } from '@/api/market'
@@ -11,7 +11,7 @@ import { useAuthModalStore } from '@/stores/authModal'
 import { toast } from '@/utils/toast'
 type Row={code:string;name:string;market:'SSE'|'SZSE'|'BSE';industry:string;data_date:number;[key:string]:number|string|null}
 type Col={key:string;label:string;width:number;kind?:string;signed?:boolean;hint?:string}
-const columns:Col[]=[
+const quoteColumns:Col[]=[
 {key:'code',label:'代码',width:85},{key:'name',label:'名称',width:110},
 {key:'close',label:'最新收盘价',width:100},{key:'change',label:'涨跌额',width:85,signed:true},
 {key:'change_pct',label:'涨跌幅',width:90,kind:'pct',signed:true},
@@ -24,6 +24,17 @@ const columns:Col[]=[
 ...(['open','high','low'] as const).map((key,i)=>({key,label:['今开','最高','最低'][i]!,width:85})),
 ...[5,10,20].map(n=>({key:`return_${n}`,label:`${n}日涨幅`,width:100,kind:'pct',signed:true})),
 {key:'return_ytd',label:'年初至今涨幅',width:130,kind:'pct',signed:true,hint:'复权收益；年内上市以上市首日收盘价为基准'}].map(c=>({...c,width:c.key==='code'?100:c.key==='name'?130:Math.max(c.width+10,100)}))
+const view=ref<'quotes'|'flows'>('quotes')
+const flowColumns:Col[]=[
+ {key:'code',label:'代码',width:100},{key:'name',label:'名称',width:130},
+ {key:'close',label:'最新收盘价',width:110},{key:'change_pct',label:'涨跌幅',width:100,kind:'pct',signed:true},
+ {key:'main_net',label:'主力净流入',width:140,kind:'large',signed:true},
+ {key:'main_ratio',label:'主力净流入占比',width:155,kind:'pct',signed:true,hint:'主力净流入 ÷ 同一资金流日期的成交额'},
+ ...(['jumbo_net','big_net','mid_net','small_net'] as const).map((key,i)=>({key,label:['超大单净流入','大单净流入','中单净流入','小单净流入'][i]!,width:145,kind:'large',signed:true})),
+ ...[5,10,20].map(n=>({key:`main_${n}`,label:`${n}日主力净流入`,width:165,kind:'large',signed:true,hint:'截至该行资金流日期的交易日累计值；窗口缺失时显示 —'})),
+ {key:'flow_date',label:'资金流日期',width:135},{key:'industry',label:'申万一级',width:120}]
+const columns=computed(()=>view.value==='flows'?flowColumns:quoteColumns)
+const flowDate=ref(''),missing=ref(0)
 const router=useRouter(),market=useMarketStore(),user=useUserStore(),ws=useWsStore(),auth=useAuthModalStore()
 const rows=ref<Row[]>([]),indexed=ref<IndexedStock[]>([]),industries=ref<string[]>([]),query=ref(''),exchanges=ref<string[]>([]),industry=ref('')
 const op=ref('gt'),value=ref(''),upper=ref(''),sortKey=ref('code'),asc=ref(true),date=ref(''),error=ref(''),loading=ref(false),refreshing=ref(false)
@@ -44,25 +55,27 @@ const filtered=computed(()=>{
 const rowHeight=34
 const start=computed(()=>Math.max(0,Math.min(Math.floor(top.value/rowHeight)-5,filtered.value.length-1)))
 const visible=computed(()=>filtered.value.slice(start.value,start.value+Math.ceil(height.value/rowHeight)+12))
-const width=columns.reduce((n,c)=>n+c.width,48)
+const width=computed(()=>columns.value.reduce((n,c)=>n+c.width,48))
 function resetScroll(){top.value=0;if(viewport.value)viewport.value.scrollTop=0;menu.value=undefined}
 function reset(){query.value='';exchanges.value=[];industry.value='';value.value='';upper.value='';resetScroll()}
 function sort(key:string){if(sortKey.value===key)asc.value=!asc.value;else{sortKey.value=key;asc.value=key==='code'||key==='name'}resetScroll()}
-function format(r:Row,c:Col){const v=r[c.key];if(v==null)return '—';if(typeof v!=='number')return v;if(c.kind==='large')return Math.abs(v)>=1e8?(v/1e8).toFixed(2)+'亿':Math.abs(v)>=1e4?(v/1e4).toFixed(2)+'万':v.toLocaleString('zh-CN');return (c.signed&&v>0?'+':'')+v.toFixed(2)+(c.kind==='pct'?'%':'')}
+function format(r:Row,c:Col){const v=r[c.key];if(v==null)return '—';if(typeof v!=='number')return v;if(c.kind==='large')return (c.signed&&v>0?'+':'')+(Math.abs(v)>=1e8?(v/1e8).toFixed(2)+'亿':Math.abs(v)>=1e4?(v/1e4).toFixed(2)+'万':v.toLocaleString('zh-CN'));return (c.signed&&v>0?'+':'')+v.toFixed(2)+(c.kind==='pct'?'%':'')}
 function context(event:MouseEvent,row:Row){event.preventDefault();active.value=row.code;menu.value={row,x:Math.max(4,Math.min(event.clientX,innerWidth-216)),y:Math.max(4,Math.min(event.clientY,innerHeight-114))}}
 function keyboardMenu(event:KeyboardEvent,row:Row){const rect=(event.currentTarget as HTMLElement).getBoundingClientRect();event.preventDefault();menu.value={row,x:Math.max(4,rect.left+80),y:Math.max(4,Math.min(rect.top,innerHeight-114))}}
 function outside(e:PointerEvent){if(!(e.target as HTMLElement).closest('.stock-context'))menu.value=undefined}
 function escape(e:KeyboardEvent){if(e.key==='Escape')menu.value=undefined}
 function detail(row:Row){menu.value=undefined;void router.push({path:'/market/detail',query:{symbol:row.code,asset_type:'stock'}})}
 async function follow(row:Row){menu.value=undefined;if(!user.token){auth.show();return}if(adding.value)return;if(market.watchlist.some(s=>s.code===row.code&&s.type==='stock')){toast.success('该股票已在关注列表');return}adding.value=true;try{const item=await addWatchlist(`stock:${row.code}`);market.addWatchlistItem(item);ws.syncSubscriptions();toast.success(`已关注 ${row.name}`)}catch{toast.error('加入关注失败，请重试')}finally{adding.value=false}}
-async function load(){if(loading.value)return;loading.value=true;try{const p=await request<{items:Row[];industries:string[];date?:number;loading:boolean;refreshing?:boolean;error?:string}>({url:'/stockdb/equities',silent:true,timeout:60000});if(!alive)return;if(!p.loading){rows.value=p.items;industries.value=p.industries;date.value=String(p.date??'');indexed.value=indexStocks(p.items.map((r,i)=>({code:r.code,name:r.name,market:r.market,type:'stock',latest_date:String(r.data_date),ordinal:i})))}refreshing.value=p.loading||!!p.refreshing;error.value=p.error??''}catch(e){if(alive)error.value=e instanceof Error?e.message:'读取失败，请重试'}finally{loading.value=false;if(alive)timer=setTimeout(()=>void load(),refreshing.value?2000:60000)}}
+async function load(){if(loading.value)return;loading.value=true;const requestedView=view.value;try{const p=await request<{items:Row[];industries:string[];date?:number;loading:boolean;refreshing?:boolean;error?:string;flow_date?:number;missing?:number}>({url:view.value==='flows'?'/stockdb/equities/flows':'/stockdb/equities',silent:true,timeout:60000});if(!alive||requestedView!==view.value)return;if(!p.loading){rows.value=p.items;industries.value=p.industries;date.value=String(p.date??'');flowDate.value=String(p.flow_date??'');missing.value=p.missing??0;indexed.value=indexStocks(p.items.map((r,i)=>({code:r.code,name:r.name,market:r.market,type:'stock',latest_date:String(r.data_date),ordinal:i})))}refreshing.value=p.loading||!!p.refreshing;error.value=p.error??''}catch(e){if(alive)error.value=e instanceof Error?e.message:'读取失败，请重试'}finally{loading.value=false;if(alive)timer=setTimeout(()=>void load(),requestedView!==view.value?0:refreshing.value?2000:60000)}}
+watch(view,()=>{rows.value=[];indexed.value=[];error.value='';date.value='';flowDate.value='';missing.value=0;sortKey.value=view.value==='flows'?'main_net':'code';asc.value=view.value!=='flows';resetScroll();refresh()})
 function refresh(){clearTimeout(timer);void load()}
 onMounted(()=>{observer=new ResizeObserver(entries=>{height.value=entries[0]?.contentRect.height??600});if(viewport.value)observer.observe(viewport.value);document.addEventListener('pointerdown',outside);window.addEventListener('keydown',escape);void load()})
 onBeforeUnmount(()=>{alive=false;clearTimeout(timer);observer?.disconnect();document.removeEventListener('pointerdown',outside);window.removeEventListener('keydown',escape)})
 </script>
 <template>
 <section class="stocks-page">
- <header><h1>股票</h1><span>A股 · 本地最新数据 {{ date }} · {{ filtered.length }} / {{ rows.length }} 只</span><span v-if="refreshing">正在更新数据…</span><button :disabled="loading" @click="refresh">刷新</button></header>
+ <header><h1>股票</h1><div class="view-tabs" role="group" aria-label="股票数据视图"><button :aria-pressed="view==='quotes'" @click="view='quotes'">行情数据</button><button :aria-pressed="view==='flows'" @click="view='flows'">资金流向</button></div><span>A股 · 本地最新数据 {{ date }} · {{ filtered.length }} / {{ rows.length }} 只</span><span v-if="refreshing">正在更新数据…</span><button :disabled="loading" @click="refresh">刷新</button></header>
+ <p v-if="view==='flows'" class="flow-note">资金流最新日期 {{ flowDate || '—' }} · 金额单位：元（万／亿缩写） · 净流入红色、净流出绿色 · 占比使用同日成交额 · {{ missing }} 只暂无资金流数据，缺失窗口显示 —</p>
  <div class="filters">
  <input v-model="query" aria-label="搜索股票" placeholder="代码 / 名称 / 拼音" @input="resetScroll" />
  <fieldset><legend class="sr-only">交易所</legend><label v-for="m in [['SSE','沪市'],['SZSE','深市'],['BSE','京市']]" :key="m[0]"><input v-model="exchanges" type="checkbox" :value="m[0]" @change="resetScroll"/>{{ m[1] }}</label></fieldset>
@@ -84,6 +97,8 @@ onBeforeUnmount(()=>{alive=false;clearTimeout(timer);observer?.disconnect();docu
 </section>
 </template>
 <style scoped>
+.view-tabs{display:flex;gap:4px}.view-tabs button[aria-pressed='true']{background:var(--bg-active);color:var(--accent);border-color:var(--accent)}.flow-note{font-size:13px;line-height:1.5}
+
 .stocks-page{--quote-highlight:#e5e65b;--quote-up:#ff3535;--quote-down:#00cf4a;--quote-ratio:#f044e8;--quote-selected:#294c70}
 :global([data-theme='light'] .stocks-page){--quote-highlight:#806600;--quote-up:#cf202f;--quote-down:#008740;--quote-ratio:#a520a0;--quote-selected:#d8e8fa}
 .high-ratio{color:var(--quote-ratio)!important}
