@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.models.kline import KLINE_MODELS
 from app.repositories import kline_repo
 from app.services import market_service
-from app.services.indicators import INDICATORS, get_indicator
+from app.services.indicators import get_indicator
 from app.utils import market_cache
 from app.utils.redis_client import get_redis_client
 
@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _DEFAULT_BACK_DAYS = 7300  # 默认回看窗口：约 20 年，等价"按 limit 取最近 N 根"（与 get_kline 默认区间对齐），避免历史指标缺失
-INDICATOR_NAMES = set(INDICATORS.keys()) | {"ma"}
+from app.services.indicator_registry import REGISTRY
+INDICATOR_NAMES = set(REGISTRY)
 
 
 def compute_indicators(
@@ -47,18 +48,11 @@ def compute_indicators(
         if n not in INDICATOR_NAMES:
             raise ValueError(f"unsupported indicator: {n}")
 
-    defaults = {'ma': {}, 'macd': {'fast':12, 'slow':26, 'signal':9}, 'kdj': {'n':9, 'm1':3, 'm2':3}, 'volume': {}, 'amount': {}}
-    if params is not None and (not isinstance(params, dict) or params.keys() - defaults.keys()):
+    from app.services.indicator_registry import REGISTRY, validate_parameters
+    if params is not None and (not isinstance(params, dict) or params.keys() - REGISTRY.keys()):
         raise ValueError('无效的指标参数')
     for name in names:
-        if name == "ma":
-            from app.schemas.chart_settings import MaParameters
-            MaParameters.model_validate((params or {}).get("ma", {}))
-            continue
-        chosen = (params or {}).get(name, {})
-        if not isinstance(chosen, dict) or chosen.keys() - defaults[name].keys() or any(
-                type(v) is not int or not 1 <= v <= 10000 for v in chosen.values()):
-            raise ValueError('指标周期须为 1 到 10000 的整数，参数名须与指标匹配')
+        validate_parameters(name, (params or {}).get(name))
 
     symbol_id = market_service.resolve_symbol_id(db, symbol)
     if symbol_id is None:
@@ -88,18 +82,17 @@ def compute_indicators(
     if cached is not None:
         return cached
 
-    if policy['pandas_enabled']:
+    pandas_names = [name for name in names if policy['pandas_enabled'] and 'pandas' in REGISTRY[name]['engines']]
+    sdk_names = [name for name in names if name not in pandas_names]
+    if pandas_names:
         df = _bars_to_df(bars)
-        for name in names:
-            if name == "ma":
-                continue
+        for name in pandas_names:
             df = get_indicator(name, (params or {}).get(name)).calculate(df)
         rows = _df_to_rows(df)
-        if "ma" in names:
-            # Price MA always uses zb, even when other indicators use pandas.
-            rows = sdk_indicators.calculate(rows, ["ma"], params)
     else:
-        rows = sdk_indicators.calculate([market_cache.kline_bar_to_dict(b) for b in bars], names, params)
+        rows = [market_cache.kline_bar_to_dict(b) for b in bars]
+    if sdk_names:
+        rows = sdk_indicators.calculate(rows, sdk_names, params)
     if explicit_range:
         rows = [row for row in rows if market_cache.as_utc(datetime.fromisoformat(row["ts"])) >= market_cache.as_utc(start)]
     else:

@@ -14,6 +14,12 @@ from app.services import indicator_service
 router = APIRouter(prefix="/api/v1", tags=["indicators"])
 
 
+@router.get('/indicators/catalog')
+def get_indicator_catalog() -> dict:
+    from app.services.indicator_registry import DEFINITIONS
+    return ok(data={'version': 1, 'indicators': DEFINITIONS})
+
+
 @router.get("/indicators")
 def get_indicators(
     symbol: str = Query(..., description="标的代码（或 symbol_id）"),

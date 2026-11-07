@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom'
 const root = process.cwd(), dir = resolve('node_modules/.cache/detail-chart')
 await mkdir(dir, { recursive: true })
 const out = resolve(dir, 'test.mjs')
-await build({ stdin: { contents: "export {default as Chart} from '@/components/trading/KLineChart.vue'; export {useUserStore} from '@/stores/user'; export {createApp,h,nextTick} from 'vue';export {createPinia} from 'pinia'", resolveDir: root, loader: 'ts' }, outfile: out, bundle: true, format: 'esm', platform: 'browser', loader: { '.png':'dataurl' }, alias: { '@': resolve('src') },
+await build({ stdin: { contents: "export {default as Chart} from '@/components/trading/KLineChart.vue'; export {useUserStore} from '@/stores/user'; export {createApp,h,nextTick} from 'vue';export {createPinia} from 'pinia';export {createIndicatorSeries,fillIndicatorSeries} from '@/components/trading/indicatorRenderer'", resolveDir: root, loader: 'ts' }, outfile: out, bundle: true, format: 'esm', platform: 'browser', loader: { '.png':'dataurl' }, alias: { '@': resolve('src') },
   define: { 'process.env.NODE_ENV': '"test"', __VUE_OPTIONS_API__: 'true', __VUE_PROD_DEVTOOLS__: 'false', __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false' },
   plugins: [{ name: 'fixture', setup(b) {
     b.onResolve({ filter: /(?:^|\/)http$/ }, ({path}) => ({path, namespace:'fixture'}))
@@ -16,16 +16,18 @@ await build({ stdin: { contents: "export {default as Chart} from '@/components/t
     b.onLoad({filter:/\.vue$/}, async ({path}) => { const {descriptor}=parse(await readFile(path,'utf8'),{filename:path}); return {contents:compileScript(descriptor,{id:path,inlineTemplate:true}).content,loader:'ts',resolveDir:resolve(path,'..')} })
   } }] })
 const dom = new JSDOM('<div id="app"></div>', { url: 'http://localhost' })
-for (const name of ['window','document','Element','HTMLElement','SVGElement','Node','localStorage','getComputedStyle','Event']) globalThis[name]=dom.window[name]
+for (const name of ['window','document','Document','ShadowRoot','Element','HTMLElement','SVGElement','Node','localStorage','getComputedStyle','Event']) globalThis[name]=dom.window[name]
 globalThis.requestAnimationFrame = fn => setTimeout(fn,0)
 globalThis.cancelAnimationFrame = clearTimeout
 globalThis.BroadcastChannel = undefined
 const m = await import(pathToFileURL(out).href)
 const defaults = () => ({ma:{lines:[5,10,20,30].map(period=>({period,visible:true}))},panels:['volume','macd']})
+const definitions = JSON.parse(await readFile(resolve('../stock_backend/app/services/indicator_catalog.json'),'utf8'))
 const saved = new Map()
 let fail = false, pending
 const pinia = m.createPinia(), user = m.useUserStore(pinia)
 globalThis.chartFixture = { async request(c) {
+  if (c.url === '/indicators/catalog') return {version:1,indicators:definitions}
   if (c.url !== '/users/me/chart-settings') return []
   const id = user.user?.id
   if (c.method === 'put') {
@@ -71,6 +73,14 @@ await click(button('MA 设置'));assert.equal(periods().length,4,'account defaul
 await click(document.querySelector('[title="选择技术指标"]'))
 fail=true;await click(panel('KDJ'));assert.match(document.body.textContent,/已开启 2\/3/);assert.match(document.body.textContent,/保存失败/)
 fail=false;await click(panel('KDJ'));assert.equal(saved.get(1).panels.length,3)
+await click(button('MACD 参数'))
+await input(document.querySelector('[aria-label="MACD FAST"]'),'7')
+await input(document.querySelector('[aria-label="MACD SLOW"]'),'20')
+await input(document.querySelector('[aria-label="MACD SIGNAL"]'),'5')
+await click(button('保存参数'))
+assert.deepEqual(saved.get(1).panel_options.macd.params,{fast:7,slow:20,signal:5})
+await click(panel('MACD'));await click(panel('MACD'))
+assert.deepEqual(saved.get(1).panel_options.macd.params,{fast:7,slow:20,signal:5})
 for(const name of ['成交量','MACD','KDJ']) await click(panel(name))
 assert.deepEqual(saved.get(1).panels,[])
 user.setAuth('fixture',{id:2,username:'two'});await settle();assert.match(document.body.textContent,/已开启 2\/3/)
@@ -83,3 +93,18 @@ app.unmount();await settle()
 app=mount(false);await settle();assert.equal(button('MA 设置'),undefined);assert.equal(localStorage.getItem('indicator_visibility'),JSON.stringify(['kdj','macd','amount','volume']))
 app.unmount()
 console.log('Detail MA editor, six-line validation, three-panel cap, rollback, guest/account isolation, stale saves and homepage isolation passed.')
+
+// Generic renderer: arbitrary multi-line channels, reference lines and finite-value filtering.
+const fakeSeries=[]
+const pane={addSeries(type,options){const series={type,options,data:[],references:[],setData(data){this.data=data},createPriceLine(line){this.references.push(line);return line}};fakeSeries.push(series);return series}}
+const channel={key:'probe',parameters:[],series:[{field:'upper',kind:'line',color:'#123',label:'upper'},{field:'lower',kind:'line',color:'#456',label:'lower'}],reference_lines:[20,80]}
+const built=m.createIndicatorSeries(pane,channel,'#aaa')
+assert.equal(built.series.length,2);assert.equal(built.referenceLines.length,2)
+m.fillIndicatorSeries(built.series,channel,[{ts:'1',upper:12,lower:null},{ts:'2',upper:Infinity,lower:9}],Number,{up:'red',down:'green'})
+assert.deepEqual(fakeSeries[0].data,[{time:1,value:12},{time:2}])
+assert.deepEqual(fakeSeries[1].data,[{time:1},{time:2,value:9}])
+const histogram=definitions.find(d=>d.key==='macd')
+const bars=m.createIndicatorSeries(pane,histogram,'#aaa')
+m.fillIndicatorSeries(bars.series,histogram,[{ts:'3',macd_hist:-1,macd_dif:2,macd_dea:3}],Number,{up:'red',down:'green'})
+assert.equal(bars.series[0].data[0].color,'green')
+console.log('Catalog-driven parameter forms, saved parameters, generic channels/histograms and reference lines passed.')

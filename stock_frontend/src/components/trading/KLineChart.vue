@@ -54,10 +54,13 @@ import { useWsStore } from '@/stores/wsStore'
 import { useThemeStore } from '@/stores/theme'
 import { trackTiming } from '@/utils/monitor'
 import { toast } from '@/utils/toast'
+import { useIndicatorCatalog } from '@/composables/useIndicatorCatalog'
+import {createIndicatorSeries, fillIndicatorSeries} from './indicatorRenderer'
+import IndicatorParameters from './IndicatorParameters.vue'
 import DetailMaSettings from './DetailMaSettings.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 
-type IndicatorKey = 'volume' | 'amount' | 'macd' | 'kdj'
+type IndicatorKey = string
 
 interface IndicatorMeta {
   key: IndicatorKey
@@ -124,7 +127,10 @@ const qualityWarning = computed(() => {
   if (quality.value?.status === 'unchecked') return '历史数据尚未初始化'
   return ''
 })
-const detailSettings = useDetailChartSettings(() => !!props.customizeIndicators)
+const catalog = useIndicatorCatalog(() => !!props.customizeIndicators)
+const catalogPanels = computed(() => catalog.definitions.value.filter(d => d.placement === 'panel'))
+const pickerIndicators = computed(() => props.customizeIndicators ? catalogPanels.value.map(d => ({...d,icon:INDICATORS.find(i=>i.key===d.key)?.icon || ''})) : INDICATORS)
+const detailSettings = useDetailChartSettings(() => !!props.customizeIndicators, () => catalogPanels.value.map(d=>d.key))
 const currentPrice = computed(() => props.symbol ? market.quotes[props.symbol.id]?.price : null)
 
 let chart: IChartApi | null = null
@@ -308,7 +314,7 @@ async function toggleIndicator(key: IndicatorKey) {
   }
 }
 
-const enabledList = computed(() => INDICATORS.filter((i) => enabledIndicators.value.has(i.key)))
+const enabledList = computed(() => props.customizeIndicators ? detailSettings.settings.value.panels.map(key => pickerIndicators.value.find(i=>i.key===key)).filter((i): i is (typeof pickerIndicators.value)[number] => !!i) : INDICATORS.filter(i => enabledIndicators.value.has(i.key)))
 
 /* ---------- 配色 ---------- */
 function cssColors() {
@@ -461,6 +467,12 @@ function applyTheme() {
   // 重新应用指标 series 配色
   for (const [key, ref] of indicatorPanes) {
     const c2 = cssColors()
+    if (props.customizeIndicators) {
+      const definition = catalogPanels.value.find(d=>d.key===key)
+      definition?.series.forEach((line,i)=>ref.series[i]?.applyOptions({color:line.color}))
+      ref.referenceLines?.forEach(line=>line.applyOptions({color:c2.text}))
+      continue
+    }
     if (key === 'volume' || key === 'amount') {
       if (key === 'volume') {
         ref.series[1]?.applyOptions({ color: c2.indMa5 })
@@ -520,6 +532,13 @@ function rebuildIndicatorPanes() {
     const series: ISeriesApi<any>[] = []
     const referenceLines: IPriceLine[] = []
 
+    if (props.customizeIndicators) {
+      const definition = catalogPanels.value.find(d=>d.key===meta.key)
+      if (!definition) continue
+      const built = createIndicatorSeries(pane, definition, c.text)
+      indicatorPanes.set(meta.key as IndicatorKey, {pane,...built})
+      continue
+    }
     if (meta.key === 'volume') {
       const s = pane.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
@@ -648,7 +667,7 @@ function reasonText(t: BacktestTrade): string {
 
 /* ---------- 数据 ---------- */
 const indicators = useChartIndicators(fetchIndicators)
-const { indicatorRows, priceMaRows, indicatorError, priceMaError } = indicators
+const { indicatorRows, priceMaRows, indicatorError, priceMaError, panelErrors } = indicators
 function drawPriceMas(rows: IndicatorRow[]) {
   const times = new Set(loadedBars.map(bar => toUtcSeconds(bar.ts)))
   for (const ma of priceMas.value) {
@@ -669,7 +688,7 @@ watch(priceMas, () => {
   drawPriceMas(priceMaRows.value)
   if (range) chart.timeScale().setVisibleLogicalRange(range)
 })
-watch([detailSettings.settings, detailSettings.ready], () => {
+watch([detailSettings.settings, detailSettings.ready, catalog.definitions], () => {
   if (!props.customizeIndicators) return
   const range = chart?.timeScale().getVisibleLogicalRange()
   enabledIndicators.value = new Set(detailSettings.settings.value.panels)
@@ -810,7 +829,7 @@ async function refreshIndicators(version: number, symbolId: number, period: Peri
     start: loadedBars[0].ts, end: loadedBars[loadedBars.length - 1].ts,
   }, props.showIndicators && enabledList.value.length > 0,
   () => version === loadVersion && props.symbol?.id === symbolId && market.period === period,
-  props.customizeIndicators ? { periods: detailSettings.settings.value.ma.lines.map(l => l.period), panels: [...enabledIndicators.value] } : undefined)
+  props.customizeIndicators ? { periods: detailSettings.settings.value.ma.lines.map(l => l.period), panels: [...enabledIndicators.value], parameters: detailSettings.settings.value.panel_options } : undefined)
 }
 
 async function loadOlder() {
@@ -964,6 +983,11 @@ function setIndicatorData() {
   const rows = indicatorRows.value
 
   for (const [key, ref] of indicatorPanes) {
+    if (props.customizeIndicators) {
+      const definition = catalogPanels.value.find(d=>d.key===key)
+      if (definition) fillIndicatorSeries(ref.series, definition, rows, toUtcSeconds, c)
+      continue
+    }
     if (key === 'volume') {
       ref.series[0].setData(rows.map((r) => ({
         time: toUtcSeconds(r.ts),
@@ -1292,11 +1316,19 @@ async function onDeleteSr(item: SupportResistanceItem) {
 }
 
 /* ---------- 指标选择弹窗 ---------- */
+const parameterKey = ref('')
+const parameterDefinition = computed(() => catalogPanels.value.find(d=>d.key===parameterKey.value))
+async function savePanelParameters(params: Record<string,number | number[]>) {
+  const key = parameterKey.value
+  const value = detailSettings.settings.value
+  if (await detailSettings.save({...value,version:2,panel_options:{...value.panel_options,[key]:{params}}})) parameterKey.value = ''
+}
+function legendValue(row: unknown, field: string) { return row ? (row as Record<string,number | null>)[field] : null }
 const maSettingsOpen = ref(false)
 async function saveMa(lines: MaLine[]) {
   if (await detailSettings.save({ ...detailSettings.settings.value, ma: { lines } })) maSettingsOpen.value = false
 }
-watch(() => user.user?.id, () => { maSettingsOpen.value = false })
+watch(() => user.user?.id, () => { maSettingsOpen.value = false; parameterKey.value = '' })
 const indicatorPickerOpen = ref(false)
 function openIndicatorPicker() { indicatorPickerOpen.value = true }
 function closeIndicatorPicker() { indicatorPickerOpen.value = false }
@@ -1304,6 +1336,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
 <template>
   <div class="kline-chart">
+    <p v-if="customizeIndicators && catalog.error.value" role="alert">{{ catalog.error.value }} <button @click="catalog.load">重试目录</button></p>
     <p v-if="priceMaError" class="notice danger" role="alert">{{ priceMaError }}</p>
     <p v-if="indicatorError" class="notice danger" role="alert">{{ indicatorError }}</p>
     <p v-if="customizeIndicators && detailSettings.error.value" class="notice danger" role="alert">{{ detailSettings.error.value }} <button v-if="!detailSettings.ready.value" @click="detailSettings.load">重试</button></p>
@@ -1371,7 +1404,13 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
         :style="{ top: `${indicatorTops[indicator.key] ?? 0}px`, visibility: indicatorTops[indicator.key] == null ? 'hidden' : 'visible' }"
         aria-live="off"
       >
-        <template v-if="indicator.key === 'volume'">
+        <template v-if="customizeIndicators">
+          <span>{{ indicator.label }}({{ catalogPanels.find(d=>d.key===indicator.key)?.parameters.map(p => detailSettings.settings.value.panel_options?.[indicator.key]?.params[p.key] ?? p.default).join(',') }})</span>
+          <span v-if="panelErrors[indicator.key]" role="alert">{{ panelErrors[indicator.key] }} <button style="pointer-events:auto" @click="reloadIndicatorEngine">重试</button></span>
+          <span v-for="line in catalogPanels.find(d=>d.key===indicator.key)?.series || []" :key="line.field" :style="{color:line.color}">{{ line.label }}:{{ catalogPanels.find(d=>d.key===indicator.key)?.format === 'volume' ? indicatorQuantity(legendValue(selectedIndicator, line.field)) : indicatorNumber(legendValue(selectedIndicator, line.field)) }}</span>
+          <span v-if="indicator.key === 'macd'">金叉:{{ selectedIndicator ? selectedMacdCrosses.golden : '—' }} 死叉:{{ selectedIndicator ? selectedMacdCrosses.death : '—' }}</span>
+        </template>
+        <template v-else-if="indicator.key === 'volume'">
           <span>成交量(5,10)</span>
           <span>VOL:{{ indicatorQuantity(selectedIndicator?.volume) }}</span>
           <span class="legend-ma5">MA5:{{ indicatorQuantity(selectedVolumeAverages.ma5) }}</span>
@@ -1481,18 +1520,22 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
             <p v-if="customizeIndicators">已开启 {{ enabledIndicators.size }}/3</p>
             <div class="picker-grid">
               <button
-                v-for="ind in INDICATORS"
+                v-for="ind in pickerIndicators"
                 :key="ind.key"
                 class="picker-item"
                 :class="{ active: enabledIndicators.has(ind.key) }"
                 :disabled="customizeIndicators && (!detailSettings.ready.value || detailSettings.saving.value || (!enabledIndicators.has(ind.key) && enabledIndicators.size >= 3))"
                 :title="customizeIndicators && !enabledIndicators.has(ind.key) && enabledIndicators.size >= 3 ? '最多开启三个副图，请先关闭一个' : ''"
-                @click="toggleIndicator(ind.key)"
+                @click="toggleIndicator(ind.key as IndicatorKey)"
               >
                 <span class="picker-item__icon" v-html="ind.icon" />
                 <span class="picker-item__label">{{ ind.label }}</span>
                 <span class="picker-item__check">{{ enabledIndicators.has(ind.key) ? '✓' : '' }}</span>
               </button>
+            </div>
+            <div v-if="customizeIndicators">
+              <button v-for="definition in catalogPanels.filter(d=>enabledIndicators.has(d.key as IndicatorKey) && d.parameters.length)" :key="definition.key" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="parameterKey = definition.key">{{ definition.label }} 参数</button>
+              <IndicatorParameters v-if="parameterDefinition" :key="parameterKey" :definition="parameterDefinition" :values="detailSettings.settings.value.panel_options?.[parameterKey]?.params || {}" :saving="detailSettings.saving.value" @save="savePanelParameters" @close="parameterKey = ''" />
             </div>
             <div class="picker-hint">{{ customizeIndicators && enabledIndicators.size >= 3 ? '最多开启三个副图，请先关闭一个' : '点击切换指标显示，选择自动保存' }}</div>
             <p v-if="customizeIndicators && detailSettings.error.value" role="alert">{{ detailSettings.error.value }}</p>

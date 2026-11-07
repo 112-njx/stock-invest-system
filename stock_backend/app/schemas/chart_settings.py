@@ -1,6 +1,6 @@
 """Detail-chart preferences and shared MA parameter validation."""
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 Period = Annotated[int, Field(strict=True, ge=1, le=10000)]
 
@@ -20,17 +20,35 @@ class MaSettings(BaseModel):
             raise ValueError('MA周期不可重复')
         return lines
 
+class PanelOptions(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    params: dict = Field(default_factory=dict)
+
 class ChartSettings(BaseModel):
     model_config = ConfigDict(extra='forbid')
     ma: MaSettings = Field(default_factory=MaSettings)
-    panels: list[Literal['volume','amount','macd','kdj']] = Field(default_factory=lambda: ['volume','macd'], max_length=3)
+    version: Literal[2] | None = None
+    panel_options: dict[str, PanelOptions] | None = None
+    panels: list[str] = Field(default_factory=lambda: ['volume','macd'], max_length=3)
 
     @field_validator('panels')
     @classmethod
     def unique_panels(cls, panels):
         if len(set(panels)) != len(panels):
             raise ValueError('副图不可重复')
+        from app.services.indicator_registry import REGISTRY
+        if any(p not in REGISTRY or REGISTRY[p]['placement'] != 'panel' for p in panels):
+            raise ValueError('unsupported panel')
         return panels
+
+    @model_validator(mode='after')
+    def validate_options(self):
+        from app.services.indicator_registry import REGISTRY, validate_parameters
+        for name, option in (self.panel_options or {}).items():
+            if name not in REGISTRY or REGISTRY[name]['placement'] != 'panel':
+                raise ValueError('unsupported panel')
+            validate_parameters(name, option.params)
+        return self
 
 class MaParameters(BaseModel):
     model_config = ConfigDict(extra='forbid')

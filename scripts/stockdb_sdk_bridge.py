@@ -285,6 +285,17 @@ class QueryService:
         return snapshot
 
 
+def indicator_registry():
+    import importlib.util
+    path = Path(__file__).with_name('indicator_registry.py')
+    if not path.exists():
+        path = Path(__file__).resolve().parents[1] / 'stock_backend/app/services/indicator_registry.py'
+    spec = importlib.util.spec_from_file_location('bridge_indicator_registry', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def calculate_indicator_rows(sdk_dir, payload):
     """Native calculations only; never fetch an independently based price series."""
     import math
@@ -293,18 +304,11 @@ def calculate_indicator_rows(sdk_dir, payload):
     rows, names, params = payload['rows'], payload['names'], payload.get('params') or {}
     if not isinstance(rows, list) or not 1 <= len(rows) <= 100000:
         raise ValueError('invalid history length')
-    if not isinstance(names, list) or not names or any(n not in {'ma', 'macd', 'kdj', 'volume', 'amount'} for n in names):
+    registry = indicator_registry()
+    if not isinstance(names, list) or not names or any(n not in registry.REGISTRY for n in names):
         raise ValueError('unsupported indicator')
     if not isinstance(params, dict):
         raise ValueError('invalid parameters')
-    def parameters(name, defaults):
-        chosen = params.get(name) or {}
-        if not isinstance(chosen, dict) or chosen.keys() - defaults.keys():
-            raise ValueError('invalid indicator parameters')
-        values = {**defaults, **chosen}
-        if any(type(v) is not int or not 1 <= v <= 10000 for v in values.values()):
-            raise ValueError('period parameters must be integers from 1 to 10000')
-        return list(values.values())
     def array(field):
         values = [float(row[field]) for row in rows]
         if not all(math.isfinite(v) for v in values):
@@ -317,21 +321,19 @@ def calculate_indicator_rows(sdk_dir, payload):
                 raise ValueError('native output length mismatch')
             for row, value in zip(output, values):
                 row[field] = float(value) if math.isfinite(value) else None
-    if 'ma' in names:
-        chosen = params.get('ma', {})
-        if not isinstance(chosen, dict) or chosen.keys() - {'periods'}:
-            raise ValueError('invalid MA parameters')
-        periods = chosen.get('periods', [5, 10, 20, 30])
-        if not isinstance(periods, list) or not 1 <= len(periods) <= 6 or any(type(n) is not int or not 1 <= n <= 10000 for n in periods) or len(set(periods)) != len(periods):
-            raise ValueError('MA requires 1 to 6 unique integer periods from 1 to 10000')
-        close = array('close')
-        append(tuple(f'ma{n}' for n in periods), tuple(zb.MA(close, n) for n in periods))
-    if 'macd' in names:
-        append(('macd_dif', 'macd_dea', 'macd_hist'), zb.MACD(array('close'), *parameters('macd', {'fast':12,'slow':26,'signal':9})))
-    if 'kdj' in names:
-        append(('kdj_k', 'kdj_d', 'kdj_j'), zb.KDJ(array('close'), array('high'), array('low'), *parameters('kdj', {'n':9,'m1':3,'m2':3})))
-    if 'volume' in names:
-        append(('volume_ma5', 'volume_ma10'), (zb.MA(array('volume'), 5), zb.MA(array('volume'), 10)))
+    for name in names:
+        definition = registry.REGISTRY[name]
+        chosen = registry.validate_parameters(name, params.get(name))
+        if name == 'ma':
+            close = array('close')
+            periods = chosen['periods']
+            append([f'ma{n}' for n in periods], [zb.MA(close, n) for n in periods])
+        elif definition['native']:
+            raw = getattr(zb, definition['native'])(*[array(f) for f in definition['inputs']], *chosen.values())
+            fields = definition['native_outputs']
+            append(fields, raw if len(fields) > 1 else [raw])
+        elif name == 'volume':
+            append(('volume_ma5', 'volume_ma10'), [zb.MA(array('volume'), n) for n in (5,10)])
     return output
 
 

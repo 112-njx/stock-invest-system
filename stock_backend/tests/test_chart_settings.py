@@ -31,7 +31,7 @@ def test_accounts_save_reload_and_isolation(client, accounts):
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=active[0])
     url = '/api/v1/users/me/chart-settings'
     default = client.get(url).json()['data']
-    assert default == ChartSettings().model_dump()
+    assert default == ChartSettings().model_dump(exclude_none=True)
     custom = {'ma': {'lines': [{'period': n, 'visible': n != 7} for n in [7,20,60,120,250,10000]]}, 'panels': ['volume','macd','kdj']}
     assert client.put(url, json=custom).json()['data'] == custom
     assert client.get(url).json()['data'] == custom
@@ -54,3 +54,19 @@ def test_preferences_validate_ma(lines):
 
 def test_ma_parameter_default_compatibility():
     assert MaParameters().periods == [5,10,20,30]
+
+
+def test_v2_preferences_preserve_parameters_through_legacy_writes(client, accounts):
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=accounts[0])
+    url = '/api/v1/users/me/chart-settings'
+    v2 = {'version':2,'ma':ChartSettings().model_dump()['ma'],'panels':['kdj','macd'], 'panel_options':{'kdj':{'params':{'n':14}},'macd':{'params':{'fast':7,'slow':20,'signal':5}}}}
+    assert client.put(url,json=v2).json()['data'] == v2
+    assert client.get(url,params={'version':2}).json()['data'] == v2
+    legacy = client.get(url).json()['data']
+    assert set(legacy) == {'ma','panels'}
+    legacy['panels'] = ['macd']
+    assert client.put(url,json=legacy).json()['data'] == legacy
+    restored = client.get(url,params={'version':2}).json()['data']
+    assert restored['panel_options'] == v2['panel_options']
+    assert restored['panels'] == ['macd']
+    assert client.put(url,json={**v2,'panel_options':{'kdj':{'params':{'n':0}}}}).status_code == 422

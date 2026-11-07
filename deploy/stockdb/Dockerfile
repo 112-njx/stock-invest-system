@@ -11,6 +11,7 @@ COPY deploy/stockdb/stockdb.conf /opt/stockdb/stockdb.conf
 COPY deploy/stockdb/supervise.py deploy/stockdb/healthcheck.py deploy/stockdb/update_control.py /opt/
 COPY stock_backend/app/services/stockdb_files.py /opt/stockdb_files.py
 COPY scripts/stockdb_online.py scripts/stockdb_online_catalog.py scripts/stockdb_online_requests.py scripts/stockdb_online_tables.json /opt/
+COPY stock_backend/app/services/indicator_registry.py stock_backend/app/services/indicator_catalog.json /opt/
 COPY scripts/stockdb_sdk_bridge.py /opt/stockdb_sdk_bridge.py
 EXPOSE 7899 7900
 ENTRYPOINT ["python", "/opt/supervise.py"]

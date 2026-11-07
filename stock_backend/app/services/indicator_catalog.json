@@ -1,0 +1,237 @@
+[
+  {
+    "key": "ma",
+    "label": "MA",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "MA",
+    "parameters": [
+      {
+        "key": "periods",
+        "label": "周期",
+        "type": "integer_list",
+        "default": [
+          5,
+          10,
+          20,
+          30
+        ],
+        "min": 1,
+        "max": 10000,
+        "max_items": 6
+      }
+    ],
+    "series": [],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "volume",
+    "label": "成交量",
+    "placement": "panel",
+    "inputs": [
+      "volume"
+    ],
+    "native": null,
+    "parameters": [],
+    "series": [
+      {
+        "field": "volume",
+        "label": "VOL",
+        "color": "#888888",
+        "kind": "histogram",
+        "direction": "candle"
+      },
+      {
+        "field": "volume_ma5",
+        "label": "MA5",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "volume_ma10",
+        "label": "MA10",
+        "color": "#ef4444",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "format": "volume",
+    "engines": [
+      "sdk",
+      "pandas"
+    ]
+  },
+  {
+    "key": "amount",
+    "label": "成交额",
+    "placement": "panel",
+    "inputs": [
+      "amount"
+    ],
+    "native": null,
+    "parameters": [],
+    "series": [
+      {
+        "field": "amount",
+        "label": "成交额",
+        "color": "#888888",
+        "kind": "histogram",
+        "direction": "candle"
+      }
+    ],
+    "reference_lines": [],
+    "format": "volume",
+    "engines": [
+      "sdk",
+      "pandas"
+    ]
+  },
+  {
+    "key": "macd",
+    "label": "MACD",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "MACD",
+    "parameters": [
+      {
+        "key": "fast",
+        "label": "FAST",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "slow",
+        "label": "SLOW",
+        "type": "integer",
+        "default": 26,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "signal",
+        "label": "SIGNAL",
+        "type": "integer",
+        "default": 9,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "macd_hist",
+        "label": "柱",
+        "color": "#888888",
+        "kind": "histogram",
+        "direction": "sign"
+      },
+      {
+        "field": "macd_dif",
+        "label": "DIF",
+        "color": "#3b82f6",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "macd_dea",
+        "label": "DEA",
+        "color": "#f97316",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "macd_dif",
+      "macd_dea",
+      "macd_hist"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk",
+      "pandas"
+    ]
+  },
+  {
+    "key": "kdj",
+    "label": "KDJ",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "KDJ",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "N",
+        "type": "integer",
+        "default": 9,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m1",
+        "label": "M1",
+        "type": "integer",
+        "default": 3,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m2",
+        "label": "M2",
+        "type": "integer",
+        "default": 3,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "kdj_k",
+        "label": "K",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "kdj_d",
+        "label": "D",
+        "color": "#3b82f6",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "kdj_j",
+        "label": "J",
+        "color": "#a855f7",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "kdj_k",
+      "kdj_d",
+      "kdj_j"
+    ],
+    "reference_lines": [
+      20,
+      80
+    ],
+    "engines": [
+      "sdk",
+      "pandas"
+    ]
+  }
+]
