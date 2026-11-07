@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import time
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -20,7 +20,13 @@ def main():
         url=args.url+'/api/v1/indicators?'+urlencode(dict(symbol='300308',period=period,names=name,params=json.dumps(params),limit=5))
         try:
             with urlopen(url,timeout=90) as response:status=response.status;body=json.load(response)
-        except HTTPError as error:status=error.code;body=json.load(error)
+        except HTTPError as error:
+            status=error.code
+            raw=error.read().decode('utf-8',errors='replace')
+            try:body=json.loads(raw)
+            except ValueError:body={'msg':raw[:160]}
+        except (URLError,TimeoutError) as error:
+            status=0;body={'msg':str(error)}
         result=dict(period=period,name=name,status=status,ms=round(1000*(time.perf_counter()-start),2),rows=len(body.get('data') or []))
         if status!=200:result['message']=body.get('msg')
         return result
@@ -34,6 +40,7 @@ def main():
     args.out.parent.mkdir(parents=True,exist_ok=True)
     args.out.write_text(json.dumps(results,ensure_ascii=False,indent=2),encoding='utf-8')
     if any(r['status']!=200 for r in results):raise SystemExit('Index load blocked or failed an ordinary SDK request')
+    if any(r['name']=='ma' and r['ms']>=5000 for r in results):raise SystemExit('Ordinary SDK requests exceeded the five-second isolation budget')
 
 
 if __name__=='__main__':main()

@@ -31,7 +31,7 @@ async function read(target=actor){
   expect(r.status()).toBe(200);return (await r.json()).data
 }
 async function openPicker(page:Page){await page.locator('[title="选择技术指标"]').click();await expect(page.locator('.modal--indicator-detail')).toBeVisible()}
-function panel(page:Page,key:string){return page.locator('.picker-item').filter({has:page.locator('.picker-item__label',{hasText:catalog.find(d=>d.key===key)!.label})})}
+function panel(page:Page,key:string){return page.locator('.picker-item').filter({has:page.getByText(catalog.find(d=>d.key===key)!.label,{exact:true})})}
 function observe(page:Page){
   const responses:any[]=[],errors:string[]=[]
   page.on('pageerror',e=>errors.push(e.message))
@@ -114,6 +114,16 @@ for(const [period] of periods)for(let group=0;group<10;group++){
       await expect(page.locator('.overlay-legend')).toHaveCount(config.overlays.length)
       const pixels=await panePixels(page)
       expect(pixels.length,'one main pane plus selected panels').toBe(panels.length+1)
+      if(overlay){
+        const legend=page.locator('.overlay-legend')
+        const response=state.responses.filter(r=>r.symbol===stockId&&r.period===period&&r.key===overlay.key&&r.status===200).at(-1)
+        for(const line of overlay.series){
+          const value=response.rows.at(-1)[line.field]
+          await expect(legend).toContainText(`${line.label}:${value==null?'—':value.toFixed(2)}`)
+          if(response.rows.slice(-15).some((r:any)=>r[line.field]!=null))
+            expect(pixels[0]!.colors[rgb(line.color)]||0,`${period} ${overlay.key}.${line.field} visible main curve`).toBeGreaterThan(2)
+        }
+      }
       for(const [i,d] of panels.entries()){
         const legend=page.locator('.kline-chart__indicator-legend').nth(i)
         await expect(legend).toContainText(d.label)
@@ -127,7 +137,14 @@ for(const [period] of periods)for(let group=0;group<10;group++){
             expect(pixels[i+1]!.colors[rgb(line.color)]||0,`${period} ${d.key}.${line.field} visible native curve`).toBeGreaterThan(2)
           }
         }
-        if(d.cross)await expect(legend).toContainText('金叉:')
+        if(d.cross){
+          await expect(legend).toContainText(`金叉:${response.rows.filter((r:any)=>r[d.key+'_cross']===1).length}`)
+          await expect(legend).toContainText(`死叉:${response.rows.filter((r:any)=>r[d.key+'_cross']===-1).length}`)
+          // Initial views contain at least fifteen recent bars. Native signals
+          // in the last ten must have their corresponding SVG chart marker.
+          if(response.rows.slice(-10).some((r:any)=>r[d.key+'_cross']))
+            await expect.poll(()=>page.locator(`circle[data-indicator="${d.key}"]`).count()).toBeGreaterThan(0)
+        }
       }
       if(group===0||group===9)await page.screenshot({path:resolve(artifacts,`chart-${period}-${group}.png`)})
       const box=await page.locator('.kline-chart__canvas').boundingBox()
