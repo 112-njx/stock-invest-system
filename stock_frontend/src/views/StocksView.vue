@@ -34,7 +34,6 @@ const flowColumns:Col[]=[
  ...[5,10,20].map(n=>({key:`main_${n}`,label:`${n}日主力净流入`,width:165,kind:'large',signed:true,hint:'截至该行资金流日期的交易日累计值；窗口缺失时显示 —'})),
  {key:'flow_date',label:'资金流日期',width:135},{key:'industry',label:'申万一级',width:120}]
 const columns=computed(()=>view.value==='flows'?flowColumns:quoteColumns)
-const flowDate=ref(''),missing=ref(0)
 const router=useRouter(),market=useMarketStore(),user=useUserStore(),ws=useWsStore(),auth=useAuthModalStore()
 const rows=ref<Row[]>([]),indexed=ref<IndexedStock[]>([]),industries=ref<string[]>([]),query=ref(''),exchanges=ref<string[]>([]),industry=ref('')
 const op=ref('gt'),value=ref(''),upper=ref(''),sortKey=ref('code'),asc=ref(true),date=ref(''),error=ref(''),loading=ref(false),refreshing=ref(false)
@@ -66,16 +65,15 @@ function outside(e:PointerEvent){if(!(e.target as HTMLElement).closest('.stock-c
 function escape(e:KeyboardEvent){if(e.key==='Escape')menu.value=undefined}
 function detail(row:Row){menu.value=undefined;void router.push({path:'/market/detail',query:{symbol:row.code,asset_type:'stock'}})}
 async function follow(row:Row){menu.value=undefined;if(!user.token){auth.show();return}if(adding.value)return;if(market.watchlist.some(s=>s.code===row.code&&s.type==='stock')){toast.success('该股票已在关注列表');return}adding.value=true;try{const item=await addWatchlist(`stock:${row.code}`);market.addWatchlistItem(item);ws.syncSubscriptions();toast.success(`已关注 ${row.name}`)}catch{toast.error('加入关注失败，请重试')}finally{adding.value=false}}
-async function load(){if(loading.value)return;loading.value=true;const requestedView=view.value;try{const p=await request<{items:Row[];industries:string[];date?:number;loading:boolean;refreshing?:boolean;error?:string;flow_date?:number;missing?:number}>({url:view.value==='flows'?'/stockdb/equities/flows':'/stockdb/equities',silent:true,timeout:60000});if(!alive||requestedView!==view.value)return;if(!p.loading){rows.value=p.items;industries.value=p.industries;date.value=String(p.date??'');flowDate.value=String(p.flow_date??'');missing.value=p.missing??0;indexed.value=indexStocks(p.items.map((r,i)=>({code:r.code,name:r.name,market:r.market,type:'stock',latest_date:String(r.data_date),ordinal:i})))}refreshing.value=p.loading||!!p.refreshing;error.value=p.error??''}catch(e){if(alive)error.value=e instanceof Error?e.message:'读取失败，请重试'}finally{loading.value=false;if(alive)timer=setTimeout(()=>void load(),requestedView!==view.value?0:refreshing.value?2000:60000)}}
-watch(view,()=>{rows.value=[];indexed.value=[];error.value='';date.value='';flowDate.value='';missing.value=0;sortKey.value=view.value==='flows'?'main_net':'code';asc.value=view.value!=='flows';resetScroll();refresh()})
+async function load(){if(loading.value)return;loading.value=true;const requestedView=view.value;try{const p=await request<{items:Row[];industries:string[];date?:number;loading:boolean;refreshing?:boolean;error?:string;flow_date?:number;missing?:number}>({url:view.value==='flows'?'/stockdb/equities/flows':'/stockdb/equities',silent:true,timeout:60000});if(!alive||requestedView!==view.value)return;if(!p.loading){rows.value=p.items;industries.value=p.industries;date.value=String(p.date??'');indexed.value=indexStocks(p.items.map((r,i)=>({code:r.code,name:r.name,market:r.market,type:'stock',latest_date:String(r.data_date),ordinal:i})))}refreshing.value=p.loading||!!p.refreshing;error.value=p.error??''}catch(e){if(alive)error.value=e instanceof Error?e.message:'读取失败，请重试'}finally{loading.value=false;if(alive)timer=setTimeout(()=>void load(),requestedView!==view.value?0:refreshing.value?2000:60000)}}
+watch(view,()=>{rows.value=[];indexed.value=[];error.value='';date.value='';sortKey.value=view.value==='flows'?'main_net':'code';asc.value=view.value!=='flows';resetScroll();refresh()})
 function refresh(){clearTimeout(timer);void load()}
 onMounted(()=>{observer=new ResizeObserver(entries=>{height.value=entries[0]?.contentRect.height??600});if(viewport.value)observer.observe(viewport.value);document.addEventListener('pointerdown',outside);window.addEventListener('keydown',escape);void load()})
 onBeforeUnmount(()=>{alive=false;clearTimeout(timer);observer?.disconnect();document.removeEventListener('pointerdown',outside);window.removeEventListener('keydown',escape)})
 </script>
 <template>
 <section class="stocks-page">
- <header><h1>股票</h1><div class="view-tabs" role="group" aria-label="股票数据视图"><button :aria-pressed="view==='quotes'" @click="view='quotes'">行情数据</button><button :aria-pressed="view==='flows'" @click="view='flows'">资金流向</button></div><span>A股 · 本地最新数据 {{ date }} · {{ filtered.length }} / {{ rows.length }} 只</span><span v-if="refreshing">正在更新数据…</span><button :disabled="loading" @click="refresh">刷新</button></header>
- <p v-if="view==='flows'" class="flow-note">资金流最新日期 {{ flowDate || '—' }} · 金额单位：元（万／亿缩写） · 净流入红色、净流出绿色 · 占比使用同日成交额 · {{ missing }} 只暂无资金流数据，缺失窗口显示 —</p>
+ <header><h1>股票</h1><div class="view-tabs" role="group" aria-label="股票数据视图"><button :aria-pressed="view==='quotes'" @click="view='quotes'">行情数据</button><button :aria-pressed="view==='flows'" @click="view='flows'">资金流向</button></div><span>A股 · {{ date }} · {{ filtered.length }} / {{ rows.length }} 只</span><button :disabled="loading" @click="refresh">刷新</button></header>
  <div class="filters">
  <input v-model="query" aria-label="搜索股票" placeholder="代码 / 名称 / 拼音" @input="resetScroll" />
  <fieldset><legend class="sr-only">交易所</legend><label v-for="m in [['SSE','沪市'],['SZSE','深市'],['BSE','京市']]" :key="m[0]"><input v-model="exchanges" type="checkbox" :value="m[0]" @change="resetScroll"/>{{ m[1] }}</label></fieldset>
@@ -97,7 +95,7 @@ onBeforeUnmount(()=>{alive=false;clearTimeout(timer);observer?.disconnect();docu
 </section>
 </template>
 <style scoped>
-.view-tabs{display:flex;gap:4px}.view-tabs button[aria-pressed='true']{background:var(--bg-active);color:var(--accent);border-color:var(--accent)}.flow-note{font-size:13px;line-height:1.5}
+.view-tabs{display:flex;gap:4px}.view-tabs button[aria-pressed='true']{background:var(--bg-active);color:var(--accent);border-color:var(--accent)}
 
 .stocks-page{--quote-highlight:#e5e65b;--quote-up:#ff3535;--quote-down:#00cf4a;--quote-ratio:#f044e8;--quote-selected:#294c70}
 :global([data-theme='light'] .stocks-page){--quote-highlight:#806600;--quote-up:#cf202f;--quote-down:#008740;--quote-ratio:#a520a0;--quote-selected:#d8e8fa}
