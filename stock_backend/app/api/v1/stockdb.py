@@ -140,6 +140,19 @@ def stock_minutes(code: Code, date: Annotated[int, Query(ge=19000101, le=2999123
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/stocks/{code}/performance")
+def stock_performance(request: Request, code: Code, version: str | None = None) -> Response:
+    data = _snapshot(version)
+    result = data.stocks.get(code)
+    if result is None:
+        raise HTTPException(status_code=404, detail="本地库中没有这只股票的日 K")
+    try:
+        return _reply(request, data, lambda: {"version": data.version,
+                      **rd.performance(code, result["latest"][0])})
+    except rd.StockDBError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.get('/equities')
 def equities() -> dict:
     from app.services.equity_table import snapshot
@@ -152,3 +165,21 @@ def equity_flows() -> dict:
     from app.services.equity_flow import snapshot
     from app.core.response import ok
     return ok(data=snapshot())
+
+
+@router.get('/stocks/{code}/flows')
+def stock_flows(code: Code, start: str | None = None, end: str | None = None) -> dict:
+    from datetime import date
+    from app.services.stock_flow_history import load
+    from app.core.response import ok
+    from app.data_providers.base import ProviderError
+    try:
+        first=date.fromisoformat(start) if start else None
+        last=date.fromisoformat(end) if end else None
+        if first and last and (first>last or (last-first).days>366):
+            raise ValueError('每次查询不超过366天，开始日期不得晚于结束日期')
+        return ok(data=load(code,first,last))
+    except ValueError as exc:
+        raise HTTPException(422,detail=str(exc)) from exc
+    except ProviderError as exc:
+        raise HTTPException(503,detail='本地资金流数据源暂不可用') from exc

@@ -20,6 +20,7 @@ import { useMarketStore, type Period } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
 import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
 import { useLatestQuotes } from '@/composables/useLatestQuotes'
+import StockFlowPanel from '@/components/trading/StockFlowPanel.vue'
 import KLineChart from '@/components/trading/KLineChart.vue'
 import BasicInfoPanel from '@/components/trading/BasicInfoPanel.vue'
 import WatchlistPanel from '@/components/trading/WatchlistPanel.vue'
@@ -30,6 +31,7 @@ const route = useRoute()
 const market = useMarketStore()
 const ws = useWsStore()
 const authModal = useAuthModalStore()
+const chartView = ref<'quotes'|'flows'>('quotes')
 
 /** 回测显示跳转：带 strategy_id 时 D 区替换为策略指标面板（4.5） */
 const strategyId = computed(() => (route.query.strategy_id ? Number(route.query.strategy_id) : null))
@@ -142,6 +144,8 @@ onBeforeUnmount(() => {
 
     <div class="detail-body">
       <div class="col-left">
+        <div class="chart-tabs" role="group" aria-label="详情图表视图"><button :aria-pressed="chartView==='quotes'" @click="chartView='quotes'">行情图</button><button :aria-pressed="chartView==='flows'" :disabled="market.current?.type!=='stock'" @click="chartView='flows'">资金流向</button></div>
+        <div v-show="chartView==='quotes'" class="chart-content">
         <!-- A+B 合并：K 线 + 技术指标多 pane，共享时间轴；G32：叠加回测买卖点 -->
         <KLineChart
           :symbol="market.current"
@@ -151,7 +155,10 @@ onBeforeUnmount(() => {
           :customize-indicators="true"
           :markers="visibleMarkers"
         />
-        <div v-if="strategyId" class="bt-marker-bar">
+        </div>
+        <StockFlowPanel v-if="chartView==='flows' && market.current?.type==='stock'" :code="market.current.code" :name="market.current.name" />
+        <p v-else-if="chartView==='flows'">当前标的暂无个股资金流数据</p>
+        <div v-if="strategyId && chartView==='quotes'" class="bt-marker-bar">
           <template v-if="visibleMarkers.length">
             <span class="bt-marker-bar__dot bt-marker-bar__dot--buy" />买入
             <span class="bt-marker-bar__dot bt-marker-bar__dot--sell" />卖出
@@ -220,10 +227,11 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 4px;
 }
-.col-left > :first-child {
+.chart-content {
   flex: 1;
   min-height: 0;
 }
+.chart-content{display:flex;flex-direction:column}.chart-content>*{flex:1;min-height:0}.chart-tabs{display:flex;gap:5px;flex:none}.chart-tabs button{padding:5px 12px;border:1px solid var(--border);color:var(--text-secondary);border-radius:4px}.chart-tabs button[aria-pressed='true']{color:var(--accent);background:var(--bg-active)}.chart-tabs button:disabled{opacity:.4}
 /* G32：买卖点图例/空态条 */
 .bt-marker-bar {
   flex: none;
