@@ -86,5 +86,16 @@ job = state.load(params, false, () => true)
 assert.equal(queue.length, 13, 'a chart without panels requests only MA')
 queue[12].resolve(maRows)
 await job
+// Detail-only selection sends custom parameters and only enabled panels.
+job = state.load(params, true, () => true, { periods: [7,20,60], panels: ['kdj'] })
+assert.deepEqual(JSON.parse(queue[13].params.params), { ma: { periods: [7,20,60] } })
+assert.equal(queue[14].params.names, 'kdj')
+queue[13].resolve([{ ts: 'new', ma7: 7 }]); queue[14].resolve([{ ts: 'new', kdj_k: 50 }])
+await job
+job = state.load(params, false, () => true, { periods: [1], panels: [] })
+assert.equal(queue.length, 16)
+queue[15].resolve([{ ts: 'new', ma1: 10 }])
+await job
+assert.equal(state.indicatorRows.value.length, 0)
 app.unmount()
 console.log('Independent chart rendering, failure recovery, delayed MA and stale-response protection passed.')

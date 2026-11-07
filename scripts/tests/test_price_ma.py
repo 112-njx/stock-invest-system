@@ -37,3 +37,11 @@ class PriceMATests(unittest.TestCase):
     def test_short_history_has_no_fabricated_values(self):
         result = self.calculate([dict(ts='one', close=10.0)])
         self.assertTrue(all(result[0][f'ma{n}'] is None for n in (5, 10, 20, 30)))
+
+    def test_custom_periods_dynamic_fields_and_visibility_independent_values(self):
+        rows = [dict(ts=str(i), close=float(i)) for i in range(1,81)]
+        result = calculate_indicator_rows(SDK_DIR, {'rows': rows, 'names': ['ma'], 'params': {'ma': {'periods': [1,7,20,60,80,10000]}}})
+        self.assertNotIn('ma5', result[-1])
+        for n in (1,7,20,60,80):
+            self.assertAlmostEqual(result[-1][f'ma{n}'], sum(range(81-n,81))/n)
+        self.assertIsNone(result[-1]['ma10000'])

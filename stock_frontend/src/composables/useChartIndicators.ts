@@ -20,10 +20,11 @@ export function useChartIndicators(fetch: typeof fetchIndicators) {
     params: Omit<Parameters<typeof fetchIndicators>[0], 'names'>,
     panels: boolean,
     isCurrent: () => boolean,
+    options?: { periods: number[]; panels: string[] },
   ) {
     const request = ++generation
     const current = () => request === generation && isCurrent()
-    const ma = fetch({ ...params, names: 'ma' }).then(rows => {
+    const ma = fetch({ ...params, names: 'ma', ...(options ? { params: JSON.stringify({ ma: { periods: options.periods } }) } : {}) }).then(rows => {
       if (!current()) return
       priceMaRows.value = rows
       priceMaError.value = ''
@@ -32,7 +33,7 @@ export function useChartIndicators(fetch: typeof fetchIndicators) {
       priceMaRows.value = []
       priceMaError.value = '主图价格均线获取失败，请检查 SDK 服务'
     })
-    const indicators = panels ? fetch({ ...params, names: 'macd,kdj,volume,amount' }).then(rows => {
+    const indicators = panels ? fetch({ ...params, names: options ? options.panels.join(',') : 'macd,kdj,volume,amount' }).then(rows => {
       if (!current()) return
       indicatorRows.value = rows
       indicatorError.value = ''

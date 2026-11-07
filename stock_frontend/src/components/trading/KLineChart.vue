@@ -10,6 +10,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useChartIndicators } from '@/composables/useChartIndicators'
+import { useDetailChartSettings, type MaLine } from '@/composables/useDetailChartSettings'
 import { useSyntheticWicks } from '@/composables/useSyntheticWicks'
 import { displaySyntheticCandle } from '@/utils/syntheticWicks'
 import {
@@ -40,6 +41,7 @@ import {
   requestKlineBackfill,
   removeSupportResistance,
   type KLineBar,
+  type IndicatorRow,
   type KlineQuality,
   type SupportResistanceItem,
 } from '@/api/market'
@@ -52,6 +54,7 @@ import { useWsStore } from '@/stores/wsStore'
 import { useThemeStore } from '@/stores/theme'
 import { trackTiming } from '@/utils/monitor'
 import { toast } from '@/utils/toast'
+import DetailMaSettings from './DetailMaSettings.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 
 type IndicatorKey = 'volume' | 'amount' | 'macd' | 'kdj'
@@ -74,6 +77,7 @@ const props = withDefaults(
     symbol: SymbolInfo | null
     showSrButton?: boolean
     showIndicators?: boolean
+    customizeIndicators?: boolean
     /** 首次打开时的可见自然月数；更早数据仍可向左加载 */
     recentMonths?: number
     /** G32：回测买卖点标记（空数组/不传则不渲染） */
@@ -120,16 +124,22 @@ const qualityWarning = computed(() => {
   if (quality.value?.status === 'unchecked') return '历史数据尚未初始化'
   return ''
 })
+const detailSettings = useDetailChartSettings(() => !!props.customizeIndicators)
 const currentPrice = computed(() => props.symbol ? market.quotes[props.symbol.id]?.price : null)
 
 let chart: IChartApi | null = null
 let candleSeries: ISeriesApi<'Candlestick'> | null = null
-const PRICE_MAS = [
+const DEFAULT_PRICE_MAS = [
   { key: 'ma5', label: 'MA5', color: '#d4a72c' },
   { key: 'ma10', label: 'MA10', color: '#db61a2' },
   { key: 'ma20', label: 'MA20', color: '#38bdf8' },
   { key: 'ma30', label: 'MA30', color: '#a78bfa' },
 ] as const
+const MA_COLORS = ['#d4a72c','#db61a2','#38bdf8','#a78bfa','#f97316','#14b8a6']
+const priceMas = computed(() => props.customizeIndicators
+  ? detailSettings.settings.value.ma.lines.map((line, i) => ({ key: `ma${line.period}` as `ma${number}`, label: `MA${line.period}`, color: MA_COLORS[i]!, visible: line.visible }))
+  : DEFAULT_PRICE_MAS.map(ma => ({ ...ma, visible: true })))
+const visiblePriceMas = computed(() => priceMas.value.filter(ma => ma.visible))
 const priceMaSeries = new Map<string, ISeriesApi<'Line'>>()
 let srLines: IPriceLine[] = []
 let lastBar: KLineBar | null = null
@@ -247,6 +257,7 @@ const STORAGE_KEY = 'indicator_visibility'
 const enabledIndicators = ref<Set<IndicatorKey>>(new Set(['volume', 'macd']))
 
 function loadVisibility() {
+  if (props.customizeIndicators) return
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
@@ -267,7 +278,16 @@ function saveVisibility() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...enabledIndicators.value])) } catch { /* ignore */ }
 }
 
-function toggleIndicator(key: IndicatorKey) {
+async function toggleIndicator(key: IndicatorKey) {
+  if (props.customizeIndicators) {
+    const panels = [...detailSettings.settings.value.panels]
+    const index = panels.indexOf(key)
+    if (index >= 0) panels.splice(index, 1)
+    else if (panels.length < 3) panels.push(key)
+    else return
+    await detailSettings.save({ ...detailSettings.settings.value, panels })
+    return
+  }
   const next = new Set(enabledIndicators.value)
   if (next.has(key)) next.delete(key)
   else next.add(key)
@@ -398,10 +418,10 @@ function initChart() {
   })
 
   priceMaSeries.clear()
-  for (const ma of PRICE_MAS) {
+  for (const ma of priceMas.value) {
     priceMaSeries.set(ma.key, chart.addSeries(LineSeries, {
       color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
-      crosshairMarkerVisible: false,
+      crosshairMarkerVisible: false, visible: ma.visible,
     }, 0))
   }
 
@@ -629,16 +649,35 @@ function reasonText(t: BacktestTrade): string {
 /* ---------- 数据 ---------- */
 const indicators = useChartIndicators(fetchIndicators)
 const { indicatorRows, priceMaRows, indicatorError, priceMaError } = indicators
-watch(priceMaRows, (rows) => {
+function drawPriceMas(rows: IndicatorRow[]) {
   const times = new Set(loadedBars.map(bar => toUtcSeconds(bar.ts)))
-  for (const ma of PRICE_MAS) {
+  for (const ma of priceMas.value) {
     priceMaSeries.get(ma.key)?.setData(rows.filter(row => times.has(toUtcSeconds(row.ts))).map(row => {
       const value = row[ma.key]
       const time = toUtcSeconds(row.ts)
       return value != null && Number.isFinite(value) ? { time, value } : { time }
     }))
   }
-}, { flush: 'sync' })
+}
+watch(priceMaRows, drawPriceMas, { flush: 'sync' })
+watch(priceMas, () => {
+  if (!chart) return
+  const range = chart.timeScale().getVisibleLogicalRange()
+  for (const series of priceMaSeries.values()) chart.removeSeries(series)
+  priceMaSeries.clear()
+  for (const ma of priceMas.value) priceMaSeries.set(ma.key, chart.addSeries(LineSeries, { color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: ma.visible }, 0))
+  drawPriceMas(priceMaRows.value)
+  if (range) chart.timeScale().setVisibleLogicalRange(range)
+})
+watch([detailSettings.settings, detailSettings.ready], () => {
+  if (!props.customizeIndicators) return
+  const range = chart?.timeScale().getVisibleLogicalRange()
+  enabledIndicators.value = new Set(detailSettings.settings.value.panels)
+  indicators.reset()
+  rebuildIndicatorPanes()
+  if (props.symbol && detailSettings.ready.value) void refreshIndicators(loadVersion, props.symbol.id, market.period)
+  if (range) chart?.timeScale().setVisibleLogicalRange(range)
+}, { immediate: true })
 const selectedIndicatorIndex = computed(() => {
   const rows = indicatorRows.value
   if (!rows.length) return -1
@@ -765,11 +804,13 @@ onBeforeUnmount(() => window.removeEventListener('indicator-settings-changed', r
 
 async function refreshIndicators(version: number, symbolId: number, period: Period) {
   if (!loadedBars.length) return
+  if (props.customizeIndicators && !detailSettings.ready.value) return
   await indicators.load({
     symbol: symbolId, period,
     start: loadedBars[0].ts, end: loadedBars[loadedBars.length - 1].ts,
   }, props.showIndicators && enabledList.value.length > 0,
-  () => version === loadVersion && props.symbol?.id === symbolId && market.period === period)
+  () => version === loadVersion && props.symbol?.id === symbolId && market.period === period,
+  props.customizeIndicators ? { periods: detailSettings.settings.value.ma.lines.map(l => l.period), panels: [...enabledIndicators.value] } : undefined)
 }
 
 async function loadOlder() {
@@ -1251,6 +1292,11 @@ async function onDeleteSr(item: SupportResistanceItem) {
 }
 
 /* ---------- 指标选择弹窗 ---------- */
+const maSettingsOpen = ref(false)
+async function saveMa(lines: MaLine[]) {
+  if (await detailSettings.save({ ...detailSettings.settings.value, ma: { lines } })) maSettingsOpen.value = false
+}
+watch(() => user.user?.id, () => { maSettingsOpen.value = false })
 const indicatorPickerOpen = ref(false)
 function openIndicatorPicker() { indicatorPickerOpen.value = true }
 function closeIndicatorPicker() { indicatorPickerOpen.value = false }
@@ -1260,6 +1306,8 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   <div class="kline-chart">
     <p v-if="priceMaError" class="notice danger" role="alert">{{ priceMaError }}</p>
     <p v-if="indicatorError" class="notice danger" role="alert">{{ indicatorError }}</p>
+    <p v-if="customizeIndicators && detailSettings.error.value" class="notice danger" role="alert">{{ detailSettings.error.value }} <button v-if="!detailSettings.ready.value" @click="detailSettings.load">重试</button></p>
+    <DetailMaSettings v-if="customizeIndicators && maSettingsOpen" :lines="detailSettings.settings.value.ma.lines" :saving="detailSettings.saving.value" :error="detailSettings.error.value" @close="maSettingsOpen = false" @save="saveMa" />
     <header class="kline-chart__header">
       <div class="kline-chart__header-left">
         <span class="kline-chart__symbol">{{ symbolTitle }}</span>
@@ -1277,6 +1325,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
         </button>
       </div>
       <div class="kline-chart__header-right">
+        <button v-if="customizeIndicators" class="sr-btn" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="maSettingsOpen = true">MA 设置</button>
         <button v-if="showIndicators" class="gear-btn" title="选择技术指标" @click="openIndicatorPicker">
           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
             <path d="M8 0 9.4 2.1l2.5-.5 1 2.3 2.3 1-.5 2.5L16.7 8l-2 1.6.5 2.5-2.3 1-1 2.3-2.5-.5L8 16l-1.4-2.1-2.5.5-1-2.3-2.3-1 .5-2.5L-.7 8l2-1.6-.5-2.5 2.3-1 1-2.3 2.5.5L8 0zm0 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z" />
@@ -1301,7 +1350,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
     <div ref="container" class="kline-chart__body">
       <div ref="chartHost" class="kline-chart__canvas" />
       <div v-if="props.symbol" class="kline-chart__ma-legend">
-        <span v-for="ma in PRICE_MAS" :key="ma.key" :style="{ color: ma.color }">{{ ma.label }}:{{ indicatorNumber(selectedPriceMa?.[ma.key]) }}</span>
+        <span v-for="ma in visiblePriceMas" :key="ma.key" :style="{ color: ma.color }">{{ ma.label }}:{{ indicatorNumber(selectedPriceMa?.[ma.key]) }}</span>
       </div>
       <svg v-if="showIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
         <circle
@@ -1429,12 +1478,15 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
             <button class="modal__close" @click="closeIndicatorPicker">×</button>
           </header>
           <div class="modal__body">
+            <p v-if="customizeIndicators">已开启 {{ enabledIndicators.size }}/3</p>
             <div class="picker-grid">
               <button
                 v-for="ind in INDICATORS"
                 :key="ind.key"
                 class="picker-item"
                 :class="{ active: enabledIndicators.has(ind.key) }"
+                :disabled="customizeIndicators && (!detailSettings.ready.value || detailSettings.saving.value || (!enabledIndicators.has(ind.key) && enabledIndicators.size >= 3))"
+                :title="customizeIndicators && !enabledIndicators.has(ind.key) && enabledIndicators.size >= 3 ? '最多开启三个副图，请先关闭一个' : ''"
                 @click="toggleIndicator(ind.key)"
               >
                 <span class="picker-item__icon" v-html="ind.icon" />
@@ -1442,7 +1494,8 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
                 <span class="picker-item__check">{{ enabledIndicators.has(ind.key) ? '✓' : '' }}</span>
               </button>
             </div>
-            <div class="picker-hint">点击切换指标显示，选择自动保存</div>
+            <div class="picker-hint">{{ customizeIndicators && enabledIndicators.size >= 3 ? '最多开启三个副图，请先关闭一个' : '点击切换指标显示，选择自动保存' }}</div>
+            <p v-if="customizeIndicators && detailSettings.error.value" role="alert">{{ detailSettings.error.value }}</p>
           </div>
         </div>
       </div>
@@ -1790,6 +1843,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   transition: all 0.15s;
   position: relative;
 }
+.picker-item:disabled { opacity: .5; cursor: default; }
 .picker-item:hover { border-color: var(--accent); }
 .picker-item.active {
   border-color: var(--accent);

@@ -147,6 +147,7 @@ onBeforeUnmount(() => {
           :recent-months="4"
           :show-sr-button="true"
           :show-indicators="true"
+          :customize-indicators="true"
           :markers="visibleMarkers"
         />
         <div v-if="strategyId" class="bt-marker-bar">

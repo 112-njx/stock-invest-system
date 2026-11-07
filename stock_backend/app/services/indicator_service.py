@@ -51,6 +51,10 @@ def compute_indicators(
     if params is not None and (not isinstance(params, dict) or params.keys() - defaults.keys()):
         raise ValueError('无效的指标参数')
     for name in names:
+        if name == "ma":
+            from app.schemas.chart_settings import MaParameters
+            MaParameters.model_validate((params or {}).get("ma", {}))
+            continue
         chosen = (params or {}).get(name, {})
         if not isinstance(chosen, dict) or chosen.keys() - defaults[name].keys() or any(
                 type(v) is not int or not 1 <= v <= 10000 for v in chosen.values()):

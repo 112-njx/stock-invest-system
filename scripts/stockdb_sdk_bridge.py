@@ -318,8 +318,14 @@ def calculate_indicator_rows(sdk_dir, payload):
             for row, value in zip(output, values):
                 row[field] = float(value) if math.isfinite(value) else None
     if 'ma' in names:
-        append(tuple(f'ma{n}' for n in (5, 10, 20, 30)),
-               tuple(zb.MA(array('close'), n) for n in (5, 10, 20, 30)))
+        chosen = params.get('ma', {})
+        if not isinstance(chosen, dict) or chosen.keys() - {'periods'}:
+            raise ValueError('invalid MA parameters')
+        periods = chosen.get('periods', [5, 10, 20, 30])
+        if not isinstance(periods, list) or not 1 <= len(periods) <= 6 or any(type(n) is not int or not 1 <= n <= 10000 for n in periods) or len(set(periods)) != len(periods):
+            raise ValueError('MA requires 1 to 6 unique integer periods from 1 to 10000')
+        close = array('close')
+        append(tuple(f'ma{n}' for n in periods), tuple(zb.MA(close, n) for n in periods))
     if 'macd' in names:
         append(('macd_dif', 'macd_dea', 'macd_hist'), zb.MACD(array('close'), *parameters('macd', {'fast':12,'slow':26,'signal':9})))
     if 'kdj' in names:

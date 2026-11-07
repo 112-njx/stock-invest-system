@@ -6,6 +6,9 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+import json
+from app.schemas.chart_settings import ChartSettings
 
 from app.api.deps import get_current_user, get_db
 from app.core.config import get_settings
@@ -20,6 +23,20 @@ from app.services.llm.user_key import ApiKeyFormatError, validate_api_key
 _settings = get_settings()
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
+
+
+@router.get('/me/chart-settings')
+def get_chart_settings(current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    value = db.execute(text('SELECT settings FROM user_chart_settings WHERE user_id=:id'), {'id': current.id}).scalar_one_or_none()
+    return ok(data=ChartSettings.model_validate(value or {}).model_dump())
+
+
+@router.put('/me/chart-settings')
+def save_chart_settings(payload: ChartSettings, current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    value = payload.model_dump()
+    db.execute(text('INSERT INTO user_chart_settings(user_id,settings) VALUES(:id,CAST(:settings AS jsonb)) ON CONFLICT(user_id) DO UPDATE SET settings=EXCLUDED.settings'), {'id': current.id, 'settings': json.dumps(value)})
+    db.commit()
+    return ok(data=value)
 
 
 @router.get("/me")
