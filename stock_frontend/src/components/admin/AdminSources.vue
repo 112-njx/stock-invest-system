@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { type AdminConsole, providerNames, stateLabel } from '@/composables/useAdminConsole'
 import AdminNotice from './AdminNotice.vue'
+import AdminErrors from './AdminErrors.vue'
 import AdminOnlineData from './AdminOnlineData.vue'
 import AdminIndicators from './AdminIndicators.vue'
 const props = defineProps<{ controller: AdminConsole }>()
@@ -64,7 +65,7 @@ function policyChanged() {
     <template v-if="s.update.data">
       <p class="sync-message">{{ s.update.data.message }}</p>
       <progress :value="s.update.data.progress" max="100" />
-      <p v-if="s.update.data.error" class="notice danger">{{ s.update.data.error }}</p>
+      <AdminErrors v-if="s.update.data.error" :error="s.update.data.error" />
       <small v-if="s.update.data.data_version">当前数据版本 {{ s.update.data.data_version }}</small>
     </template>
     <div class="form-actions">
@@ -98,7 +99,7 @@ function policyChanged() {
         <small>同步进度</small><b>{{ s.sync.data.progress }}%</b>
       </div>
       <p v-if="s.sync.data.task_id" class="task-id">任务 {{ s.sync.data.task_id }}</p>
-      <p v-if="s.sync.data.error" class="notice danger">{{ s.sync.data.error }}</p></template
+      <AdminErrors v-if="s.sync.data.error" :error="s.sync.data.error" /></template
     >
     <div class="form-actions">
       <button

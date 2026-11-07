@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { type AdminConsole, stateLabel } from '@/composables/useAdminConsole'
 import AdminNotice from './AdminNotice.vue'
+import AdminErrors from './AdminErrors.vue'
 const props = defineProps<{ controller: AdminConsole }>()
 const emit = defineEmits<{ navigate: [section: 'sources' | 'tasks' | 'requests'] }>()
 const s = props.controller.state
@@ -92,7 +93,7 @@ const totals = computed(() =>
         <div class="split">
           <small>处理进度</small><b>{{ s.sync.data.progress }}%</b>
         </div>
-        <p v-if="s.sync.data.error" class="notice danger">{{ s.sync.data.error }}</p></template
+        <AdminErrors v-if="s.sync.data.error" :error="s.sync.data.error" /></template
       >
       <div class="divider" />
       <h3>当前数据源策略</h3>

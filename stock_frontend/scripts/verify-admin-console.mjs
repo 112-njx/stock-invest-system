@@ -32,13 +32,15 @@ await build({
       name: 'admin-fixture',
       setup(builder) {
         builder.onResolve(
-          { filter: /^(vue-router|@\/api\/admin|@\/composables\/useSyntheticWicks)$/ },
+          { filter: /^(vue-router|@\/api\/admin|@\/api\/http|@\/composables\/useSyntheticWicks)$/ },
           ({ path }) => ({ path, namespace: 'fixture' })
         )
         builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({
           resolveDir: root,
           contents:
-            path === 'vue-router'
+            path === '@/api/http'
+              ? 'export const request=async()=>({interval_seconds:30})'
+              : path === 'vue-router'
               ? 'export const useRoute=()=>globalThis.adminFixture.route;export const useRouter=()=>({replace:async ({query})=>{globalThis.adminFixture.route.query=query}})'
               : path.endsWith('useSyntheticWicks')
                 ? "import {ref} from 'vue';export const syntheticWickFactor=ref(.5)"
@@ -123,6 +125,9 @@ globalThis.clearTimeout = (id) => {
 }
 fixture.route = reactive({ query: {} })
 const app = createApp(Admin)
+const style = document.createElement('style')
+style.textContent = await readFile('src/components/admin/admin.css', 'utf8')
+document.head.appendChild(style)
 app.mount('#app')
 const settle = async () => {
   await new Promise((r) => setTimeout(r, 10))
@@ -179,7 +184,7 @@ fixture.failSave = false
 await submit(form)
 assert.equal(fixture.reply.policy.akshare_enabled, true)
 assert.equal(document.querySelectorAll('input[type=checkbox]').length, 4, 'enabling AkShare must not duplicate policy switches')
-const limitsForm = document.querySelector('input[type=number]').closest('form')
+const limitsForm = document.querySelector('input[type=number][min="1"]').closest('form')
 assert.equal(limitsForm.querySelectorAll('input[type=checkbox]').length, 0, 'request protection must not contain policy controls')
 inputs[2].click()
 await nextTick()
@@ -190,7 +195,7 @@ await nextTick()
 inputs[0].click()
 await nextTick()
 assert.equal(inputs[1].checked, true, 'AkShare storage preference is independent of the fallback switch')
-const interval = document.querySelector('input[type=number]')
+const interval = document.querySelector('input[type=number][min="1"]')
 interval.value = '7'
 interval.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
 await nextTick()
@@ -234,6 +239,19 @@ Object.defineProperty(document, 'hidden', { configurable: true, value: false })
 document.dispatchEvent(new dom.window.Event('visibilitychange'))
 await settle()
 assert.equal(pollTimers.size, 1, 'resume must schedule a single polling timer')
+fixture.reply.sync.error = Array.from({length:24}, (_,i) => `行业${i}: 行业${i} 的所有数据源均未返回日 K`).join('；')
+fixture.reply.sync.status = 'failed'
+await navigate('overview')
+assert.equal(document.querySelectorAll('.admin-errors li').length, 24)
+assert.equal(document.querySelector('.admin-errors li strong').textContent, '行业0')
+assert.equal(document.querySelector('.admin-errors li span').textContent, '所有数据源均未返回日 K')
+assert.equal(dom.window.getComputedStyle(document.querySelector('.admin-errors ul')).maxHeight, '288px')
+await navigate('sources')
+assert.equal(document.querySelectorAll('.admin-errors li').length, 24, 'both sync cards use the same readable list')
+fixture.reply.sync.error = '<img src=x onerror=alert(1)>;单条错误'
+await navigate('overview')
+assert.equal(document.querySelector('.admin-errors img'), null, 'errors must remain escaped text')
+fixture.reply.sync.error = null
 await navigate('requests')
 let release
 const previousCall = fixture.call
@@ -249,11 +267,20 @@ fixture.call = function (key, data) {
 const baseline = fixture.calls.filter((key) => key === 'requests').length
 const [id, callback] = [...pollTimers][0]
 pollTimers.delete(id)
+const statusRow = document.querySelector('.resource-status')
+const timestamp = statusRow.firstElementChild.textContent
+const workspace = document.querySelector('.admin-workspace')
+workspace.scrollTop = 250
 const polling = callback()
 await nextTick()
 const activeRefresh = [...document.querySelectorAll('button')].find((b) =>
   b.textContent.includes('更新中')
 )
+assert.equal(document.querySelector('.resource-status'), statusRow, 'polling must keep the same status row')
+assert.equal(statusRow.firstElementChild.textContent, timestamp, 'polling must preserve the last update text')
+assert.equal(dom.window.getComputedStyle(statusRow).minHeight, '24px')
+assert.equal(workspace.scrollTop, 250)
+assert.equal(document.querySelector('.resource-refresh.visible').textContent, '正在刷新…')
 assert.ok(activeRefresh.disabled, 'refresh must be disabled during an in-flight request')
 fixture.route.query = { section: 'overview' }
 await settle()
