@@ -45,6 +45,7 @@ const memberAscending = ref(preferences.memberAscending)
 const ready = ref(false)
 const loading = ref(false)
 const refreshing = ref(false)
+const summaryRevision = ref(0)
 const error = ref('')
 const pinnedBoard = ref(screen.value?.pinnedBoard ?? false)
 const boardList = ref<HTMLElement | null>(null)
@@ -100,6 +101,7 @@ function workspaceKey(group: Category, method: Weight) {
 function rememberWorkspace(value: Workspace) {
   const saved = { ...value, pinnedBoard: pinnedBoard.value }
   screen.value = saved
+  summaryRevision.value++
   clearTimeout(persistTimer)
   persistTimer = setTimeout(() => {
     putCache('last-workspace', saved)
@@ -460,7 +462,7 @@ onBeforeUnmount(() => {
         <strong v-if="currentStock">{{ currentStock.code }} · {{ currentStock.name }} 日 K</strong>
         <StockDbChart v-if="detail" :bars="stockBars" :label="`${currentStock?.name ?? ''}日 K`" />
       </div>
-      <div class="stock-insights"><StockSummary :stock="currentStock" :version="screen?.version" @stale="loadWorkspace()" /></div>
+      <div class="stock-insights"><StockSummary :stock="currentStock" :version="screen?.version" :refresh-key="summaryRevision" @stale="loadWorkspace()" /></div>
       <div class="source"><span>本地 stockdb</span><small v-if="date">{{ date }}</small>
         <small v-if="error" role="status" :title="error">暂未更新</small><small v-else-if="loading || refreshing" role="status">后台更新中</small>
         <button :disabled="refreshing" @click="refresh">刷新</button>

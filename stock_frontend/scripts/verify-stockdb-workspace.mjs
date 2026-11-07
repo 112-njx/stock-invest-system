@@ -106,7 +106,7 @@ async function fixture(run, legacy = false) {
   localStorage.clear()
   document.body.innerHTML = '<div id="test-app"></div>'
   const state = {
-    version: 'v1', memory: new Map(), calls: [], hold: null,
+    version: 'v1', memory: new Map(), calls: [], hold: null, phaseReturn: 2,
     bars: () => [[20261104, 100, 210, 90, state.version === 'v1' ? 100 : 200, 1, 1, 99]],
     boards: () => Array.from({ length: 24 }, (_, i) => ({
       id: 'board-' + i, name: 'Board ' + i, count: 2, price: 1000 - i,
@@ -130,7 +130,7 @@ async function fixture(run, legacy = false) {
         charts: Object.fromEntries(url.searchParams.get('ids').split(',').map(id => [id, state.bars()])),
       }
       if (url.pathname.startsWith('/members/')) return state.bundle(url.searchParams.get('selected') || '600001')
-      if (url.pathname.endsWith('/performance')) return { as_of: 20261104, returns: { '5': {value: 2, start_date: 20261028, end_date: 20261104} } }
+      if (url.pathname.endsWith('/performance')) return { as_of: 20261104, returns: { '5': {value: state.phaseReturn, start_date: 20261028, end_date: 20261104} } }
       if (url.pathname.startsWith('/stocks/')) return { bars: state.bars() }
       if (url.pathname === '/status') return { refreshing: false, error: '' }
       throw new Error('Unexpected request ' + path)
@@ -243,4 +243,22 @@ await fixture(async () => {
   assert(!query('.constituents .stock-row'))
 })
 console.log('Passed expanded stock columns, missing-value sorting and phase performance')
+await fixture(async state => {
+  clickBoard('Board 1')
+  await until(() => boardName() === 'Board 1', 'pinned board')
+  await until(() => query('.performance-grid')?.textContent.includes('+2.00%'), 'initial phase response')
+  const path = '/stocks/600001/performance?version=v1'
+  const cached = state.memory.get('api:' + path)
+  const count = state.calls.filter(call => call === path).length
+  state.phaseReturn = 100
+  query('.source button').click()
+  await until(() => query('.performance-grid')?.textContent.includes('+100.00%'), 'corrected history with unchanged workspace version')
+  assert.equal(state.version, 'v1')
+  assert.equal(cached.returns['5'].value, 2, 'old response was already cached')
+  assert(state.calls.filter(call => call === path).length > count, 'refresh must revalidate phase history')
+  assert.equal(selectedBoard(), 'Board 1')
+  assert.match(selectedStock(), /600001/)
+})
+console.log('Passed phase-history refresh with unchanged snapshot version and cached members')
+
 dom.window.close()

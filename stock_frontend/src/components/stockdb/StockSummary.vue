@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { type Member, type StockPerformance, barReturn, percent } from '@/api/stockdb'
-import { cachedStockDb, StockDbHttpError } from '@/api/stockdbCache'
+import { fetchStockDb, StockDbHttpError } from '@/api/stockdbCache'
 import { compact, dateText, metric, numberText } from '@/utils/blueprint'
 
-const props = defineProps<{ stock?: Member; version?: string }>()
+const props = defineProps<{ stock?: Member; version?: string; refreshKey?: number }>()
 const emit = defineEmits<{ stale: [] }>()
 const performance = shallowRef<StockPerformance | null>(null)
 const loading = ref(false)
@@ -28,14 +28,14 @@ const fields = computed(() => {
   ]
 })
 function trend(value: number | null | undefined) { return value == null || value === 0 ? '' : value > 0 ? 'up' : 'down' }
-watch(() => [props.stock?.code, props.stock?.bar[0], props.version, retry.value] as const, async () => {
+watch(() => [props.stock?.code, props.stock?.bar[0], props.version, props.refreshKey, retry.value] as const, async () => {
   const id = ++requestId
   performance.value = null
   failed.value = false
   if (!props.stock || !props.version) { loading.value = false; return }
   loading.value = true
   try {
-    const result = await cachedStockDb<StockPerformance>(`/stocks/${props.stock.code}/performance?${new URLSearchParams({ version: props.version })}`)
+    const result = await fetchStockDb<StockPerformance>(`/stocks/${props.stock.code}/performance?${new URLSearchParams({ version: props.version })}`)
     if (!disposed && id === requestId) performance.value = result
   } catch (cause) {
     if (!disposed && id === requestId) {

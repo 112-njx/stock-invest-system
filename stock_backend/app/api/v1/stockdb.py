@@ -1,5 +1,6 @@
 """Versioned index workspace endpoints backed exclusively by local stockdb RD."""
 
+import json
 from hashlib import sha256
 from typing import Annotated, Literal
 
@@ -147,8 +148,11 @@ def stock_performance(request: Request, code: Code, version: str | None = None) 
     if result is None:
         raise HTTPException(status_code=404, detail="本地库中没有这只股票的日 K")
     try:
-        return _reply(request, data, lambda: {"version": data.version,
-                      **rd.performance(code, result["latest"][0])})
+        # Phase history extends beyond the workspace's hashed 70-calendar-day window.
+        # Read it before checking the ETag; snapshot-keyed caches cannot detect older corrections.
+        payload = {"version": data.version, **rd.performance(code, result["latest"][0])}
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
+        return _reply(request, data, encoded=encoded)
     except rd.StockDBError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
