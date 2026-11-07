@@ -1,6 +1,6 @@
 # 详情页指标框架（第一批）
 
-当前目录开放 MA、MACD、KDJ、RSI、WR、CCI、ATR、BOLL、EMA、EXPMA、BBI、WMA、SMA、DMA、BIAS、PSY、DPO、MTM、ROC，以及成交量、成交额；技术指标进度为 19/39，不提前开放未验证的项目。
+当前目录开放 MA、MACD、KDJ、RSI、WR、CCI、ATR、BOLL、EMA、EXPMA、BBI、WMA、SMA、DMA、BIAS、PSY、DPO、MTM、ROC、DMI、TRIX、DFMA、MASS、VR、CR、EMV、BRAR、OBV、MFI、ASI、TAQ、KTN、XSII，以及成交量、成交额；技术指标进度为 33/39，不提前开放未验证的项目。
 
 ## 单一指标目录
 
@@ -82,3 +82,30 @@ BOLL 的原生输出顺序是上轨、中轨、下轨，倍数 p 支持小数（
 目录自动驱动选择器、参数编辑、图例、多线曲线和参考线。账号和访客配置沿用现有结构，关闭后保留参数；保存新副图选择时保留 MA 与主图叠加配置。详情页指标弹窗使用视口高度限制与可滚动正文，避免目录扩展后底部参数无法操作；首页样式与行为不变。
 
 本批原生对照：scripts/tests/test_momentum_indicators.py，覆盖 Windows/Linux 默认、自定义、短历史、平盘和参数边界。API四周期与分页预热：stock_backend/tests/test_momentum_indicators.py；前端回归新增三副图上限、参数恢复/读回、账号切换、正负值/空值/时间标签、参考线、单项失败与重试及过期响应保护。
+
+## 第五～七批：趋势、量价与价格通道
+
+本次仅扩展详情页。11 项趋势及量价指标各使用一个独立副图，同时最多三个；TAQ、KTN、XSII 叠加主图价格轴，不占副图名额。新项默认关闭；MA 仍支持 1～6 条，首页配置和行为保持原样。
+
+| 指标 | SDK 参数／页面默认值 | 返回字段（按原生顺序） | 参考线 |
+| --- | --- | --- | --- |
+| DMI | m1=14、m2=6 | dmi_pdi、dmi_mdi、dmi_adx、dmi_adxr | 20、40 |
+| TRIX | m1=12、m2=20 | trix、trix_ma | 0 |
+| DFMA | n1=10、n2=50、m=10 | dfma_dif、dfma_difma | 0 |
+| MASS | n1=9、n2=25、m=6 | mass、mass_ma | 26.5、27 |
+| VR | m1=26 | vr | 70、150 |
+| CR | n=20 | cr | 100 |
+| EMV | n=14、m=9 | emv、emv_ma | 0 |
+| BRAR | m1=26 | brar_ar、brar_br | 100 |
+| OBV | 无可调参数 | obv | 无 |
+| MFI | n=14 | mfi | 20、80 |
+| ASI | m1=26、m2=10 | asi、asi_ma | 无 |
+| TAQ（主图） | n=20 | taq_up、taq_mid、taq_down | 无 |
+| KTN（主图） | n=20、m=10 | ktn_up、ktn_mid、ktn_down | 无 |
+| XSII（主图） | n=102、m=7 | xsii_td1、xsii_td2、xsii_td3、xsii_td4 | 无 |
+
+整数参数统一限制为 1～10000，支持保存和恢复默认。XSII 的 n、m 是通道百分比系数，不是滚动周期，表单明确标为“通道系数 N（%）”“通道系数 M（%）”，保留原生输出，不重新排序通道线。OBV 的原生函数只有收盘价、成交量输入，没有可调参数，因此只提供开关。TAQ 原生单项函数要求显式传 n；页面采用 20，并与 SDK 的 BATCH 无参数默认结果核对。为避免 MASS 的 `ma`、BRAR 的 `ar/br`、XSII 的 `td1` 等列与其他指标混淆，接口为部分字段增加指标前缀，数值及输出顺序保持原样；OBV 等指标的原生尺度不做二次换算。参考线是固定展示提示，不是信号计算。
+
+全部调用本地配套 SDK 指标引擎；7899 只提供 K 线存取。OHLCV 数组来自当前图表的数据源，不为指标另取行情。沿用目录驱动的参数表单、图例和渲染、账号/访客配置、独立加载和重试、过期响应保护。关闭指标保留参数，保存失败继续使用上次成功配置；通道请求独立排队，不阻塞 MA 和副图的结果发布。
+
+验证入口：`scripts/tests/test_trend_volume_channels.py` 对照 Windows/Linux 的真实单项函数及 BATCH 默认/自定义字段顺序，包含短历史、平盘、零成交量、周期边界；`stock_backend/tests/test_trend_volume_channels.py` 覆盖四周期、历史补页、最新页、活动 K 线变化、短历史/空历史、非法参数和单项失败；`test_chart_settings.py` 覆盖所有新增参数、六条 MA 加三个副图和价格通道、账号隔离与旧客户端写回。前端两个 verify 脚本补充完整选择/参数/保存流程、价格轴及参考线、关闭全部副图、单项重试和旧通道响应丢弃。

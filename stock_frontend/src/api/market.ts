@@ -102,6 +102,36 @@ export interface SyncStatus {
 
 /** 技术指标行：K 线基础字段 + 请求的指标列（macd_dif/dea/hist、kdj_k/d/j；成交量成交额为基础字段） */
 export interface IndicatorRow extends KLineBar {
+  dmi_pdi?: number | null
+  dmi_mdi?: number | null
+  dmi_adx?: number | null
+  dmi_adxr?: number | null
+  trix?: number | null
+  trix_ma?: number | null
+  dfma_dif?: number | null
+  dfma_difma?: number | null
+  mass?: number | null
+  mass_ma?: number | null
+  vr?: number | null
+  cr?: number | null
+  emv?: number | null
+  emv_ma?: number | null
+  brar_ar?: number | null
+  brar_br?: number | null
+  obv?: number | null
+  mfi?: number | null
+  asi?: number | null
+  asi_ma?: number | null
+  taq_up?: number | null
+  taq_mid?: number | null
+  taq_down?: number | null
+  ktn_up?: number | null
+  ktn_mid?: number | null
+  ktn_down?: number | null
+  xsii_td1?: number | null
+  xsii_td2?: number | null
+  xsii_td3?: number | null
+  xsii_td4?: number | null
   bias1?: number | null
   bias2?: number | null
   bias3?: number | null

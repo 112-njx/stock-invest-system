@@ -199,7 +199,7 @@ const mainParams={boll:{n:10,p:2.5},ema:{n:9},expma:{n1:7,n2:21},bbi:{m1:2,m2:5,
 saved.set(6,{version:2,ma:defaults().ma,panels:['rsi','wr','atr'],panel_options:{},overlays:[],overlay_options:{}})
 user.setAuth('fixture',{id:6,username:'six'})
 app=mount(true);await settle();await click(document.querySelector('[title="选择技术指标"]'))
-assert.equal(document.querySelectorAll('.overlay-item').length,7)
+assert.equal(document.querySelectorAll('.overlay-item').length,definitions.filter(d=>d.placement==='main' && d.key!=='ma').length)
 for(const key of mainKeys){
   const definition=definitions.find(d=>d.key===key)
   await click([...document.querySelectorAll('.overlay-item')].find(b=>b.textContent.includes(key.toUpperCase())))
@@ -270,7 +270,7 @@ saved.set(8,{version:2,ma:defaults().ma,panels:[],panel_options:{},overlays:['bo
 user.setAuth('fixture',{id:8,username:'eight'})
 app=mount(true);await settle();await click(document.querySelector('[title="选择技术指标"]'))
 assert.ok(document.querySelector('.modal--indicator-detail'),'detail picker has a bounded scroll body')
-assert.equal(document.querySelectorAll('.picker-item').length,13)
+assert.equal(document.querySelectorAll('.picker-item').length,definitions.filter(d=>d.placement==='panel').length)
 for(const key of ['bias','psy','dpo']) await click(panel(key.toUpperCase()))
 assert.match(document.body.textContent,/已开启 3\/3/)
 assert.equal(panel('MTM').disabled,true);assert.equal(panel('ROC').disabled,true)
@@ -318,3 +318,92 @@ user.setAuth('fixture',{id:8,username:'eight'});await settle()
 assert.equal(panel('BIAS').classList.contains('active'),true)
 app.unmount()
 console.log('BIAS/PSY/DPO/MTM/ROC: defaults/custom/reset/reload, 3-panel cap, reference lines, signed/null/all-period values, account isolation and overlay preservation passed.')
+
+const batchKeys='dmi trix dfma mass vr cr emv brar obv mfi asi taq ktn xsii'.split(' ')
+const channelKeys=['taq','ktn','xsii']
+const batchPanels=batchKeys.filter(k=>!channelKeys.includes(k))
+const batchParams={dmi:{m1:9,m2:3},trix:{m1:7,m2:9},dfma:{n1:5,n2:21,m:6},mass:{n1:5,n2:12,m:3},vr:{m1:12},cr:{n:9},emv:{n:7,m:3},brar:{m1:12},obv:{},mfi:{n:7},asi:{m1:12,m2:5},taq:{n:9},ktn:{n:9,m:5},xsii:{n:104,m:5}}
+const batchRefs={dmi:[20,40],trix:[0],dfma:[0],mass:[26.5,27],vr:[70,150],cr:[100],emv:[0],brar:[100],obv:[],mfi:[20,80],asi:[],taq:[],ktn:[],xsii:[]}
+saved.set(10,{version:2,ma:{lines:[5,10,20,30,60,120].map(period=>({period,visible:true}))},panels:['dmi','trix','dfma'],panel_options:{},overlays:['boll'],overlay_options:{boll:{params:{p:2.5}}}})
+user.setAuth('fixture',{id:10,username:'ten'})
+app=mount(true);await settle();await click(document.querySelector('[title="选择技术指标"]'))
+assert.equal(document.querySelectorAll('.picker-item').length,24)
+for(const key of channelKeys){
+  await click([...document.querySelectorAll('.overlay-item')].find(b=>b.textContent.includes(key.toUpperCase())))
+  assert.equal(saved.get(10).panels.length,3,'price channels never consume panel slots')
+}
+assert.equal(saved.get(10).ma.lines.length,6)
+assert.deepEqual(saved.get(10).overlays,['boll',...channelKeys])
+assert.equal(panel('MASS').disabled,true)
+for(const key of batchKeys){
+  const definition=definitions.find(d=>d.key===key)
+  if(batchPanels.includes(key) && !saved.get(10).panels.includes(key)){
+    await click(panel(saved.get(10).panels[0].toUpperCase()))
+    assert.equal(panel(key.toUpperCase()).disabled,false)
+    await click(panel(key.toUpperCase()))
+  }
+  if(definition.parameters.length){
+    await click(button(`${definition.label} 参数`))
+    for(const param of definition.parameters){
+      const el=document.querySelector(`[aria-label="${definition.label} ${param.label}"]`)
+      assert.equal(Number(el.value),param.default)
+      await input(el,'0');assert.equal(button('保存参数').disabled,true)
+      await input(el,String(batchParams[key][param.key]))
+    }
+    await click(button('保存参数'))
+    const field=channelKeys.includes(key)?'overlay_options':'panel_options'
+    assert.deepEqual(saved.get(10)[field][key].params,batchParams[key])
+    await click(button(`${definition.label} 参数`))
+    for(const p of definition.parameters) assert.equal(Number(document.querySelector(`[aria-label="${definition.label} ${p.label}"]`).value),batchParams[key][p.key])
+    await click(button('恢复默认参数'))
+    for(const p of definition.parameters) assert.equal(Number(document.querySelector(`[aria-label="${definition.label} ${p.label}"]`).value),p.default)
+    await click(button('取消'))
+  }else{
+    assert.equal(key,'obv')
+    assert.equal(button(`${definition.label} 参数`),undefined,'native OBV exposes no parameters')
+  }
+  const drawn=m.createIndicatorSeries(pane,definition,'#aaa')
+  assert.equal(drawn.series.length,definition.native_outputs.length)
+  assert.deepEqual(drawn.referenceLines.map(l=>l.price),batchRefs[key])
+  drawn.series.forEach((s,i)=>{
+    assert.equal(s.options.color,definition.series[i].color)
+    assert.equal(s.options.priceFormat.precision,3)
+    assert.equal(s.options.priceScaleId,channelKeys.includes(key)?'right':undefined)
+  })
+  for(const ts of ['2026-11-05T00:00:00Z','2026-11-06T00:00:00Z','2026-11-30T00:00:00Z','2026-11-05T01:45:00Z']){
+    const row={ts,...Object.fromEntries(definition.native_outputs.map((f,i)=>[f,i===0?-12.5:25+i]))}
+    m.fillIndicatorSeries(drawn.series,definition,[row],s=>Date.parse(s)/1000,{up:'red',down:'green'})
+    drawn.series.forEach((line,i)=>assert.deepEqual(line.data,[{time:Date.parse(ts)/1000,value:i===0?-12.5:25+i}]))
+    m.fillIndicatorSeries(drawn.series,definition,[{ts,...Object.fromEntries(definition.native_outputs.map(f=>[f,null]))}],s=>Date.parse(s)/1000,{up:'red',down:'green'})
+    drawn.series.forEach(line=>assert.deepEqual(line.data,[{time:Date.parse(ts)/1000}]))
+  }
+}
+assert.equal(saved.get(10).panels.length,3)
+assert.equal(saved.get(10).ma.lines.length,6)
+assert.deepEqual(saved.get(10).overlay_options.boll.params,{p:2.5})
+const accountTen=structuredClone(saved.get(10))
+app.unmount();app=mount(true);await settle();await click(document.querySelector('[title="选择技术指标"]'))
+for(const key of [...accountTen.panels,...channelKeys]){
+  const d=definitions.find(d=>d.key===key)
+  if(!d.parameters.length) continue
+  await click(button(`${d.label} 参数`))
+  for(const p of d.parameters) assert.equal(Number(document.querySelector(`[aria-label="${d.label} ${p.label}"]`).value),batchParams[key][p.key])
+  await click(button('取消'))
+}
+user.setAuth('fixture',{id:11,username:'eleven'});await settle()
+assert.equal(panel('ASI').classList.contains('active'),false)
+assert.equal([...document.querySelectorAll('.overlay-item')].some(b=>b.classList.contains('active')),false)
+user.setAuth('fixture',{id:10,username:'ten'});await settle()
+assert.equal(panel('ASI').classList.contains('active'),true)
+assert.equal([...document.querySelectorAll('.overlay-item.active')].length,4)
+for(const key of [...saved.get(10).panels]) await click(panel(key.toUpperCase()))
+assert.deepEqual(saved.get(10).panels,[])
+assert.equal(saved.get(10).overlays.length,4)
+localStorage.setItem('detail_chart_settings_v1',JSON.stringify({version:2,ma:defaults().ma,panels:[],panel_options:{},overlays:[],overlay_options:{}}))
+user.clearAuth();await settle()
+await click(panel('DMI'))
+await click([...document.querySelectorAll('.overlay-item')].find(b=>b.textContent.includes('XSII')))
+assert.deepEqual(JSON.parse(localStorage.getItem('detail_chart_settings_v1')).panels,['dmi'])
+assert.deepEqual(JSON.parse(localStorage.getItem('detail_chart_settings_v1')).overlays,['xsii'])
+app.unmount()
+console.log('Batches 5–7: all 14 definitions, parameters/reset/reload, guest/account isolation, six MA plus price channels, 3-panel cap, empty panels, colors/axes/reference lines and null/signed/time mapping passed.')

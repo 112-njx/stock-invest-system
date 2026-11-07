@@ -8,7 +8,7 @@ def test_catalog_lists_only_delivered_indicators(client):
     response = client.get('/api/v1/indicators/catalog')
     assert response.status_code == 200
     assert response.json()['data']['indicators'] == registry.DEFINITIONS
-    assert set(registry.REGISTRY) == {'ma','macd','kdj','volume','amount','rsi','wr','cci','atr','boll','ema','expma','bbi','wma','sma','dma','bias','psy','dpo','mtm','roc'}
+    assert set(registry.REGISTRY) == {'ma','macd','kdj','volume','amount','rsi','wr','cci','atr','boll','ema','expma','bbi','wma','sma','dma','bias','psy','dpo','mtm','roc','dmi','trix','dfma','mass','vr','cr','emv','brar','obv','mfi','asi','taq','ktn','xsii'}
     for definition in registry.DEFINITIONS:
         assert all(key in definition for key in ('parameters','series','inputs','placement','reference_lines','engines'))
 

@@ -245,3 +245,47 @@ assert.equal(momentum.indicatorRows.value[0].mtm,-5)
 assert.equal(momentum.indicatorRows.value[0].bias1,undefined)
 momentum.reset()
 console.log('Momentum panel failures, targeted retries, preserved successful results and stale responses passed.')
+
+const channelQueue=[]
+const channels=useOverlayIndicators(p=>{const task=deferred();channelQueue.push({...task,params:p});return task.promise})
+let channelJob=channels.load(params,['taq','ktn','xsii'],{taq:{params:{n:9}},xsii:{params:{n:104,m:5}}},()=>true)
+assert.equal(channelQueue[0].params.names,'taq')
+channelQueue[0].reject(Error('TAQ unavailable'));await new Promise(r=>setTimeout(r,0))
+assert.equal(channelQueue[1].params.names,'ktn')
+channelQueue[1].resolve([{ts:'2026-11-05',ktn_up:30,ktn_mid:20,ktn_down:10}]);await new Promise(r=>setTimeout(r,0))
+assert.equal(channelQueue[2].params.names,'xsii')
+assert.deepEqual(JSON.parse(channelQueue[2].params.params),{xsii:{n:104,m:5}})
+channelQueue[2].resolve([{ts:'2026-11-05',xsii_td1:21,xsii_td2:19,xsii_td3:25,xsii_td4:15}]);await channelJob
+const goodKTN=channels.rows.value.ktn
+channelJob=channels.retry('taq')
+assert.equal(channelQueue.length,4)
+assert.equal(channels.rows.value.ktn,goodKTN)
+assert.deepEqual(JSON.parse(channelQueue[3].params.params),{taq:{n:9}})
+channelQueue[3].resolve([{ts:'2026-11-05',taq_up:30,taq_mid:20,taq_down:10}]);await channelJob
+const oldChannel=channels.retry('xsii')
+channelJob=channels.load({symbol:2,period:'15m'},['xsii'],{xsii:{params:{n:106,m:9}}},()=>true)
+channelQueue[5].resolve([{ts:'new',xsii_td1:32}]);await channelJob
+channelQueue[4].resolve([{ts:'old',xsii_td1:999}]);await oldChannel
+assert.equal(channels.rows.value.xsii[0].xsii_td1,32)
+assert.deepEqual(JSON.parse(channelQueue[5].params.params),{xsii:{n:106,m:9}})
+channels.reset()
+
+for(const group of [['dmi','trix','dfma'],['mass','vr','cr'],['emv','brar','obv'],['mfi','asi']]){
+  const queue=[]
+  const state=useChartIndicators(p=>{const task=deferred();queue.push({...task,params:p});return task.promise})
+  let job=state.load(params,true,()=>true,{periods:[5],panels:group})
+  assert.deepEqual(queue.map(q=>q.params.names),['ma',...group])
+  queue[0].resolve(maRows)
+  queue[1].reject(Error(`${group[0]} unavailable`))
+  group.slice(1).forEach((key,i)=>queue[i+2].resolve([{ts:'2026-11-05',[key]:12+i}]))
+  await job
+  const good=state.indicatorRows.value
+  job=state.retryPanel(group[0])
+  assert.equal(state.indicatorRows.value,good)
+  assert.equal(queue.length,group.length+2)
+  queue.at(-1).resolve([{ts:'2026-11-05',[group[0]]:-3}]);await job
+  for(const key of group.slice(1)) assert.equal(state.indicatorRows.value[0][key],good[0][key])
+  assert.equal(state.indicatorRows.value[0][group[0]],-3)
+  state.reset()
+}
+console.log('Batches 5–7: each panel group isolates failures, price channels queue independently, targeted retries retain healthy data and parameter/symbol/period changes discard stale channel results.')

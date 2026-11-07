@@ -128,3 +128,32 @@ def test_momentum_panels_preserve_defaults_other_options_and_account_isolation(c
     assert client.put(url,json=legacy).json()['data']==legacy
     assert client.get(url,params={'version':2}).json()['data']==config
     assert client.put(url,json={**config,'panel_options':{'bias':{'params':{'l1':0}}}}).status_code==422
+
+
+def test_trend_volume_channels_settings_slots_parameters_and_legacy(client, accounts):
+    from tests.test_trend_volume_channels import KEYS, CHANNELS, CUSTOM
+    active = [accounts[0]]
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=active[0])
+    url = '/api/v1/users/me/chart-settings'
+    panels = [k for k in KEYS if k not in CHANNELS]
+    config = {'version': 2, 'ma': {'lines': [{'period': n, 'visible': True} for n in [5, 10, 20, 30, 60, 120]]},
+              'panels': [], 'overlays': ['boll', *CHANNELS],
+              'overlay_options': {k: {'params': CUSTOM[k]} for k in CHANNELS},
+              'panel_options': {k: {'params': CUSTOM[k]} for k in panels}}
+    for index in range(0, len(panels), 3):
+        config['panels'] = panels[index:index + 3]
+        assert client.put(url, json=config).json()['data'] == config
+        assert client.get(url, params={'version': 2}).json()['data'] == config
+    assert client.put(url, json={**config, 'panels': panels[:4]}).status_code == 422
+    assert client.put(url, json={**config, 'panels': ['taq']}).status_code == 422
+    assert client.put(url, json={**config, 'overlays': ['dmi']}).status_code == 422
+    assert client.put(url, json={**config, 'panel_options': {'obv': {'params': {'n': 7}}}}).status_code == 422
+    legacy = client.get(url).json()['data']
+    assert client.put(url, json=legacy).json()['data'] == legacy
+    assert client.get(url, params={'version': 2}).json()['data'] == config
+    active[0] = accounts[1]
+    assert client.get(url, params={'version': 2}).json()['data']['panels'] == ['volume', 'macd']
+    active[0] = accounts[0]
+    assert client.get(url, params={'version': 2}).json()['data'] == config
+    config['panels'] = []
+    assert client.put(url, json=config).json()['data']['panels'] == []
