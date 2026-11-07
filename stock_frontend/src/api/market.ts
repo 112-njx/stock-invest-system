@@ -256,7 +256,7 @@ export function fetchIndicators(params: {
   start?: string
   end?: string
 }) {
-  return request<IndicatorRow[]>({ url: '/indicators', params })
+  return request<IndicatorRow[]>({ url: '/indicators', params, ...(params.names==='zhishu' ? {timeout:60000} : {}) })
 }
 
 /** 支撑/压力位列表（可按标的过滤） */

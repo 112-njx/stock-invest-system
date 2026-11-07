@@ -10,7 +10,7 @@ def calculate(rows, names, params, *, period=None):
     request = Request(get_settings().STOCKDB_SDK_URL.rstrip('/') + '/indicators/calculate', data=body,
                       headers={'Content-Type': 'application/json'}, method='POST')
     try:
-        with urlopen(request, timeout=45) as response:
+        with urlopen(request, timeout=55 if 'zhishu' in names else 45) as response:
             result = json.load(response)
         if not isinstance(result, list) or len(result) != len(rows) or any(
                 r.get('ts') != b['ts'] for r, b in zip(result, rows)):

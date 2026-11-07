@@ -223,6 +223,9 @@ webpack/
 # Tests
 coverage/
 *.lcov
+.artifacts/
+stock_frontend/playwright-report/
+stock_frontend/test-results/
 
 # Logs
 logs/

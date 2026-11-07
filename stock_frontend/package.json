@@ -14,7 +14,10 @@
     "verify:xss": "node scripts/verify-xss.mjs",
     "verify:pagination": "node scripts/verify-pagination.mjs",
     "verify:stockdb": "node scripts/verify-stockdb-workspace.mjs",
-    "verify:routing": "node scripts/verify-g35-routing.mjs"
+    "verify:routing": "node scripts/verify-g35-routing.mjs",
+    "verify:default-symbol": "node scripts/verify-default-symbol.mjs",
+    "verify:indicators": "node scripts/verify-detail-chart-settings.mjs && node scripts/verify-indicator-isolation.mjs",
+    "test:indicators": "playwright test -c playwright.indicators.config.ts"
   },
   "dependencies": {
     "axios": "^1.19.0",
@@ -28,6 +31,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.0",
     "@types/node": "^24.13.3",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/tsconfig": "^0.9.1",

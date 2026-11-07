@@ -1,5 +1,6 @@
 import { fetchSymbols, fetchWatchlist } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
+import { useUserStore } from '@/stores/user'
 
 /**
  * 无当前标的时兜底选标的（第一层/第二层共用）：
@@ -8,14 +9,15 @@ import { useMarketStore } from '@/stores/market'
  */
 export async function ensureDefaultSymbol() {
   const market = useMarketStore()
+  const user = useUserStore()
   if (market.current) return
   // E/D 区 WatchlistPanel 已加载过则直接复用，避免重复请求
-  if (market.watchlist.length) {
+  if (user.token && market.watchlist.length) {
     const w = market.watchlist[0]
     market.setCurrent({ id: w.symbol_id, code: w.code, name: w.name, type: w.type })
     return
   }
-  try {
+  if (user.token) try {
     const wl = await fetchWatchlist()
     if (wl.length) {
       market.setWatchlist(wl)

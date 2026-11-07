@@ -1,5 +1,6 @@
 """Concurrency regressions for the standalone SDK bridge; no market data needed."""
 import json
+import os
 import sys
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -8,9 +9,12 @@ from threading import Event, Thread
 from time import monotonic
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+import multiprocessing
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from stockdb_sdk_bridge import QueryService, make_server
+from stockdb_sdk_bridge import QueryService, make_server, load_composite_arrays
 
 FAST = ('600519', '1d', '20240102', '20240105')
 SLOW = ('801080.SL', '1d', '20240101', '20240331')
@@ -26,6 +30,89 @@ def wait_for(predicate):
 
 
 class BridgeTests(unittest.TestCase):
+    def test_composite_lane_does_not_block_normal_native_requests(self):
+        entered,release=Event(),Event()
+        def native(sdk_dir,payload):
+            if payload['names']==['zhishu']:
+                entered.set();self.assertTrue(release.wait(3))
+            return [{**row,'macd_hist':0} for row in payload['rows']]
+        server=make_server('',host='127.0.0.1',port=0,service=QueryService(lambda *a:(ROWS,{})))
+        thread=Thread(target=server.serve_forever,daemon=True);thread.start()
+        base=f'http://127.0.0.1:{server.server_port}'
+        def post(name):
+            request=Request(base+'/indicators/calculate',data=json.dumps(dict(names=[name],rows=[dict(ts='1',close=1.)])).encode(),headers={'Content-Type':'application/json'})
+            with urlopen(request,timeout=3) as response:return json.load(response)
+        try:
+            with patch('stockdb_sdk_bridge.sdk_indicators',side_effect=native),ThreadPoolExecutor(2) as pool:
+                index=pool.submit(post,'zhishu');self.assertTrue(entered.wait(2))
+                try:
+                    self.assertEqual(pool.submit(post,'ma').result(timeout=.5)[0]['close'],1.)
+                    with urlopen(base+'/indicators/ready',timeout=.5) as response:self.assertEqual(response.status,200)
+                finally:release.set()
+                self.assertEqual(index.result(timeout=3)[0]['close'],1.)
+        finally:
+            release.set();server.shutdown();server.server_close();thread.join(3)
+
+    def test_composite_reader_order_failure_timeout_and_child_cleanup(self):
+        # A tiny SDK-shaped module exercises real spawned workers and pipes;
+        # indicator numerical contracts are covered by the actual SDK tests.
+        source='''import time
+def _load_rows(codes,*args):
+    result=[[] for _ in range(10)]
+    for i,value in enumerate(codes):
+        code=int(value)
+        if code==999: raise ValueError('test data unavailable')
+        if code==888: time.sleep(5)
+        time.sleep(.01*(4-code%4))
+        result[0].extend([i,i]);result[1].extend([20250101,20250102])
+        for column in result[2:]: column.extend([float(code),float(code+1)])
+    return result
+'''
+        original={p.pid for p in multiprocessing.active_children()}
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {'STOCKDB_CACHE_DIR': '', 'STOCKDB_CONTROL_DIR': ''}):
+            Path(directory,'zhibiao.py').write_text(source,encoding='utf-8')
+            arrays=load_composite_arrays(directory,['000003','000001','000004','000002'],'15m','20250101','20250102',timeout=5)
+            self.assertEqual(arrays[0],[0,0,1,1,2,2,3,3])
+            self.assertEqual(arrays[2],[3.,4.,1.,2.,4.,5.,2.,3.])
+            with self.assertRaisesRegex(ValueError,'test data unavailable'):
+                load_composite_arrays(directory,['000001','000999'],'15m','20250101','20250102',timeout=5)
+            with self.assertRaises(TimeoutError):
+                load_composite_arrays(directory,['000888'],'15m','20250101','20250102',timeout=.3)
+        self.assertEqual({p.pid for p in multiprocessing.active_children()},original)
+
+    def test_composite_input_cache_is_versioned_and_never_hides_maintenance(self):
+        with TemporaryDirectory() as directory:
+            root=Path(directory)
+            control=root/'control';control.mkdir()
+            state=control/'version.json'
+            state.write_text(json.dumps(dict(status='ready',version='first')))
+            (root/'zhibiao.py').write_text('''def _load_rows(codes,*args):
+    return [[0],[20250101]]+[[float(int(codes[0]))] for _ in range(8)]
+''',encoding='utf-8')
+            with patch.dict(os.environ, {'STOCKDB_CONTROL_DIR':str(control),'STOCKDB_CACHE_DIR':str(root/'cache')}):
+                args=(str(root),['000001','000002'],'15m','20250101','20250102')
+                expected=load_composite_arrays(*args,timeout=5)
+                with patch('stockdb_sdk_bridge.multiprocessing.get_context') as context:
+                    self.assertEqual(load_composite_arrays(*args),expected)
+                    context.return_value.Process.assert_not_called()
+                state.write_text(json.dumps(dict(status='ready',version='second')))
+                fetched=[]
+                self.assertEqual(load_composite_arrays(*args,timeout=5,progress=lambda i,n:fetched.append(i)),expected)
+                self.assertEqual(sorted(fetched),[0,1])
+                # An incomplete/corrupt cached record is a miss, never a
+                # fabricated input value or a failed otherwise healthy SDK job.
+                import sqlite3
+                db=sqlite3.connect(root/'cache/composite-inputs/industry.sqlite3')
+                try:
+                    with db: db.execute("UPDATE results SET payload='[{\"date\":20250101}]'")
+                finally: db.close()
+                fetched.clear()
+                self.assertEqual(load_composite_arrays(*args,timeout=5,progress=lambda i,n:fetched.append(i)),expected)
+                self.assertEqual(sorted(fetched),[0,1])
+                (control/'maintenance.json').write_text('{}')
+                with self.assertRaisesRegex(RuntimeError,'正在更新'):
+                    load_composite_arrays(*args)
+
     def test_cached_request_bypasses_running_sdk_and_duplicate_is_shared(self):
         entered, release = Event(), Event()
         calls = []

@@ -296,7 +296,136 @@ def indicator_registry():
     return module
 
 
-def calculate_composite_rows(rows, chosen, period, loader=None):
+def _composite_data_worker(connection, sdk_dir, jobs, frequency, start, end):
+    """Fetch and aggregate each member using the official SDK, in its own process."""
+    try:
+        sys.path.insert(0, sdk_dir)
+        from zhibiao import _load_rows
+        for index, code in jobs:
+            if frequency == '15m':
+                # SDK aggregation is per trading day. Day-aligned windows keep
+                # every bar intact while avoiding millions of raw minute dicts
+                # in memory at once. Qfq still uses the SDK client's same full
+                # factor snapshot in every window.
+                from datetime import datetime
+                first = datetime.strptime(start[:8], '%Y%m%d').date()
+                last = datetime.strptime(end[:8], '%Y%m%d').date()
+                arrays = [[] for _ in range(10)]
+                while first <= last:
+                    through = min(first + timedelta(days=89), last)
+                    low = start if first.strftime('%Y%m%d') == start[:8] else first.strftime('%Y%m%d')
+                    high = end if through == last else through.strftime('%Y%m%d')
+                    part = _load_rows([code], frequency, low, high, 'qfq')
+                    for column, values in zip(arrays, part, strict=True):
+                        column.extend(values)
+                    first = through + timedelta(days=1)
+            else:
+                arrays = _load_rows([code], frequency, start, end, 'qfq')
+            connection.send((True, index, arrays))
+    except (BrokenPipeError, EOFError):
+        pass
+    except Exception as exc:
+        try:
+            connection.send((False, None, str(exc)))
+        except (BrokenPipeError, EOFError):
+            pass
+    finally:
+        connection.close()
+
+
+def load_composite_arrays(sdk_dir, codes, frequency, start, end, timeout=40, max_workers=4, progress=None, use_cache=True):
+    """Bound memory and Python aggregation time without replacing SDK formulas.
+
+    The SDK batch loader materializes all one-minute records before aggregating
+    them. Partitioning members across four processes keeps that working set
+    bounded and preserves the original member order and native per-stock bars.
+    """
+    from multiprocessing.connection import wait
+    processes, receivers, results = [], [], {}
+    deadline = monotonic() + timeout
+    control = os.environ.get('STOCKDB_CONTROL_DIR')
+    version = None
+    cache = None
+    fields = ('date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'float_mv', 'total_mv')
+    if control:
+        ensure_available(control)
+        version = data_version(control)
+    cache_dir = os.environ.get('STOCKDB_CACHE_DIR')
+    if use_cache and version and cache_dir:
+        try:
+            cache = FullResultCache(Path(cache_dir) / 'composite-inputs', max_bytes=64 * 1024 * 1024)
+        except (OSError, sqlite3.DatabaseError):
+            logging.getLogger('stockdb.bridge').warning('composite input cache unavailable; using SDK')
+    sdk_files = [Path(sdk_dir) / 'zhibiao.py', *sorted(Path(sdk_dir).glob('zb_core*'))]
+    sdk_version = [(f.name, f.stat().st_size, f.stat().st_mtime_ns) for f in sdk_files if f.exists()]
+    def cache_key(code):
+        return 'sdk-input-v1:' + code + '@' + json.dumps([frequency, start, end, sdk_version], separators=(',', ':'))
+    if cache:
+        for index, code in enumerate(codes):
+            try:
+                saved = cache.get(cache_key(code), frequency, version)
+                if saved:
+                    results[index] = [[0] * len(saved)] + [[row[f] for row in saved] for f in fields]
+            except (OSError, ValueError, KeyError, TypeError, sqlite3.DatabaseError):
+                logging.getLogger('stockdb.bridge').warning('composite input cache read failed; using SDK')
+    missing = [(i, code) for i, code in enumerate(codes) if i not in results]
+    workers = min(4, max_workers, len(missing))
+    context = multiprocessing.get_context('spawn')
+    try:
+        for worker in range(workers):
+            receiver, sender = context.Pipe(duplex=False)
+            jobs = missing[worker::workers]
+            process = context.Process(target=_composite_data_worker,
+                args=(sender, sdk_dir, jobs, frequency, start, end))
+            process.start()
+            sender.close()
+            processes.append(process)
+            receivers.append(receiver)
+        live = list(receivers)
+        while len(results) < len(codes):
+            remaining = deadline - monotonic()
+            ready = wait(live, timeout=max(0, remaining)) if live and remaining > 0 else []
+            if not ready:
+                raise TimeoutError('合成指数本地数据读取超时')
+            for receiver in ready:
+                try:
+                    success, index, arrays = receiver.recv()
+                except EOFError:
+                    live.remove(receiver)
+                    continue
+                if not success:
+                    raise ValueError(arrays)
+                results[index] = arrays
+                if cache and arrays[0]:
+                    try:
+                        saved = [dict(zip(fields, values, strict=True)) for values in zip(*arrays[1:], strict=True)]
+                        cache.put(cache_key(codes[index]), frequency, version, saved)
+                    except (OSError, ValueError, sqlite3.DatabaseError):
+                        logging.getLogger('stockdb.bridge').warning('composite input cache write failed; using SDK result')
+                if progress is not None:
+                    progress(index, len(arrays[0]))
+        combined = [[] for _ in range(10)]
+        for index in range(len(codes)):
+            arrays = results[index]
+            combined[0].extend([index] * len(arrays[0]))
+            for field in range(1, 10):
+                combined[field].extend(arrays[field])
+        if control:
+            ensure_available(control)
+            if data_version(control) != version:
+                raise RuntimeError('数据版本已切换，请重新查询')
+        return tuple(combined)
+    finally:
+        for receiver in receivers:
+            receiver.close()
+        for process in processes:
+            process.join(.1)
+            if process.is_alive():
+                process.terminate()
+                process.join(.5)
+
+
+def calculate_composite_rows(rows, chosen, period, loader=None, sdk_dir=None):
     """Use native ZHISHU, including constant user weights as its weight input.
 
     No index returns are calculated here. Dates and result values are native;
@@ -321,8 +450,11 @@ def calculate_composite_rows(rows, chosen, period, loader=None):
     if control:
         ensure_available(control)
         version = data_version(control)
-    arrays = list((loader or _load_rows)(codes, '1M' if period == '1mon' else period,
-                                       chosen['start'].replace('-', ''), end_stamp, 'qfq'))
+    frequency = '1M' if period == '1mon' else period
+    if loader is None and sdk_dir and len(codes) > 1:
+        arrays = list(load_composite_arrays(sdk_dir, codes, frequency, chosen['start'].replace('-', ''), end_stamp))
+    else:
+        arrays = list((loader or _load_rows)(codes, frequency, chosen['start'].replace('-', ''), end_stamp, 'qfq'))
     present = set(arrays[0])
     if any(i not in present for i in range(len(codes))):
         raise ValueError('部分所选股票在起算日期之后没有本地历史数据')
@@ -381,7 +513,7 @@ def calculate_indicator_rows(sdk_dir, payload):
         definition = registry.REGISTRY[name]
         chosen = registry.validate_parameters(name, params.get(name))
         if name == 'zhishu':
-            output = calculate_composite_rows(output, chosen, payload.get('period'))
+            output = calculate_composite_rows(output, chosen, payload.get('period'), sdk_dir=sdk_dir)
             continue
         field, cross = registry.validate_controls(name, params.get(name))
         if name == 'ma':
@@ -419,7 +551,7 @@ def sdk_indicators(sdk_dir, payload):
     process.start()
     sender.close()
     try:
-        if not receiver.poll(35):
+        if not receiver.poll(45 if 'zhishu' in payload.get('names', []) else 35):
             raise TimeoutError('SDK indicator computation timed out')
         success, result = receiver.recv()
         if not success:
@@ -447,6 +579,7 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
             service = QueryService(lambda *key: sdk_query(sdk_dir, *key))
     logger = logging.getLogger('stockdb.bridge')
     indicator_lock = Lock()
+    composite_lock = Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -472,23 +605,29 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
             if self.path != '/indicators/calculate':
                 self.send_error(404)
                 return
-            if not indicator_lock.acquire(timeout=5):
-                self.respond(b'{"error":"indicator engine busy; retry later"}', 503)
-                return
             try:
                 size = int(self.headers.get('Content-Length', '0'))
                 if not 0 < size <= 32 * 1024 * 1024:
                     raise ValueError('invalid request size')
                 self.connection.settimeout(10)
                 payload = json.loads(self.rfile.read(size))
-                result = sdk_indicators(sdk_dir, payload)
-                self.respond(json.dumps(result, allow_nan=False).encode(), 200)
+                if not isinstance(payload, dict) or not isinstance(payload.get('names'), list):
+                    raise ValueError('invalid indicator payload')
+                # Each native job already runs in an isolated child process.
+                # A long basket read must not occupy the ordinary indicator lane.
+                lane = composite_lock if 'zhishu' in payload['names'] else indicator_lock
+                if not lane.acquire(timeout=5):
+                    self.respond(b'{"error":"indicator engine busy; retry later"}', 503)
+                    return
+                try:
+                    result = sdk_indicators(sdk_dir, payload)
+                    self.respond(json.dumps(result, allow_nan=False).encode(), 200)
+                finally:
+                    lane.release()
             except ValueError as exc:
                 self.respond(json.dumps({'error': str(exc)}).encode(), 400)
             except Exception as exc:
                 self.respond(json.dumps({'error': str(exc)}).encode(), 503)
-            finally:
-                indicator_lock.release()
 
         def respond(self, encoded, status):
             self.send_response(status)
