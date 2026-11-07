@@ -215,7 +215,7 @@ function download() {
     </p>
     <p v-if="loading">正在读取本地接口目录…</p>
     <div class="layout">
-      <aside>
+      <aside aria-label="数据目录" tabindex="0">
         <h3>数据目录 · {{ datasets.length }}</h3>
         <button
           v-for="name in groups"
@@ -478,7 +478,16 @@ pre {
   white-space: pre-wrap;
 }
 aside {
-  align-self: start;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.layout > section {
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 aside small {
   float: right;
@@ -488,7 +497,11 @@ aside small {
 .workspace {
   background: #0c1422;
   color: #cad6e7;
-  min-height: calc(100vh - 64px);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   padding: 24px;
   font-size: 13px;
 }
@@ -499,6 +512,7 @@ header,
   align-items: center;
 }
 header {
+  flex-shrink: 0;
   border-bottom: 1px solid #27364b;
   padding-bottom: 20px;
   margin-bottom: 20px;
@@ -521,7 +535,10 @@ header b {
 }
 .layout {
   display: grid;
+  flex: 1;
+  min-height: 0;
   grid-template-columns: 190px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 20px;
 }
 aside,
@@ -640,6 +657,7 @@ aside p {
   }
   .layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(100px, 30%) minmax(0, 1fr);
   }
   aside button {
     display: inline-block;
