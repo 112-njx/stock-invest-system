@@ -410,5 +410,338 @@
       "sdk"
     ],
     "precision": 3
+  },
+  {
+    "key": "boll",
+    "label": "BOLL 布林带",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "BOLL",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "p",
+        "label": "倍数",
+        "type": "number",
+        "default": 2.0,
+        "min": 0,
+        "max": 100,
+        "exclusive_min": true
+      }
+    ],
+    "series": [
+      {
+        "field": "boll_upper",
+        "label": "上轨",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "boll_mid",
+        "label": "中轨",
+        "color": "#f59e0b",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "boll_lower",
+        "label": "下轨",
+        "color": "#a78bfa",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "boll_upper",
+      "boll_mid",
+      "boll_lower"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "ema",
+    "label": "EMA 指数移动平均",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "EMA",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "ema",
+        "label": "EMA",
+        "color": "#22c55e",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "ema"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "expma",
+    "label": "EXPMA 指数平均线",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "EXPMA",
+    "parameters": [
+      {
+        "key": "n1",
+        "label": "周期1",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "n2",
+        "label": "周期2",
+        "type": "integer",
+        "default": 50,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "expma1",
+        "label": "EXPMA1",
+        "color": "#e879f9",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "expma2",
+        "label": "EXPMA2",
+        "color": "#fb7185",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "expma1",
+      "expma2"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "bbi",
+    "label": "BBI 多空指标",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "BBI",
+    "parameters": [
+      {
+        "key": "m1",
+        "label": "周期1",
+        "type": "integer",
+        "default": 3,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m2",
+        "label": "周期2",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m3",
+        "label": "周期3",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m4",
+        "label": "周期4",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "bbi",
+        "label": "BBI",
+        "color": "#f97316",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "bbi"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "wma",
+    "label": "WMA 加权移动平均",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "WMA",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "wma",
+        "label": "WMA",
+        "color": "#06b6d4",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "wma"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "sma",
+    "label": "SMA 平滑移动平均",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "SMA",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "权重",
+        "type": "integer",
+        "default": 1,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "sma",
+        "label": "SMA",
+        "color": "#c084fc",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "sma"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3,
+    "constraints": [
+      {
+        "left": "m",
+        "op": "le",
+        "right": "n"
+      }
+    ]
+  },
+  {
+    "key": "dma",
+    "label": "DMA 动态移动平均",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "DMA",
+    "parameters": [
+      {
+        "key": "a",
+        "label": "平滑系数",
+        "type": "number",
+        "default": 0.1,
+        "min": 0,
+        "max": 1,
+        "exclusive_min": true
+      }
+    ],
+    "series": [
+      {
+        "field": "dma",
+        "label": "DMA",
+        "color": "#facc15",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "dma"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
   }
 ]

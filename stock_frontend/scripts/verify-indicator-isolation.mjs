@@ -9,13 +9,13 @@ const dir = resolve('node_modules/.cache/indicator-isolation')
 await mkdir(dir, { recursive: true })
 const output = resolve(dir, 'test.mjs')
 await build({
-  stdin: { contents: "export {useChartIndicators} from './src/composables/useChartIndicators';export {createApp,h,nextTick} from 'vue'", resolveDir: process.cwd() },
+  stdin: { contents: "export {useChartIndicators} from './src/composables/useChartIndicators';export {useOverlayIndicators} from './src/composables/useOverlayIndicators';export {createApp,h,nextTick} from 'vue'", resolveDir: process.cwd() },
   bundle: true, format: 'esm', outfile: output, platform: 'browser',
   define: { 'process.env.NODE_ENV': '"test"', __VUE_OPTIONS_API__: 'true', __VUE_PROD_DEVTOOLS__: 'false', __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false' },
 })
 const dom = new JSDOM('<div id="app"></div>')
 for (const name of ['window', 'document', 'Element', 'HTMLElement', 'SVGElement', 'Node']) globalThis[name] = dom.window[name]
-const { useChartIndicators, createApp, h, nextTick } = await import(pathToFileURL(output).href)
+const { useChartIndicators, useOverlayIndicators, createApp, h, nextTick } = await import(pathToFileURL(output).href)
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b }); return { promise, resolve, reject } }
 const queue = []
 let state
@@ -181,3 +181,38 @@ assert.equal(state.indicatorRows.value[0].wr2,55)
 assert.equal(state.panelErrors.value.rsi,undefined)
 app.unmount()
 console.log('Independent chart rendering, failure recovery, delayed MA and stale-response protection passed.')
+
+const overlayQueue=[]
+const main=useOverlayIndicators(p=>{const task=deferred();overlayQueue.push({...task,params:p});return task.promise})
+let overlayJob=main.load(params,['boll','ema','dma'],{boll:{params:{n:10,p:2.5}},dma:{params:{a:.25}}},()=>true)
+assert.equal(overlayQueue.length,1,'overlays are queued instead of flooding native worker')
+assert.equal(overlayQueue[0].params.names,'boll')
+assert.deepEqual(JSON.parse(overlayQueue[0].params.params),{boll:{n:10,p:2.5}})
+overlayQueue[0].resolve([{ts:'2026-11-05',boll_upper:12,boll_mid:10,boll_lower:8}])
+await new Promise(r=>setTimeout(r,0))
+assert.equal(overlayQueue.length,2)
+overlayQueue[1].reject(Error('EMA unavailable'))
+await new Promise(r=>setTimeout(r,0))
+assert.equal(overlayQueue.length,3)
+overlayQueue[2].resolve([{ts:'2026-11-05',dma:10}]);await overlayJob
+assert.equal(main.rows.value.boll[0].boll_mid,10)
+assert.equal(main.rows.value.dma[0].dma,10)
+assert.ok(main.errors.value.ema)
+const bollBefore=main.rows.value.boll,dmaBefore=main.rows.value.dma
+let retryMain=main.retry('ema')
+assert.equal(overlayQueue.length,4)
+assert.equal(main.rows.value.boll,bollBefore);assert.equal(main.rows.value.dma,dmaBefore)
+await main.retry('ema');assert.equal(overlayQueue.length,4)
+overlayQueue[3].resolve([{ts:'2026-11-05',ema:11}]);await retryMain
+assert.equal(main.errors.value.ema,undefined)
+retryMain=main.retry('ema')
+overlayJob=main.load({symbol:2,period:'1w'},['bbi'],{},()=>true)
+overlayQueue[5].resolve([{ts:'new',bbi:30}]);await overlayJob
+overlayQueue[4].resolve([{ts:'old',ema:999}]);await retryMain
+assert.deepEqual(main.rows.value,{bbi:[{ts:'new',bbi:30}]})
+await main.retry('ema');assert.equal(overlayQueue.length,6)
+overlayJob=main.load(params,['sma','wma'],{},()=>true)
+main.reset();overlayQueue[6].resolve([{ts:'removed',sma:999}]);await overlayJob
+assert.equal(overlayQueue.length,7,'reset prevents queued overlays from starting')
+assert.deepEqual(main.rows.value,{})
+console.log('Independent main overlays: native queue, failures, targeted retries and stale-response protection passed.')

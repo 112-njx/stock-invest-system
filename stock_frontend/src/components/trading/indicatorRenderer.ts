@@ -3,6 +3,7 @@ import type { IndicatorDefinition } from '@/composables/useIndicatorCatalog'
 import type { IndicatorRow } from '@/api/market'
 export function createIndicatorSeries(pane: IPaneApi<any>, definition: IndicatorDefinition, text: string) {
   const series: ISeriesApi<any>[] = definition.series.map(line => pane.addSeries(line.kind === 'histogram' ? HistogramSeries : LineSeries, {
+    ...(definition.placement === 'main' ? {priceScaleId:'right'} : {}),
     color:line.color, priceLineVisible:false, lastValueVisible:false,
     ...(definition.format === 'volume' ? {priceFormat:{type:'volume'}} : {priceFormat:{type:'price',precision:definition.precision ?? 2,minMove:10 ** -(definition.precision ?? 2)}}),
   }))

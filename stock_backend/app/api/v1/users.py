@@ -40,10 +40,15 @@ def get_chart_settings(version: int = Query(1, ge=1, le=2), current: User = Depe
 def save_chart_settings(payload: ChartSettings, current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     value = payload.model_dump(exclude_none=True)
     response = dict(value)
+    old = db.execute(text('SELECT settings FROM user_chart_settings WHERE user_id=:id'), {'id': current.id}).scalar_one_or_none()
     if payload.version is None:
-        old = db.execute(text('SELECT settings FROM user_chart_settings WHERE user_id=:id'), {'id': current.id}).scalar_one_or_none()
         if old and old.get('version') == 2:
             value.update(version=2, panel_options=old.get('panel_options', {}))
+    for field in ('overlays', 'overlay_options'):
+        if old and field not in payload.model_fields_set and field in old:
+            value[field] = old[field]
+    if payload.version == 2:
+        response = dict(value)
     db.execute(text('INSERT INTO user_chart_settings(user_id,settings) VALUES(:id,CAST(:settings AS jsonb)) ON CONFLICT(user_id) DO UPDATE SET settings=EXCLUDED.settings'), {'id': current.id, 'settings': json.dumps(value)})
     db.commit()
     return ok(data=response)

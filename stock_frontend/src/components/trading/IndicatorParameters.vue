@@ -9,14 +9,14 @@ const values = computed(() => Object.fromEntries(props.definition.parameters.map
 const valid = computed(() => props.definition.parameters.every(p => {
   const value = values.value[p.key]
   const entries = Array.isArray(value) ? value : [value]
-  return entries.length > 0 && entries.length <= (p.max_items || 1) && new Set(entries).size === entries.length && entries.every(n => typeof n === 'number' && Number.isInteger(n) && n >= p.min && n <= p.max)
-}))
+  return entries.length > 0 && entries.length <= (p.max_items || 1) && new Set(entries).size === entries.length && entries.every(n => typeof n === 'number' && (p.type === 'number' ? Number.isFinite(n) : Number.isInteger(n)) && (p.exclusive_min ? n > p.min : n >= p.min) && n <= p.max)
+}) && (props.definition.constraints || []).every(c => c.op !== 'le' || Number(values.value[c.left]) <= Number(values.value[c.right])))
 </script>
 <template>
   <form class="indicator-parameters" @submit.prevent="valid && emit('save', values)">
     <b>{{ definition.label }} 参数</b>
-    <label v-for="param in definition.parameters" :key="param.key">{{ param.label }} <input v-model="draft[param.key]" :type="param.type === 'integer_list' ? 'text' : 'number'" :min="param.min" :max="param.max" step="1" required :disabled="saving" :aria-label="`${definition.label} ${param.label}`" /></label>
-    <p v-if="!valid" role="alert">请输入参数范围内的整数。</p>
+    <label v-for="param in definition.parameters" :key="param.key">{{ param.label }} <input v-model="draft[param.key]" :type="param.type === 'integer_list' ? 'text' : 'number'" :min="param.min" :max="param.max" :step="param.type === 'number' ? 'any' : '1'" required :disabled="saving" :aria-label="`${definition.label} ${param.label}`" /></label>
+    <p v-if="!valid" role="alert">请输入类型及范围正确的参数；权重不可大于周期。</p>
     <button type="button" :disabled="saving" @click="draft = defaults()">恢复默认参数</button>
     <button :disabled="saving || !valid">保存参数</button>
     <button type="button" :disabled="saving" @click="emit('close')">取消</button>

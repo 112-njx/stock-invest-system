@@ -102,6 +102,16 @@ export interface SyncStatus {
 
 /** 技术指标行：K 线基础字段 + 请求的指标列（macd_dif/dea/hist、kdj_k/d/j；成交量成交额为基础字段） */
 export interface IndicatorRow extends KLineBar {
+  boll_upper?: number | null
+  boll_mid?: number | null
+  boll_lower?: number | null
+  ema?: number | null
+  expma1?: number | null
+  expma2?: number | null
+  bbi?: number | null
+  wma?: number | null
+  sma?: number | null
+  dma?: number | null
   rsi?: number | null
   wr1?: number | null
   wr2?: number | null

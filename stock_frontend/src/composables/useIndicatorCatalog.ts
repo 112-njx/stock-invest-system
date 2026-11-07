@@ -1,8 +1,8 @@
 import { ref, watch, onScopeDispose } from 'vue'
 import { request } from '@/api/http'
-export interface IndicatorParameter { key: string; label: string; type: 'integer' | 'integer_list'; default: number | number[]; min: number; max: number; max_items?: number }
+export interface IndicatorParameter { key: string; label: string; type: 'integer' | 'integer_list' | 'number'; default: number | number[]; min: number; max: number; max_items?: number; exclusive_min?: boolean }
 export interface IndicatorSeries { field: string; label: string; color: string; kind: 'line' | 'histogram'; direction: 'sign' | 'candle' }
-export interface IndicatorDefinition { key: string; label: string; placement: 'main' | 'panel'; parameters: IndicatorParameter[]; series: IndicatorSeries[]; reference_lines: number[]; format?: 'volume'; precision?: number; engines: string[] }
+export interface IndicatorDefinition { key: string; label: string; placement: 'main' | 'panel'; parameters: IndicatorParameter[]; series: IndicatorSeries[]; reference_lines: number[]; format?: 'volume'; precision?: number; engines: string[]; constraints?: {left:string;op:'le';right:string}[] }
 export function useIndicatorCatalog(enabled: () => boolean) {
   const definitions = ref<IndicatorDefinition[]>([])
   const error = ref('')

@@ -54,6 +54,7 @@ import { useWsStore } from '@/stores/wsStore'
 import { useThemeStore } from '@/stores/theme'
 import { trackTiming } from '@/utils/monitor'
 import { toast } from '@/utils/toast'
+import { useOverlayIndicators } from '@/composables/useOverlayIndicators'
 import { useIndicatorCatalog } from '@/composables/useIndicatorCatalog'
 import {createIndicatorSeries, fillIndicatorSeries} from './indicatorRenderer'
 import IndicatorParameters from './IndicatorParameters.vue'
@@ -128,9 +129,10 @@ const qualityWarning = computed(() => {
   return ''
 })
 const catalog = useIndicatorCatalog(() => !!props.customizeIndicators)
+const catalogOverlays = computed(() => catalog.definitions.value.filter(d => d.placement === 'main' && d.key !== 'ma'))
 const catalogPanels = computed(() => catalog.definitions.value.filter(d => d.placement === 'panel'))
 const pickerIndicators = computed(() => props.customizeIndicators ? catalogPanels.value.map(d => ({...d,icon:INDICATORS.find(i=>i.key===d.key)?.icon || ''})) : INDICATORS)
-const detailSettings = useDetailChartSettings(() => !!props.customizeIndicators, () => catalogPanels.value.map(d=>d.key))
+const detailSettings = useDetailChartSettings(() => !!props.customizeIndicators, () => catalogPanels.value.map(d=>d.key), () => catalogOverlays.value.map(d=>d.key))
 const currentPrice = computed(() => props.symbol ? market.quotes[props.symbol.id]?.price : null)
 
 let chart: IChartApi | null = null
@@ -431,6 +433,8 @@ function initChart() {
     }, 0))
   }
 
+  syncOverlaySeries()
+
   // 优化7：window capture 阶段拦截 wheel，达到最大放大（≤15条）时阻止继续放大，可无限缩小
   window.addEventListener('wheel', onWheel, { capture: true, passive: false })
 
@@ -666,6 +670,31 @@ function reasonText(t: BacktestTrade): string {
 }
 
 /* ---------- 数据 ---------- */
+const overlays = useOverlayIndicators(fetchIndicators)
+const overlaySeries = new Map<string, ReturnType<typeof createIndicatorSeries>>()
+function syncOverlaySeries() {
+  if (!chart || !props.customizeIndicators) return
+  for (const entry of overlaySeries.values()) for (const series of entry.series) chart.removeSeries(series)
+  overlaySeries.clear()
+  for (const key of detailSettings.settings.value.overlays || []) {
+    const definition = catalogOverlays.value.find(d=>d.key===key)
+    if (definition) overlaySeries.set(key, createIndicatorSeries(chart.panes()[0]!, definition, cssColors().text))
+  }
+  drawOverlays()
+}
+function drawOverlays() {
+  const times = new Set(loadedBars.map(bar=>toUtcSeconds(bar.ts)))
+  for (const [key,entry] of overlaySeries) {
+    const definition = catalogOverlays.value.find(d=>d.key===key)
+    if (definition) fillIndicatorSeries(entry.series,definition,(overlays.rows.value[key] || []).filter(r=>times.has(toUtcSeconds(r.ts))),toUtcSeconds,cssColors())
+  }
+}
+watch(overlays.rows, drawOverlays, {flush:'sync'})
+const selectedOverlays = computed(() => catalogOverlays.value.filter(d=>(detailSettings.settings.value.overlays || []).includes(d.key)))
+function selectedOverlayRow(key:string) {
+  const rows = overlays.rows.value[key] || []
+  return hoveredIndicatorTime.value == null ? rows[rows.length-1] : rows.find(r=>toUtcSeconds(r.ts)===hoveredIndicatorTime.value)
+}
 const indicators = useChartIndicators(fetchIndicators)
 const { indicatorRows, priceMaRows, indicatorError, priceMaError, panelErrors, panelRetrying } = indicators
 function drawPriceMas(rows: IndicatorRow[]) {
@@ -693,7 +722,9 @@ watch([detailSettings.settings, detailSettings.ready, catalog.definitions], () =
   const range = chart?.timeScale().getVisibleLogicalRange()
   enabledIndicators.value = new Set(detailSettings.settings.value.panels)
   indicators.reset()
+  overlays.reset()
   rebuildIndicatorPanes()
+  syncOverlaySeries()
   if (props.symbol && detailSettings.ready.value) void refreshIndicators(loadVersion, props.symbol.id, market.period)
   if (range) chart?.timeScale().setVisibleLogicalRange(range)
 }, { immediate: true })
@@ -824,6 +855,9 @@ onBeforeUnmount(() => window.removeEventListener('indicator-settings-changed', r
 async function refreshIndicators(version: number, symbolId: number, period: Period) {
   if (!loadedBars.length) return
   if (props.customizeIndicators && !detailSettings.ready.value) return
+  if (props.customizeIndicators) void overlays.load({symbol:symbolId,period,start:loadedBars[0].ts,end:loadedBars[loadedBars.length-1].ts},
+    [...(detailSettings.settings.value.overlays || [])], detailSettings.settings.value.overlay_options || {},
+    () => version === loadVersion && props.symbol?.id === symbolId && market.period === period)
   await indicators.load({
     symbol: symbolId, period,
     start: loadedBars[0].ts, end: loadedBars[loadedBars.length - 1].ts,
@@ -1054,6 +1088,7 @@ async function loadKline() {
     candleSeries?.setData(toCandleData(bars))
     if (!bars.length) {
       indicators.reset()
+  overlays.reset()
       if (period === '1w' || period === '1mon') showInitialPeriodRange(period, 1)
       void loadInitialMissing(version, symbolId, period)
       return
@@ -1167,6 +1202,7 @@ watch(() => props.symbol, (newSym, oldSym) => {
     candleSeries?.setData([])
     clearSRLines()
     indicators.reset()
+  overlays.reset()
     barRange = null
     markersPlugin?.setMarkers([])
     hoverTip.value = null
@@ -1177,6 +1213,7 @@ watch(() => props.symbol, (newSym, oldSym) => {
   clearSRLines()
   if (oldSym && newSym && oldSym.id !== newSym.id) {
     indicators.reset()
+  overlays.reset()
     if (props.showIndicators) removeAllIndicatorPanes()
   }
   loadKline()
@@ -1187,6 +1224,7 @@ watch(() => market.period, () => {
   hoveredCandle.value = null
   hoveredIndicatorTime.value = null
   indicators.reset()
+  overlays.reset()
   initialViewport = true
   historyState.value = ''
   loadedBars = []
@@ -1236,6 +1274,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   loadVersion++
   indicators.reset()
+  overlays.reset()
   cancelAnimationFrame(paneLayoutFrame)
   chartResizeObserver?.disconnect()
   window.removeEventListener('mousemove', onIndicatorDrag, true)
@@ -1251,6 +1290,7 @@ onBeforeUnmount(() => {
   chart?.remove()
   chart = null
   priceMaSeries.clear()
+  overlaySeries.clear()
   candleSeries = null
   srLines = []
   indicatorPanes.clear()
@@ -1317,13 +1357,21 @@ async function onDeleteSr(item: SupportResistanceItem) {
 
 /* ---------- 指标选择弹窗 ---------- */
 const parameterKey = ref('')
-const parameterDefinition = computed(() => catalogPanels.value.find(d=>d.key===parameterKey.value))
+const parameterDefinition = computed(() => [...catalogPanels.value,...catalogOverlays.value].find(d=>d.key===parameterKey.value))
 async function savePanelParameters(params: Record<string,number | number[]>) {
   const key = parameterKey.value
   const value = detailSettings.settings.value
-  if (await detailSettings.save({...value,version:2,panel_options:{...value.panel_options,[key]:{params}}})) parameterKey.value = ''
+  const field = parameterDefinition.value?.placement === 'main' ? 'overlay_options' : 'panel_options'
+  if (await detailSettings.save({...value,version:2,[field]:{...value[field],[key]:{params}}})) parameterKey.value = ''
 }
 function legendValue(row: unknown, field: string) { return row ? (row as Record<string,number | null>)[field] : null }
+async function toggleOverlay(key:string) {
+  const value=detailSettings.settings.value
+  const next=[...(value.overlays || [])]
+  const index=next.indexOf(key)
+  if(index>=0) next.splice(index,1);else next.push(key)
+  await detailSettings.save({...value,overlays:next})
+}
 const maSettingsOpen = ref(false)
 async function saveMa(lines: MaLine[]) {
   if (await detailSettings.saveMa(lines)) maSettingsOpen.value = false
@@ -1383,6 +1431,11 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
     <div ref="container" class="kline-chart__body">
       <div ref="chartHost" class="kline-chart__canvas" />
       <div v-if="props.symbol" class="kline-chart__ma-legend">
+        <div v-for="definition in selectedOverlays" :key="definition.key" class="overlay-legend">
+          <span>{{ definition.label }}({{ definition.parameters.map(p=>detailSettings.settings.value.overlay_options?.[definition.key]?.params[p.key] ?? p.default).join(',') }})</span>
+          <span v-if="overlays.errors.value[definition.key]" role="alert">{{ overlays.errors.value[definition.key] }} <button style="pointer-events:auto" :disabled="overlays.retrying.value[definition.key]" @click="overlays.retry(definition.key)">重试</button></span>
+          <span v-for="line in definition.series" :key="line.field" :style="{color:line.color}">{{ line.label }}:{{ indicatorNumber(legendValue(selectedOverlayRow(definition.key),line.field)) }}</span>
+        </div>
         <span v-for="ma in visiblePriceMas" :key="ma.key" :style="{ color: ma.color }">{{ ma.label }}:{{ indicatorNumber(selectedPriceMa?.[ma.key]) }}</span>
       </div>
       <svg v-if="showIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
@@ -1517,6 +1570,11 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
             <button class="modal__close" @click="closeIndicatorPicker">×</button>
           </header>
           <div class="modal__body">
+            <div v-if="customizeIndicators">
+              <p>主图叠加（不占副图名额）</p>
+              <button v-for="definition in catalogOverlays" :key="definition.key" class="overlay-item" :class="{active:detailSettings.settings.value.overlays?.includes(definition.key)}" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="toggleOverlay(definition.key)">{{ definition.label }} {{ detailSettings.settings.value.overlays?.includes(definition.key) ? '✓' : '' }}</button>
+              <button v-for="definition in selectedOverlays" :key="`params-${definition.key}`" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="parameterKey=definition.key">{{ definition.label }} 参数</button>
+            </div>
             <p v-if="customizeIndicators">已开启 {{ enabledIndicators.size }}/3</p>
             <div class="picker-grid">
               <button
@@ -1535,7 +1593,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
             </div>
             <div v-if="customizeIndicators">
               <button v-for="definition in catalogPanels.filter(d=>enabledIndicators.has(d.key as IndicatorKey) && d.parameters.length)" :key="definition.key" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="parameterKey = definition.key">{{ definition.label }} 参数</button>
-              <IndicatorParameters v-if="parameterDefinition" :key="parameterKey" :definition="parameterDefinition" :values="detailSettings.settings.value.panel_options?.[parameterKey]?.params || {}" :saving="detailSettings.saving.value" @save="savePanelParameters" @close="parameterKey = ''" />
+              <IndicatorParameters v-if="parameterDefinition" :key="parameterKey" :definition="parameterDefinition" :values="(parameterDefinition.placement === 'main' ? detailSettings.settings.value.overlay_options : detailSettings.settings.value.panel_options)?.[parameterKey]?.params || {}" :saving="detailSettings.saving.value" @save="savePanelParameters" @close="parameterKey = ''" />
             </div>
             <div class="picker-hint">{{ customizeIndicators && enabledIndicators.size >= 3 ? '最多开启三个副图，请先关闭一个' : '点击切换指标显示，选择自动保存' }}</div>
             <p v-if="customizeIndicators && detailSettings.error.value" role="alert">{{ detailSettings.error.value }}</p>
@@ -1886,6 +1944,9 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   transition: all 0.15s;
   position: relative;
 }
+.overlay-item { padding:6px; margin:3px; border:1px solid var(--border); background:var(--bg-panel); color:var(--text); cursor:pointer; }
+.overlay-item.active { border-color:var(--accent); color:var(--accent); }
+.overlay-legend { display:flex; flex-wrap:wrap; gap:4px 8px; }
 .picker-item:disabled { opacity: .5; cursor: default; }
 .picker-item:hover { border-color: var(--accent); }
 .picker-item.active {

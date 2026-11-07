@@ -86,3 +86,25 @@ def test_common_panel_parameters_save_reload_and_account_isolation(client,accoun
     assert client.get(url,params={'version':2}).json()['data']['panels']==['volume','macd']
     active[0]=accounts[0]
     assert client.get(url,params={'version':2}).json()['data']==config
+
+
+def test_main_overlays_do_not_use_panel_slots_and_survive_old_clients(client,accounts):
+    active=[accounts[0]]
+    app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=active[0])
+    url='/api/v1/users/me/chart-settings'
+    config={'version':2,'ma':ChartSettings().model_dump()['ma'],'panels':['rsi','wr','atr'],'panel_options':{},'overlays':['boll','ema','expma','bbi','wma','sma','dma'],'overlay_options':{'boll':{'params':{'n':10,'p':2.5}},'dma':{'params':{'a':.25}},'sma':{'params':{'n':9,'m':2}}}}
+    assert client.put(url,json=config).json()['data']==config
+    assert client.get(url,params={'version':2}).json()['data']==config
+    active[0]=accounts[1]
+    assert 'overlays' not in client.get(url,params={'version':2}).json()['data']
+    active[0]=accounts[0]
+    legacy=client.get(url).json()['data']
+    assert set(legacy)=={'ma','panels'}
+    assert client.put(url,json=legacy).json()['data']==legacy
+    assert client.get(url,params={'version':2}).json()['data']==config
+    older_v2={k:v for k,v in config.items() if k not in ('overlays','overlay_options')}
+    assert client.put(url,json=older_v2).json()['data']==config
+    for invalid in [{'overlays':['ma']},{'overlays':['rsi']},{'overlays':['ema','ema']},{'overlay_options':{'rsi':{'params':{}}}},{'overlay_options':{'dma':{'params':{'a':0}}}}]:
+        assert client.put(url,json={**config,**invalid}).status_code==422
+    config['overlays']=[]
+    assert client.put(url,json=config).json()['data']['overlay_options']==config['overlay_options']

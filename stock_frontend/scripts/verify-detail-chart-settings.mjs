@@ -193,3 +193,73 @@ assert.match(document.body.textContent,/已开启 3\/3/)
 assert.equal(panel('WR').classList.contains('active'),true)
 app.unmount()
 console.log('RSI/WR/CCI/ATR: parameter defaults/custom/reload/reset, 3-panel limit, account isolation, all-period timestamps and null rendering passed.')
+
+const mainKeys=['boll','ema','expma','bbi','wma','sma','dma']
+const mainParams={boll:{n:10,p:2.5},ema:{n:9},expma:{n1:7,n2:21},bbi:{m1:2,m2:5,m3:9,m4:15},wma:{n:9},sma:{n:9,m:2},dma:{a:.25}}
+saved.set(6,{version:2,ma:defaults().ma,panels:['rsi','wr','atr'],panel_options:{},overlays:[],overlay_options:{}})
+user.setAuth('fixture',{id:6,username:'six'})
+app=mount(true);await settle();await click(document.querySelector('[title="选择技术指标"]'))
+assert.equal(document.querySelectorAll('.overlay-item').length,7)
+for(const key of mainKeys){
+  const definition=definitions.find(d=>d.key===key)
+  await click([...document.querySelectorAll('.overlay-item')].find(b=>b.textContent.includes(key.toUpperCase())))
+  assert.match(document.body.textContent,/已开启 3\/3/)
+  await click(button(`${definition.label} 参数`))
+  if(key==='dma'){
+    await input(document.querySelector('[aria-label="DMA 动态移动平均 平滑系数"]'),'0')
+    assert.equal(button('保存参数').disabled,true)
+    await input(document.querySelector('[aria-label="DMA 动态移动平均 平滑系数"]'),'1.01')
+    assert.equal(button('保存参数').disabled,true)
+  }
+  if(key==='sma'){
+    await input(document.querySelector('[aria-label="SMA 平滑移动平均 权重"]'),'6')
+    assert.equal(button('保存参数').disabled,true)
+  }
+  for(const param of definition.parameters) await input(document.querySelector(`[aria-label="${definition.label} ${param.label}"]`),String(mainParams[key][param.key]))
+  assert.equal(button('保存参数').disabled,false)
+  await click(button('保存参数'))
+  assert.deepEqual(saved.get(6).overlay_options[key].params,mainParams[key])
+  await click(button(`${definition.label} 参数`))
+  for(const param of definition.parameters) assert.equal(Number(document.querySelector(`[aria-label="${definition.label} ${param.label}"]`).value),mainParams[key][param.key])
+  await click(button('恢复默认参数'))
+  for(const param of definition.parameters) assert.equal(Number(document.querySelector(`[aria-label="${definition.label} ${param.label}"]`).value),param.default)
+  await click(button('取消'))
+  const drawn=m.createIndicatorSeries(pane,definition,'#aaa')
+  for(const line of drawn.series) assert.equal(line.options.priceScaleId,'right')
+  assert.equal(drawn.series.length,key==='boll'?3:key==='expma'?2:1)
+  for(const ts of ['2026-11-05T00:00:00Z','2026-11-06T00:00:00Z','2026-11-30T00:00:00Z','2026-11-05T01:45:00Z']){
+    const row={ts,...Object.fromEntries(definition.native_outputs.map((f,i)=>[f,12-i]))}
+    m.fillIndicatorSeries(drawn.series,definition,[row],s=>Date.parse(s)/1000,{up:'red',down:'green'})
+    drawn.series.forEach((line,i)=>assert.deepEqual(line.data,[{time:Date.parse(ts)/1000,value:12-i}]))
+  }
+}
+assert.deepEqual(saved.get(6).overlays,mainKeys)
+assert.equal(saved.get(6).ma.lines.length,4)
+fail=true
+await click([...document.querySelectorAll('.overlay-item')].find(b=>b.textContent.includes('BOLL')))
+assert.equal(saved.get(6).overlays.length,7)
+assert.equal(document.querySelectorAll('.overlay-item.active').length,7)
+fail=false
+assert.deepEqual(saved.get(6).panels,['rsi','wr','atr'])
+await click([...document.querySelectorAll('.overlay-item')].find(b=>b.textContent.includes('BOLL')))
+await click([...document.querySelectorAll('.overlay-item')].find(b=>b.textContent.includes('BOLL')))
+assert.deepEqual(saved.get(6).overlay_options.boll.params,mainParams.boll)
+app.unmount();app=mount(true);await settle()
+await click(document.querySelector('[title="选择技术指标"]'))
+assert.equal(document.querySelectorAll('.overlay-item.active').length,7)
+await click(button('DMA 动态移动平均 参数'))
+assert.equal(document.querySelector('[aria-label="DMA 动态移动平均 平滑系数"]').value,'0.25')
+await click(button('取消'))
+user.setAuth('fixture',{id:7,username:'seven'});await settle()
+assert.equal(document.querySelectorAll('.overlay-item.active').length,0)
+user.setAuth('fixture',{id:6,username:'six'});await settle()
+assert.equal(document.querySelectorAll('.overlay-item.active').length,7)
+app.unmount()
+// A catalog outage must not lose the new overlay configuration during an MA edit.
+catalogFails=true
+app=mount(true);await settle();await click(button('MA 设置'))
+await input(periods()[0],'7');await click(button('保存'))
+assert.equal(saved.get(6).overlays.length,7)
+assert.deepEqual(saved.get(6).overlay_options.dma.params,{a:.25})
+app.unmount();catalogFails=false
+console.log('BOLL/EMA/EXPMA/BBI/WMA/SMA/DMA: main price axis, free overlay slots, floating parameters, account persistence and outage compatibility passed.')

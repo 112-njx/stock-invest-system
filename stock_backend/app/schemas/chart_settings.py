@@ -29,6 +29,8 @@ class ChartSettings(BaseModel):
     ma: MaSettings = Field(default_factory=MaSettings)
     version: Literal[2] | None = None
     panel_options: dict[str, PanelOptions] | None = None
+    overlays: list[str] | None = None
+    overlay_options: dict[str, PanelOptions] | None = None
     panels: list[str] = Field(default_factory=lambda: ['volume','macd'], max_length=3)
 
     @field_validator('panels')
@@ -41,12 +43,24 @@ class ChartSettings(BaseModel):
             raise ValueError('unsupported panel')
         return panels
 
+    @field_validator('overlays')
+    @classmethod
+    def valid_overlays(cls, overlays):
+        from app.services.indicator_registry import REGISTRY
+        if overlays is not None and (len(set(overlays)) != len(overlays) or any(k == 'ma' or k not in REGISTRY or REGISTRY[k]['placement'] != 'main' for k in overlays)):
+            raise ValueError('unsupported or duplicate main overlay')
+        return overlays
+
     @model_validator(mode='after')
     def validate_options(self):
         from app.services.indicator_registry import REGISTRY, validate_parameters
         for name, option in (self.panel_options or {}).items():
             if name not in REGISTRY or REGISTRY[name]['placement'] != 'panel':
                 raise ValueError('unsupported panel')
+            validate_parameters(name, option.params)
+        for name, option in (self.overlay_options or {}).items():
+            if name == 'ma' or name not in REGISTRY or REGISTRY[name]['placement'] != 'main':
+                raise ValueError('unsupported main overlay')
             validate_parameters(name, option.params)
         return self
 
