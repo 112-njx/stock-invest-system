@@ -102,6 +102,14 @@ export interface SyncStatus {
 
 /** 技术指标行：K 线基础字段 + 请求的指标列（macd_dif/dea/hist、kdj_k/d/j；成交量成交额为基础字段） */
 export interface IndicatorRow extends KLineBar {
+  std?: number | null
+  sum?: number | null
+  hhv?: number | null
+  llv?: number | null
+  ref?: number | null
+  zhishu_close?: number | null
+  zhishu_count?: number | null
+  [field: `${string}_cross`]: number | null | undefined
   dmi_pdi?: number | null
   dmi_mdi?: number | null
   dmi_adx?: number | null
@@ -238,7 +246,7 @@ export function removeWatchlist(watchlistId: number) {
   return request<null>({ url: `/watchlist/${watchlistId}`, method: 'delete' })
 }
 
-/** 技术指标（服务端计算 MACD/KDJ/成交量/成交额，前端只渲染） */
+/** 本地 SDK 指标引擎结果；前端只渲染。 */
 export function fetchIndicators(params: {
   symbol: string | number
   period: Period

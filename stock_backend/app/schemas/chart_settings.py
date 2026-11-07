@@ -62,6 +62,8 @@ class ChartSettings(BaseModel):
             if name == 'ma' or name not in REGISTRY or REGISTRY[name]['placement'] != 'main':
                 raise ValueError('unsupported main overlay')
             validate_parameters(name, option.params)
+        if self.version == 2 and 'zhishu' in self.panels and 'zhishu' not in (self.panel_options or {}):
+            raise ValueError('请先配置合成指数股票集合')
         return self
 
 class MaParameters(BaseModel):

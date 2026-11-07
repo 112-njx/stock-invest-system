@@ -1,3 +1,4 @@
+import type { IndicatorValues } from '@/composables/useIndicatorCatalog'
 import { ref, shallowRef } from 'vue'
 import type { fetchIndicators, IndicatorRow } from '@/api/market'
 export function useOverlayIndicators(fetch: typeof fetchIndicators) {
@@ -7,7 +8,7 @@ export function useOverlayIndicators(fetch: typeof fetchIndicators) {
   let generation=0
   let activeRetry: ((key:string)=>Promise<void>) | null=null
   function reset() { generation++; activeRetry=null; rows.value={}; errors.value={}; retrying.value={} }
-  async function load(params: Omit<Parameters<typeof fetchIndicators>[0],'names'>, keys:string[], options:Record<string,{params:Record<string,number | number[]>}>, isCurrent:()=>boolean) {
+  async function load(params: Omit<Parameters<typeof fetchIndicators>[0],'names'>, keys:string[], options:Record<string,{params:IndicatorValues}>, isCurrent:()=>boolean) {
     reset()
     const token=generation
     const current=()=>token===generation && isCurrent()

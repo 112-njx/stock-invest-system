@@ -289,3 +289,24 @@ for(const group of [['dmi','trix','dfma'],['mass','vr','cr'],['emv','brar','obv'
   state.reset()
 }
 console.log('Batches 5–7: each panel group isolates failures, price channels queue independently, targeted retries retain healthy data and parameter/symbol/period changes discard stale channel results.')
+
+const finalQueue=[]
+const finalState=useChartIndicators(p=>{const task=deferred();finalQueue.push({...task,params:p});return task.promise})
+const indexOptions={members:[{code:'600519',weight:3},{code:'300502',weight:1}],weighting:'custom',base:1000,start:'2025-01-01'}
+let finalJob=finalState.load(params,true,()=>true,{periods:[5,10],panels:['std','zhishu','macd'],parameters:{std:{params:{n:7,field:'volume'}},zhishu:{params:indexOptions},macd:{params:{cross:true}}}})
+assert.deepEqual(JSON.parse(finalQueue[1].params.params),{std:{n:7,field:'volume'}})
+assert.deepEqual(JSON.parse(finalQueue[2].params.params),{zhishu:indexOptions})
+finalQueue[0].resolve(maRows);finalQueue[1].resolve([{ts:'old',std:3}]);finalQueue[2].reject(Error('index unavailable'));finalQueue[3].resolve([{ts:'old',macd_dif:1,macd_cross:1}]);await finalJob
+const retainedFinal=finalState.indicatorRows.value
+finalJob=finalState.retryPanel('zhishu')
+assert.equal(finalQueue.length,5)
+assert.equal(finalState.indicatorRows.value,retainedFinal)
+const oldIndexJob=finalJob
+const changed={...indexOptions,members:[{code:'600519',weight:1},{code:'300502',weight:3}]}
+finalJob=finalState.load({symbol:2,period:'15m'},true,()=>true,{periods:[5],panels:['zhishu','std'],parameters:{zhishu:{params:changed},std:{params:{n:9,field:'amount'}}}})
+finalQueue[5].resolve(maRows);finalQueue[6].resolve([{ts:'new',zhishu_close:2000,zhishu_count:2}]);finalQueue[7].resolve([{ts:'new',std:42}]);await finalJob
+finalQueue[4].resolve([{ts:'old',zhishu_close:9999}]);await oldIndexJob
+assert.deepEqual(finalState.indicatorRows.value,[{ts:'new',zhishu_close:2000,zhishu_count:2,std:42}])
+assert.deepEqual(JSON.parse(finalQueue[6].params.params),{zhishu:changed})
+finalState.reset()
+console.log('Final batches: nested basket options, fields/crosses, independent index failure/retry, changed weights/source/period and stale-index-response protection passed.')

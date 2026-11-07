@@ -1,12 +1,12 @@
-# 详情页指标框架（第一批）
+# 详情页指标框架（39/39）
 
-当前目录开放 MA、MACD、KDJ、RSI、WR、CCI、ATR、BOLL、EMA、EXPMA、BBI、WMA、SMA、DMA、BIAS、PSY、DPO、MTM、ROC、DMI、TRIX、DFMA、MASS、VR、CR、EMV、BRAR、OBV、MFI、ASI、TAQ、KTN、XSII，以及成交量、成交额；技术指标进度为 33/39，不提前开放未验证的项目。
+当前目录开放 SDK 的全部 39 项指标/函数（含 STD、SUM、HHV、LLV、REF、ZHISHU），另有成交量、成交额两个基础副图。仅详情页提供新配置；首页保持原有行为。
 
 ## 单一指标目录
 
 `stock_backend/app/services/indicator_catalog.json` 同时用于后端参数校验、7900 原生调用适配、详情页参数表单和副图渲染。`GET /api/v1/indicators/catalog` 返回目录版本及已开放项目。
 
-每项登记 key、label、placement、inputs、parameters、series、reference_lines、engines。参数当前支持 integer / integer_list，分别声明默认值和上下界。曲线声明 field、label、color、kind（line/histogram）；多条 line 可组成通道。柱色支持按当前蜡烛涨跌或指标正负着色。原生适配声明 native 和 native_outputs，MA 动态周期与成交量均量线保留专门适配。
+每项登记 key、label、placement、inputs、parameters、series、reference_lines、engines。数值参数支持 integer / integer_list / number，分别声明默认值和上下界。input_fields 声明适用输入字段，cross 声明 SDK 是否支持原生交叉信号。曲线声明 field、label、color、kind（line/histogram）；多条 line 可组成通道。柱色支持按当前蜡烛涨跌或指标正负着色。原生适配声明 native 和 native_outputs，MA 动态周期、成交量均量线和合成指数保留专门适配。
 
 目录文件与无第三方依赖的 `indicator_registry.py` 一同复制进 StockDB 镜像。7899 只读写数据，调用进程内的 zb_core 负责计算，沿用图表选择的本地历史序列。
 
@@ -22,9 +22,9 @@ panels 数组同时表示开启状态和排列顺序，最多三个且不得重�
 
 引擎选择以目录 engines 为准：全局开启 pandas 时，仅有 pandas 能力的项目走原有类；SDK-only 项目仍走原生引擎，不静默降级。缓存继续隔离计算参数和引擎设置版本。
 
-## 下一批接入步骤
+## 接入与验证原则
 
-核对 SDK 函数签名、输出和空值规则；添加目录项与必要原生适配；对照容器原生输出补回归；验证参数表单、多曲线、参考线、时间对齐、账号参数保存及三个副图上限。下一批为 RSI、WR、CCI、ATR。
+核对 SDK 函数签名、输出和空值规则；添加目录项与必要原生适配；对照容器原生输出补回归；验证参数表单、多曲线、参考线、时间对齐、账号参数保存及三个副图上限。以下按批次记录已完成能力。
 
 验证入口：后端 test_indicator_registry / test_chart_settings / test_indicators / test_price_ma，前端 scripts/verify-detail-chart-settings.mjs 与 scripts/verify-indicator-isolation.mjs，原生 scripts/tests/test_price_ma.py。
 
@@ -109,3 +109,27 @@ BOLL 的原生输出顺序是上轨、中轨、下轨，倍数 p 支持小数（
 全部调用本地配套 SDK 指标引擎；7899 只提供 K 线存取。OHLCV 数组来自当前图表的数据源，不为指标另取行情。沿用目录驱动的参数表单、图例和渲染、账号/访客配置、独立加载和重试、过期响应保护。关闭指标保留参数，保存失败继续使用上次成功配置；通道请求独立排队，不阻塞 MA 和副图的结果发布。
 
 验证入口：`scripts/tests/test_trend_volume_channels.py` 对照 Windows/Linux 的真实单项函数及 BATCH 默认/自定义字段顺序，包含短历史、平盘、零成交量、周期边界；`stock_backend/tests/test_trend_volume_channels.py` 覆盖四周期、历史补页、最新页、活动 K 线变化、短历史/空历史、非法参数和单项失败；`test_chart_settings.py` 覆盖所有新增参数、六条 MA 加三个副图和价格通道、账号隔离与旧客户端写回。前端两个 verify 脚本补充完整选择/参数/保存流程、价格轴及参考线、关闭全部副图、单项重试和旧通道响应丢弃。
+
+## 第八批：基础统计函数（38/39）
+
+STD 标准差、SUM 周期累计值、HHV 周期最高值、LLV 周期最低值、REF 前期值均使用独立副图，各占一个名额。STD/SUM/HHV/LLV 默认 n=5，REF 默认回看 n=1；整数范围1～10000。默认使用收盘价，可选择开盘价、最高价、最低价、成交量、成交额；成交量/成交额结果采用数量格式，仍保持独立坐标轴。原生 NaN/Inf 只转 null，不补零、不改变统计口径。
+
+参数沿用 JSON `params`：`{"std":{"n":7,"field":"volume"}}`。EMA/SMA/WMA/DMA 同样支持价格字段选择，主图仅提供 OHLC，避免非价格结果与股价共轴。MA 仍固定使用收盘价，保留1～6条规则。
+
+## 第九批：ZHISHU 合成指数（39/39）
+
+合成指数是特殊副图，不等同于当前股票的普通指标。选择1～20只不重复股票，默认等权；可以改为自定义固定权重，权重按比例使用，0 表示不参与，全部为0不合法。基点默认1000，起算日期默认2020-01-01，分别可配置；修改起算日期会改变基准，跨股票、周期沿用同一配置。首次开启时先配置股票集合；只配置、不点击开启时不会增加副图。多条 MA、主图叠加不占名额，合成指数占一个。
+
+示例参数：`{"zhishu":{"members":[{"code":"600519","weight":3},{"code":"300502","weight":1}],"weighting":"custom","base":1000,"start":"2025-01-01"}}`。保存在 `panel_options.zhishu.params`，不用新数据库迁移；旧客户端写回继续保留配置。
+
+SDK 桥从本地7899读取成分股的原生 OHLCV 等数组，调用配套 `zhibiao.ZHISHU` / `zb_core`。等权使用 method=1；固定自定义权重作为原生权重输入向量，使用 method=2，由引擎完成加权收益和基点递推，没有项目自写指数公式，也不把用户权重称为真实流通市值。日/周/月/15分钟均按对应周期原生 K 线计算，不本地聚合。沿用底层函数原始输出，不额外套用高层包装器的切片；初始基准根无原生结果时显示空值。
+
+参与成分数量、不同上市日期和停牌时的计算规则以原生结果为准；所选股票在起算日期后完全没有本地数据时提示失败，不静默移除。输出 `zhishu_close` 和 `zhishu_count` 对齐当前图表的 UTC 时间标签，分钟标签从上海时区转换；不会覆盖当前股票 OHLCV，不新增图表时间轴标签。仅当前股票缺少的时点也不强行补入。起算日期晚于当前显示区间时为空值。读取前后检查本地数据版本与维护状态；版本切换丢弃结果。合成指数不复用只看当前股票最新时间的指标缓存，避免遗漏成分股更新。
+
+## 第十批：增强交互
+
+原生 `BATCH_CROSS` 实测支持 MACD、KDJ、DMI、TRIX、EMV、DPO、DFMA、MTM、MASS、ROC、ASI。仅这些项目提供“金叉死叉标记”开关，默认关闭；启用时强制走 SDK，即使全局打开 pandas 也不会用前端或 pandas 重算信号。返回各自的 `<key>_cross`（1金叉、-1死叉、0无信号），图中在原生信号对应 K 线位置绘制红/绿点，图例显示截至十字光标位置的累计数。没有原生交叉配对的项目不提供开关。首页 MACD 保持原有展示。
+
+副图选择器按实际排列提供上移/下移，边界按钮禁用；顺序写入 panels 并同步账号。独立恢复默认只重置该项的参数、计算字段和交叉开关，保留开关状态、排列以及其他指标。合成指数恢复默认保留股票集合，将其恢复等权、基点1000、起算日期2020-01-01。参数编辑器内的恢复默认先修改草稿，点击保存才生效；外部单项恢复默认直接保存，失败继续显示上次成功配置。
+
+验证：`scripts/tests/test_statistics_composite.py` 使用真实 Windows/Linux 原生模块，对照六种输入字段、短历史/周期边界、全部11种交叉信号，以及四周期等权/3:1固定权重和 UTC 对齐；容器本地行情另对照了贵州茅台、新易盛在四周期的实际指数结果。`stock_backend/tests/test_statistics_composite.py` 覆盖 API 校验、pandas 开关、补页、空数据、成分股变化时缓存隔离和指标字段共存。两个前端 verify 脚本覆盖股票搜索/集合、零权重、参数/开关读回、排序/单项重置、保存回滚、账号切换以及权重/字段/股票/周期变化后的过期响应保护。

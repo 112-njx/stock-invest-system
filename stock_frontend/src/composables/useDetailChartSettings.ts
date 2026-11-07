@@ -1,10 +1,11 @@
+import type { IndicatorValues } from '@/composables/useIndicatorCatalog'
 import { ref, watch, onScopeDispose } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { request } from '@/api/http'
 
 export type PanelKey = string
 export interface MaLine { period: number; visible: boolean }
-export interface DetailChartSettings { overlays?: string[]; overlay_options?: Record<string, {params: Record<string, number | number[]>}>; version?: 2; panel_options?: Record<string, {params: Record<string, number | number[]>}>; ma: { lines: MaLine[] }; panels: PanelKey[] }
+export interface DetailChartSettings { overlays?: string[]; overlay_options?: Record<string, {params: IndicatorValues}>; version?: 2; panel_options?: Record<string, {params: IndicatorValues}>; ma: { lines: MaLine[] }; panels: PanelKey[] }
 export const PANEL_KEYS: PanelKey[] = ['volume', 'amount', 'macd', 'kdj']
 export const defaultChartSettings = (): DetailChartSettings => ({ version: 2, panel_options: {}, overlays: [], overlay_options: {}, ma: { lines: [5,10,20,30].map(period => ({ period, visible: true })) }, panels: ['volume','macd'] })
 const KEY = 'detail_chart_settings_v1'

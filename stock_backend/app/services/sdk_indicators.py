@@ -5,8 +5,8 @@ from app.core.config import get_settings
 from app.core.exceptions import ApiError
 
 
-def calculate(rows, names, params):
-    body = json.dumps(dict(rows=rows, names=names, params=params or {}), allow_nan=False).encode()
+def calculate(rows, names, params, *, period=None):
+    body = json.dumps(dict(rows=rows, names=names, params=params or {}, period=period), allow_nan=False).encode()
     request = Request(get_settings().STOCKDB_SDK_URL.rstrip('/') + '/indicators/calculate', data=body,
                       headers={'Content-Type': 'application/json'}, method='POST')
     try:

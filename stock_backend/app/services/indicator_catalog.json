@@ -160,7 +160,8 @@
       "sdk",
       "pandas"
     ],
-    "precision": 3
+    "precision": 3,
+    "cross": true
   },
   {
     "key": "kdj",
@@ -233,7 +234,8 @@
     "engines": [
       "sdk",
       "pandas"
-    ]
+    ],
+    "cross": true
   },
   {
     "key": "rsi",
@@ -506,7 +508,13 @@
     "engines": [
       "sdk"
     ],
-    "precision": 3
+    "precision": 3,
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low"
+    ]
   },
   {
     "key": "expma",
@@ -654,7 +662,13 @@
     "engines": [
       "sdk"
     ],
-    "precision": 3
+    "precision": 3,
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low"
+    ]
   },
   {
     "key": "sma",
@@ -705,6 +719,12 @@
         "op": "le",
         "right": "n"
       }
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low"
     ]
   },
   {
@@ -742,7 +762,13 @@
     "engines": [
       "sdk"
     ],
-    "precision": 3
+    "precision": 3,
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low"
+    ]
   },
   {
     "key": "bias",
@@ -929,7 +955,8 @@
     "engines": [
       "sdk"
     ],
-    "precision": 3
+    "precision": 3,
+    "cross": true
   },
   {
     "key": "mtm",
@@ -983,7 +1010,8 @@
     "engines": [
       "sdk"
     ],
-    "precision": 3
+    "precision": 3,
+    "cross": true
   },
   {
     "key": "roc",
@@ -1037,7 +1065,8 @@
     "engines": [
       "sdk"
     ],
-    "precision": 3
+    "precision": 3,
+    "cross": true
   },
   {
     "key": "dmi",
@@ -1110,7 +1139,8 @@
     "precision": 3,
     "engines": [
       "sdk"
-    ]
+    ],
+    "cross": true
   },
   {
     "key": "trix",
@@ -1164,7 +1194,8 @@
     "precision": 3,
     "engines": [
       "sdk"
-    ]
+    ],
+    "cross": true
   },
   {
     "key": "dfma",
@@ -1226,7 +1257,8 @@
     "precision": 3,
     "engines": [
       "sdk"
-    ]
+    ],
+    "cross": true
   },
   {
     "key": "mass",
@@ -1290,7 +1322,8 @@
     "precision": 3,
     "engines": [
       "sdk"
-    ]
+    ],
+    "cross": true
   },
   {
     "key": "vr",
@@ -1426,7 +1459,8 @@
     "precision": 3,
     "engines": [
       "sdk"
-    ]
+    ],
+    "cross": true
   },
   {
     "key": "brar",
@@ -1600,7 +1634,8 @@
     "precision": 3,
     "engines": [
       "sdk"
-    ]
+    ],
+    "cross": true
   },
   {
     "key": "taq",
@@ -1776,6 +1811,251 @@
       {
         "field": "xsii_td4",
         "label": "TD4",
+        "color": "#f97316",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "std",
+    "label": "STD 标准差",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "amount"
+    ],
+    "native": "STD",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "std"
+    ],
+    "series": [
+      {
+        "field": "std",
+        "label": "标准差",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "sum",
+    "label": "SUM 周期累计值",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "amount"
+    ],
+    "native": "SUM",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "sum"
+    ],
+    "series": [
+      {
+        "field": "sum",
+        "label": "周期累计值",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "hhv",
+    "label": "HHV 周期最高值",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "amount"
+    ],
+    "native": "HHV",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "hhv"
+    ],
+    "series": [
+      {
+        "field": "hhv",
+        "label": "周期最高值",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "llv",
+    "label": "LLV 周期最低值",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "amount"
+    ],
+    "native": "LLV",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "llv"
+    ],
+    "series": [
+      {
+        "field": "llv",
+        "label": "周期最低值",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "ref",
+    "label": "REF 前期值",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "amount"
+    ],
+    "native": "REF",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "回看根数",
+        "type": "integer",
+        "default": 1,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "ref"
+    ],
+    "series": [
+      {
+        "field": "ref",
+        "label": "前期值",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "zhishu",
+    "label": "ZHISHU 合成指数",
+    "placement": "panel",
+    "inputs": [],
+    "native": "ZHISHU",
+    "parameters": [],
+    "native_outputs": [
+      "zhishu_close"
+    ],
+    "series": [
+      {
+        "field": "zhishu_close",
+        "label": "合成指数",
         "color": "#f97316",
         "kind": "line",
         "direction": "sign"

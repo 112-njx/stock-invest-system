@@ -296,6 +296,62 @@ def indicator_registry():
     return module
 
 
+def calculate_composite_rows(rows, chosen, period, loader=None):
+    """Use native ZHISHU, including constant user weights as its weight input.
+
+    No index returns are calculated here. Dates and result values are native;
+    only the JSON time labels are aligned to the current chart's UTC labels.
+    """
+    from datetime import datetime, UTC
+    import math
+    from zoneinfo import ZoneInfo
+    from zhibiao import ZHISHU, _load_rows
+    if period not in ('1d', '1w', '1mon', '15m'):
+        raise ValueError('invalid composite period')
+    chosen = indicator_registry().validate_composite(chosen)
+    members = [m for m in chosen['members'] if chosen['weighting'] == 'equal' or m['weight'] > 0]
+    codes = [m['code'] for m in members]
+    end = max(datetime.fromisoformat(r['ts']).replace(tzinfo=UTC) if datetime.fromisoformat(r['ts']).tzinfo is None
+              else datetime.fromisoformat(r['ts']).astimezone(UTC) for r in rows)
+    end_stamp = end.astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d%H%M%S') if period == '15m' else end.strftime('%Y%m%d')
+    if chosen['start'].replace('-', '') > end_stamp[:8]:
+        return [{**row, 'zhishu_close': None, 'zhishu_count': None} for row in rows]
+    control = os.environ.get('STOCKDB_CONTROL_DIR')
+    version = None
+    if control:
+        ensure_available(control)
+        version = data_version(control)
+    arrays = list((loader or _load_rows)(codes, '1M' if period == '1mon' else period,
+                                       chosen['start'].replace('-', ''), end_stamp, 'qfq'))
+    present = set(arrays[0])
+    if any(i not in present for i in range(len(codes))):
+        raise ValueError('部分所选股票在起算日期之后没有本地历史数据')
+    if chosen['weighting'] == 'custom':
+        # method=2 consumes the supplied weight vector. Constant per-member
+        # weights implement a fixed-weight return index inside zb_core.
+        arrays[8] = [float(members[i]['weight']) for i in arrays[0]]
+    raw = ZHISHU(*arrays, method=1 if chosen['weighting'] == 'equal' else 2, base=float(chosen['base']))
+    if control:
+        ensure_available(control)
+        if data_version(control) != version:
+            raise RuntimeError('数据版本已切换，请重新查询')
+    by_time = {}
+    for index, stamp in enumerate(raw[0]):
+        stamp = str(stamp)
+        time = datetime.strptime(stamp, '%Y%m%d%H%M%S' if len(stamp) == 14 else '%Y%m%d')
+        time = time.replace(tzinfo=ZoneInfo('Asia/Shanghai') if len(stamp) == 14 else UTC).astimezone(UTC)
+        by_time[time.timestamp()] = (raw[4][index], raw[8][index])
+    output = []
+    for row in rows:
+        time = datetime.fromisoformat(row['ts'])
+        if time.tzinfo is None:
+            time = time.replace(tzinfo=UTC)
+        value, count = by_time.get(time.timestamp(), (None, None))
+        output.append({**row, 'zhishu_close': float(value) if value is not None and math.isfinite(value) else None,
+                       'zhishu_count': count})
+    return output
+
+
 def calculate_indicator_rows(sdk_dir, payload):
     """Native calculations only; never fetch an independently based price series."""
     import math
@@ -324,16 +380,26 @@ def calculate_indicator_rows(sdk_dir, payload):
     for name in names:
         definition = registry.REGISTRY[name]
         chosen = registry.validate_parameters(name, params.get(name))
+        if name == 'zhishu':
+            output = calculate_composite_rows(output, chosen, payload.get('period'))
+            continue
+        field, cross = registry.validate_controls(name, params.get(name))
         if name == 'ma':
             close = array('close')
             periods = chosen['periods']
             append([f'ma{n}' for n in periods], [zb.MA(close, n) for n in periods])
         elif definition['native']:
-            raw = getattr(zb, definition['native'])(*[array(f) for f in definition['inputs']], *chosen.values())
+            raw = getattr(zb, definition['native'])(*[array(field if f == 'close' and definition.get('input_fields') else f) for f in definition['inputs']], *chosen.values())
             fields = definition['native_outputs']
             append(fields, raw if len(fields) > 1 else [raw])
         elif name == 'volume':
             append(('volume_ma5', 'volume_ma10'), [zb.MA(array('volume'), n) for n in (5,10)])
+        if cross:
+            from zhibiao import BATCH_CROSS
+            raw = BATCH_CROSS([name], [list(chosen.values())], [0] * len(rows), list(range(len(rows))),
+                              *[array(f) for f in ('open', 'high', 'low', 'close', 'volume')], False)
+            signal = raw[3][raw[2].index('cross')]
+            append([name + '_cross'], [signal])
     return output
 
 

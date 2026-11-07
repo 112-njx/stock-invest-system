@@ -78,12 +78,19 @@ def compute_indicators(
         # The active candle can change without changing its timestamp.
         closes = [(b.ts.isoformat(), str(b.close)) for b in bars]
         key += ":ma-zb-v1:" + hashlib.sha256(json.dumps(closes).encode()).hexdigest()[:24]
-    cached = _get_cache(key)
+    # A constituent can change while the current stock's last timestamp stays
+    # unchanged. Composite values always consult the local SDK snapshot.
+    cached = _get_cache(key) if 'zhishu' not in names else None
     if cached is not None:
         return cached
 
     pandas_names = [name for name in names if policy['pandas_enabled'] and 'pandas' in REGISTRY[name]['engines']]
     sdk_names = [name for name in names if name not in pandas_names]
+    # Field selection and native cross signals require the SDK even when the
+    # legacy pandas switch is enabled.
+    controlled = [name for name in pandas_names if (params or {}).get(name, {}).get('cross') or (params or {}).get(name, {}).get('field', 'close') != 'close']
+    pandas_names = [name for name in pandas_names if name not in controlled]
+    sdk_names += controlled
     if pandas_names:
         df = _bars_to_df(bars)
         for name in pandas_names:
@@ -91,13 +98,17 @@ def compute_indicators(
         rows = _df_to_rows(df)
     else:
         rows = [market_cache.kline_bar_to_dict(b) for b in bars]
-    if sdk_names:
-        rows = sdk_indicators.calculate(rows, sdk_names, params)
+    regular_sdk = [name for name in sdk_names if name != 'zhishu']
+    if regular_sdk:
+        rows = sdk_indicators.calculate(rows, regular_sdk, params)
+    if 'zhishu' in sdk_names:
+        rows = sdk_indicators.calculate(rows, ['zhishu'], params, period=period)
     if explicit_range:
         rows = [row for row in rows if market_cache.as_utc(datetime.fromisoformat(row["ts"])) >= market_cache.as_utc(start)]
     else:
         rows = rows[-limit:]
-    _set_cache(key, rows)
+    if 'zhishu' not in names:
+        _set_cache(key, rows)
     return rows
 
 

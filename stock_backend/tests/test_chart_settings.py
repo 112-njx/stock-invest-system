@@ -157,3 +157,29 @@ def test_trend_volume_channels_settings_slots_parameters_and_legacy(client, acco
     assert client.get(url, params={'version': 2}).json()['data'] == config
     config['panels'] = []
     assert client.put(url, json=config).json()['data']['panels'] == []
+
+
+def test_statistics_index_controls_order_reset_and_legacy_roundtrip(client,accounts):
+    from tests.test_statistics_composite import INDEX
+    active=[accounts[0]]
+    app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=active[0])
+    url='/api/v1/users/me/chart-settings'
+    config={'version':2,'ma':ChartSettings().model_dump()['ma'],'panels':['std','zhishu','macd'],
+            'panel_options':{'std':{'params':{'n':7,'field':'volume'}},'zhishu':{'params':INDEX},'macd':{'params':{'cross':True}}},
+            'overlays':['ema'],'overlay_options':{'ema':{'params':{'n':9,'field':'open'}}}}
+    assert client.put(url,json=config).json()['data']==config
+    config['panels']=['zhishu','macd','std']
+    assert client.put(url,json=config).json()['data']==config
+    legacy=client.get(url).json()['data']
+    assert client.put(url,json=legacy).json()['data']==legacy
+    assert client.get(url,params={'version':2}).json()['data']==config
+    # Reset one indicator independently; the index, order and overlays survive.
+    del config['panel_options']['std']
+    assert client.put(url,json=config).json()['data']==config
+    assert client.put(url,json={**config,'panels':['std','sum','zhishu','macd']}).status_code==422
+    assert client.put(url,json={**config,'panel_options':{}}).status_code==422
+    active[0]=accounts[1]
+    assert client.get(url,params={'version':2}).json()['data']['panels']==['volume','macd']
+    assert client.put(url,json={'panels':['zhishu']}).status_code==422
+    active[0]=accounts[0]
+    assert client.get(url,params={'version':2}).json()['data']==config

@@ -59,6 +59,8 @@ import { useIndicatorCatalog } from '@/composables/useIndicatorCatalog'
 import {createIndicatorSeries, fillIndicatorSeries} from './indicatorRenderer'
 import IndicatorParameters from './IndicatorParameters.vue'
 import DetailMaSettings from './DetailMaSettings.vue'
+import CompositeIndexSettings from './CompositeIndexSettings.vue'
+import type { IndicatorDefinition, IndicatorValues, IndexMember } from '@/composables/useIndicatorCatalog'
 import BaseButton from '@/components/base/BaseButton.vue'
 
 type IndicatorKey = string
@@ -133,6 +135,15 @@ const catalogOverlays = computed(() => catalog.definitions.value.filter(d => d.p
 const catalogPanels = computed(() => catalog.definitions.value.filter(d => d.placement === 'panel'))
 const pickerIndicators = computed(() => props.customizeIndicators ? catalogPanels.value.map(d => ({...d,icon:INDICATORS.find(i=>i.key===d.key)?.icon || ''})) : INDICATORS)
 const detailSettings = useDetailChartSettings(() => !!props.customizeIndicators, () => catalogPanels.value.map(d=>d.key), () => catalogOverlays.value.map(d=>d.key))
+const FIELD_LABELS:Record<string,string>={close:'收盘价',open:'开盘价',high:'最高价',low:'最低价',volume:'成交量',amount:'成交额'}
+function displayDefinition(definition:IndicatorDefinition):IndicatorDefinition {
+  const field=detailSettings.settings.value.panel_options?.[definition.key]?.params.field
+  return field==='volume'||field==='amount' ? {...definition,format:'volume'} : definition
+}
+function fieldLabel(key:string) {
+  const option=detailSettings.settings.value.panel_options?.[key] || detailSettings.settings.value.overlay_options?.[key]
+  return FIELD_LABELS[String(option?.params.field || 'close')]
+}
 const currentPrice = computed(() => props.symbol ? market.quotes[props.symbol.id]?.price : null)
 
 let chart: IChartApi | null = null
@@ -193,6 +204,7 @@ interface IndicatorPaneRef {
 const indicatorPanes = new Map<IndicatorKey, IndicatorPaneRef>()
 const indicatorTops = ref<Partial<Record<IndicatorKey, number>>>({})
 const macdCrossPoints = ref<{ x: number; y: number; golden: boolean }[]>([])
+const technicalCrossPoints = ref<{key:string;x:number;y:number;golden:boolean}[]>([])
 const hoveredIndicatorTime = ref<number | null>(null)
 let paneLayoutFrame = 0
 let chartResizeObserver: ResizeObserver | null = null
@@ -210,9 +222,40 @@ function updateIndicatorTops() {
   if (Object.keys(tops).some((key) => tops[key as IndicatorKey] !== indicatorTops.value[key as IndicatorKey]) ||
       Object.keys(tops).length !== Object.keys(indicatorTops.value).length) indicatorTops.value = tops
   updateMacdCrossPoints()
+  updateTechnicalCrossPoints()
+}
+
+function updateTechnicalCrossPoints() {
+  const points:typeof technicalCrossPoints.value=[]
+  if(!props.customizeIndicators||!chart||!chartHost.value){technicalCrossPoints.value=[];return}
+  for(const [key,entry] of indicatorPanes) {
+    if(detailSettings.settings.value.panel_options?.[key]?.params.cross!==true)continue
+    const definition=catalogPanels.value.find(d=>d.key===key)
+    const field=key==='macd'?'macd_dif':definition?.series[0]?.field
+    const index=definition?.series.findIndex(s=>s.field===field) ?? -1
+    const series=entry.series[index],top=indicatorTops.value[key]
+    if(!field||!series||top==null)continue
+    for(const row of indicatorRows.value) {
+      const signal=row[`${key}_cross`],value=(row as unknown as Record<string,unknown>)[field]
+      if((signal!==1&&signal!==-1)||typeof value!=='number'||!Number.isFinite(value))continue
+      const x=chart.timeScale().timeToCoordinate(toUtcSeconds(row.ts)),y=series.priceToCoordinate(value)
+      if(x!=null&&y!=null&&x>=0&&x<=chartHost.value.clientWidth)points.push({key,x,y:top+y,golden:signal===1})
+    }
+  }
+  technicalCrossPoints.value=points
+}
+
+function crossCounts(key:string) {
+  let golden=0,death=0
+  for(const row of indicatorRows.value.slice(0,selectedIndicatorIndex.value+1)){
+    if(row[`${key}_cross`]===1)golden++
+    if(row[`${key}_cross`]===-1)death++
+  }
+  return {golden,death}
 }
 
 function updateMacdCrossPoints() {
+  if(props.customizeIndicators){macdCrossPoints.value=[];return}
   const macd = indicatorPanes.get('macd')
   const top = indicatorTops.value.macd
   if (!chart || !macd || top == null || !chartHost.value) { macdCrossPoints.value = []; return }
@@ -288,6 +331,7 @@ function saveVisibility() {
 
 async function toggleIndicator(key: IndicatorKey) {
   if (props.customizeIndicators) {
+    if(key==='zhishu'&&!detailSettings.settings.value.panel_options?.zhishu){parameterKey.value='zhishu';enableCompositeAfterSave.value=true;return}
     const panels = [...detailSettings.settings.value.panels]
     const index = panels.indexOf(key)
     if (index >= 0) panels.splice(index, 1)
@@ -523,6 +567,7 @@ function removeAllIndicatorPanes() {
   indicatorPanes.clear()
   indicatorTops.value = {}
   macdCrossPoints.value = []
+  technicalCrossPoints.value = []
 }
 
 function rebuildIndicatorPanes() {
@@ -539,7 +584,7 @@ function rebuildIndicatorPanes() {
     if (props.customizeIndicators) {
       const definition = catalogPanels.value.find(d=>d.key===meta.key)
       if (!definition) continue
-      const built = createIndicatorSeries(pane, definition, c.text)
+      const built = createIndicatorSeries(pane, displayDefinition(definition), c.text)
       indicatorPanes.set(meta.key as IndicatorKey, {pane,...built})
       continue
     }
@@ -738,7 +783,7 @@ const selectedIndicator = computed(() => indicatorRows.value[selectedIndicatorIn
 
 watch(indicatorRows, rows => {
   if (rows.length) setIndicatorData()
-  else for (const pane of indicatorPanes.values()) for (const series of pane.series) series.setData([])
+  else {for (const pane of indicatorPanes.values()) for (const series of pane.series) series.setData([]);technicalCrossPoints.value=[]}
 }, { flush: 'sync' })
 const selectedPriceMa = computed(() => {
   const rows = priceMaRows.value
@@ -1019,7 +1064,7 @@ function setIndicatorData() {
   for (const [key, ref] of indicatorPanes) {
     if (props.customizeIndicators) {
       const definition = catalogPanels.value.find(d=>d.key===key)
-      if (definition) fillIndicatorSeries(ref.series, definition, rows, toUtcSeconds, c)
+      if (definition) fillIndicatorSeries(ref.series, displayDefinition(definition), rows, toUtcSeconds, c)
       continue
     }
     if (key === 'volume') {
@@ -1357,12 +1402,34 @@ async function onDeleteSr(item: SupportResistanceItem) {
 
 /* ---------- 指标选择弹窗 ---------- */
 const parameterKey = ref('')
+const enableCompositeAfterSave = ref(false)
+const selectedPanelDefinitions=computed(()=>detailSettings.settings.value.panels.map(key=>catalogPanels.value.find(d=>d.key===key)).filter((d):d is IndicatorDefinition=>!!d))
+function editParameters(key:string){enableCompositeAfterSave.value=false;parameterKey.value=key}
 const parameterDefinition = computed(() => [...catalogPanels.value,...catalogOverlays.value].find(d=>d.key===parameterKey.value))
-async function savePanelParameters(params: Record<string,number | number[]>) {
+async function savePanelParameters(params: IndicatorValues) {
   const key = parameterKey.value
   const value = detailSettings.settings.value
   const field = parameterDefinition.value?.placement === 'main' ? 'overlay_options' : 'panel_options'
-  if (await detailSettings.save({...value,version:2,[field]:{...value[field],[key]:{params}}})) parameterKey.value = ''
+  const panels=key==='zhishu'&&enableCompositeAfterSave.value&&!value.panels.includes(key)?[...value.panels,key]:value.panels
+  if (await detailSettings.save({...value,version:2,panels,[field]:{...value[field],[key]:{params}}})) {parameterKey.value = '';enableCompositeAfterSave.value=false}
+}
+async function movePanel(key:string,offset:number) {
+  const value=detailSettings.settings.value,panels=[...value.panels],index=panels.indexOf(key),next=index+offset
+  if(index<0||next<0||next>=panels.length)return
+  ;[panels[index],panels[next]]=[panels[next]!,panels[index]!]
+  await detailSettings.save({...value,panels})
+}
+async function resetIndicator(key:string,placement:'main'|'panel') {
+  const value=detailSettings.settings.value,field=placement==='main'?'overlay_options':'panel_options'
+  const next:Record<string,{params:IndicatorValues}>={...value[field]}
+  if(key==='zhishu') {
+    const members=value.panel_options?.zhishu?.params.members
+    if(!Array.isArray(members)||!members.length){editParameters('zhishu');return}
+    next.zhishu={params:{members:(members as IndexMember[]).map(m=>({code:m.code,weight:1})),weighting:'equal',base:1000,start:'2020-01-01'}}
+  }else{
+    delete next[key]
+  }
+  if(await detailSettings.save({...value,[field]:next}) && parameterKey.value===key){parameterKey.value='';enableCompositeAfterSave.value=false}
 }
 function legendValue(row: unknown, field: string) { return row ? (row as Record<string,number | null>)[field] : null }
 async function toggleOverlay(key:string) {
@@ -1376,7 +1443,7 @@ const maSettingsOpen = ref(false)
 async function saveMa(lines: MaLine[]) {
   if (await detailSettings.saveMa(lines)) maSettingsOpen.value = false
 }
-watch(() => user.user?.id, () => { maSettingsOpen.value = false; parameterKey.value = '' })
+watch(() => user.user?.id, () => { maSettingsOpen.value = false; parameterKey.value = '';enableCompositeAfterSave.value=false })
 const indicatorPickerOpen = ref(false)
 function openIndicatorPicker() { indicatorPickerOpen.value = true }
 function closeIndicatorPicker() { indicatorPickerOpen.value = false }
@@ -1432,13 +1499,13 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
       <div ref="chartHost" class="kline-chart__canvas" />
       <div v-if="props.symbol" class="kline-chart__ma-legend">
         <div v-for="definition in selectedOverlays" :key="definition.key" class="overlay-legend">
-          <span>{{ definition.label }}({{ definition.parameters.map(p=>detailSettings.settings.value.overlay_options?.[definition.key]?.params[p.key] ?? p.default).join(',') }})</span>
+          <span>{{ definition.label }}({{ definition.parameters.map(p=>detailSettings.settings.value.overlay_options?.[definition.key]?.params[p.key] ?? p.default).join(',') }}){{ definition.input_fields ? ` · ${fieldLabel(definition.key)}` : '' }}</span>
           <span v-if="overlays.errors.value[definition.key]" role="alert">{{ overlays.errors.value[definition.key] }} <button style="pointer-events:auto" :disabled="overlays.retrying.value[definition.key]" @click="overlays.retry(definition.key)">重试</button></span>
           <span v-for="line in definition.series" :key="line.field" :style="{color:line.color}">{{ line.label }}:{{ indicatorNumber(legendValue(selectedOverlayRow(definition.key),line.field)) }}</span>
         </div>
         <span v-for="ma in visiblePriceMas" :key="ma.key" :style="{ color: ma.color }">{{ ma.label }}:{{ indicatorNumber(selectedPriceMa?.[ma.key]) }}</span>
       </div>
-      <svg v-if="showIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
+      <svg v-if="showIndicators && !customizeIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
         <circle
           v-for="(point, index) in macdCrossPoints"
           :key="index"
@@ -1450,6 +1517,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
           stroke-width="1.5"
         />
       </svg>
+      <svg v-if="customizeIndicators && showIndicators" class="kline-chart__crosses" aria-hidden="true"><circle v-for="(point,index) in technicalCrossPoints" :key="index" :data-indicator="point.key" :cx="point.x" :cy="point.y" r="4" :fill="point.golden?'var(--up)':'var(--down)'" stroke="var(--bg-panel)" stroke-width="1"><title>{{ point.key }} {{ point.golden?'金叉':'死叉' }}</title></circle></svg>
       <div
         v-for="indicator in showIndicators ? enabledList : []"
         :key="indicator.key"
@@ -1458,10 +1526,12 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
         aria-live="off"
       >
         <template v-if="customizeIndicators">
-          <span>{{ indicator.label }}({{ catalogPanels.find(d=>d.key===indicator.key)?.parameters.map(p => detailSettings.settings.value.panel_options?.[indicator.key]?.params[p.key] ?? p.default).join(',') }})</span>
+          <span v-if="indicator.key==='zhishu'">{{ indicator.label }}（{{ detailSettings.settings.value.panel_options?.zhishu?.params.weighting==='custom'?'自定义权重':'等权' }}，基点 {{ detailSettings.settings.value.panel_options?.zhishu?.params.base ?? 1000 }}）</span>
+          <span v-else>{{ indicator.label }}({{ catalogPanels.find(d=>d.key===indicator.key)?.parameters.map(p => detailSettings.settings.value.panel_options?.[indicator.key]?.params[p.key] ?? p.default).join(',') }}){{ catalogPanels.find(d=>d.key===indicator.key)?.input_fields ? ` · ${fieldLabel(indicator.key)}` : '' }}</span>
           <span v-if="panelErrors[indicator.key]" role="alert">{{ panelErrors[indicator.key] }} <button style="pointer-events:auto" :disabled="panelRetrying[indicator.key]" @click="indicators.retryPanel(indicator.key)">{{ panelRetrying[indicator.key] ? '重试中…' : '重试' }}</button></span>
-          <span v-for="line in catalogPanels.find(d=>d.key===indicator.key)?.series || []" :key="line.field" :style="{color:line.color}">{{ line.label }}:{{ catalogPanels.find(d=>d.key===indicator.key)?.format === 'volume' ? indicatorQuantity(legendValue(selectedIndicator, line.field)) : indicatorNumber(legendValue(selectedIndicator, line.field)) }}</span>
-          <span v-if="indicator.key === 'macd'">金叉:{{ selectedIndicator ? selectedMacdCrosses.golden : '—' }} 死叉:{{ selectedIndicator ? selectedMacdCrosses.death : '—' }}</span>
+          <span v-for="line in catalogPanels.find(d=>d.key===indicator.key)?.series || []" :key="line.field" :style="{color:line.color}">{{ line.label }}:{{ displayDefinition(catalogPanels.find(d=>d.key===indicator.key)!).format === 'volume' ? indicatorQuantity(legendValue(selectedIndicator, line.field)) : indicatorNumber(legendValue(selectedIndicator, line.field)) }}</span>
+          <span v-if="detailSettings.settings.value.panel_options?.[indicator.key]?.params.cross===true">金叉:{{ selectedIndicator ? crossCounts(indicator.key).golden : '—' }} 死叉:{{ selectedIndicator ? crossCounts(indicator.key).death : '—' }}（红/绿点）</span>
+          <span v-if="indicator.key==='zhishu'">参与股票:{{ selectedIndicator?.zhishu_count ?? '—' }}</span>
         </template>
         <template v-else-if="indicator.key === 'volume'">
           <span>成交量(5,10)</span>
@@ -1573,7 +1643,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
             <div v-if="customizeIndicators">
               <p>主图叠加（不占副图名额）</p>
               <button v-for="definition in catalogOverlays" :key="definition.key" class="overlay-item" :class="{active:detailSettings.settings.value.overlays?.includes(definition.key)}" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="toggleOverlay(definition.key)">{{ definition.label }} {{ detailSettings.settings.value.overlays?.includes(definition.key) ? '✓' : '' }}</button>
-              <button v-for="definition in selectedOverlays" :key="`params-${definition.key}`" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="parameterKey=definition.key">{{ definition.label }} 参数</button>
+              <div v-for="definition in selectedOverlays" :key="`params-${definition.key}`" class="indicator-control-row"><button :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="editParameters(definition.key)">{{ definition.label }} 参数</button><button :disabled="!detailSettings.ready.value || detailSettings.saving.value" :aria-label="`恢复 ${definition.label} 默认`" @click="resetIndicator(definition.key,'main')">恢复默认</button></div>
             </div>
             <p v-if="customizeIndicators">已开启 {{ enabledIndicators.size }}/3</p>
             <div class="picker-grid">
@@ -1592,8 +1662,17 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
               </button>
             </div>
             <div v-if="customizeIndicators">
-              <button v-for="definition in catalogPanels.filter(d=>enabledIndicators.has(d.key as IndicatorKey) && d.parameters.length)" :key="definition.key" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="parameterKey = definition.key">{{ definition.label }} 参数</button>
-              <IndicatorParameters v-if="parameterDefinition" :key="parameterKey" :definition="parameterDefinition" :values="(parameterDefinition.placement === 'main' ? detailSettings.settings.value.overlay_options : detailSettings.settings.value.panel_options)?.[parameterKey]?.params || {}" :saving="detailSettings.saving.value" @save="savePanelParameters" @close="parameterKey = ''" />
+              <p>副图排列（从上到下）</p>
+              <div v-for="(definition,index) in selectedPanelDefinitions" :key="definition.key" class="indicator-control-row">
+                <span>{{ definition.label }}</span>
+                <button v-if="definition.parameters.length||definition.input_fields||definition.cross||definition.key==='zhishu'" :disabled="!detailSettings.ready.value||detailSettings.saving.value" @click="editParameters(definition.key)">{{ definition.label }} 参数</button>
+                <button :disabled="!detailSettings.ready.value||detailSettings.saving.value||index===0" :aria-label="`上移 ${definition.label}`" @click="movePanel(definition.key,-1)">↑</button>
+                <button :disabled="!detailSettings.ready.value||detailSettings.saving.value||index===selectedPanelDefinitions.length-1" :aria-label="`下移 ${definition.label}`" @click="movePanel(definition.key,1)">↓</button>
+                <button :disabled="!detailSettings.ready.value||detailSettings.saving.value" :aria-label="`恢复 ${definition.label} 默认`" @click="resetIndicator(definition.key,'panel')">恢复默认</button>
+              </div>
+              <button :disabled="!detailSettings.ready.value||detailSettings.saving.value" @click="editParameters('zhishu')">配置合成指数</button>
+              <CompositeIndexSettings v-if="parameterKey==='zhishu'" :key="`${parameterKey}-${user.user?.id || 'guest'}`" :values="detailSettings.settings.value.panel_options?.zhishu?.params || {}" :saving="detailSettings.saving.value" @save="savePanelParameters" @close="parameterKey='';enableCompositeAfterSave=false" />
+              <IndicatorParameters v-else-if="parameterDefinition" :key="parameterKey" :definition="parameterDefinition" :values="(parameterDefinition.placement === 'main' ? detailSettings.settings.value.overlay_options : detailSettings.settings.value.panel_options)?.[parameterKey]?.params || {}" :saving="detailSettings.saving.value" @save="savePanelParameters" @close="parameterKey = ''" />
             </div>
             <div class="picker-hint">{{ customizeIndicators && enabledIndicators.size >= 3 ? '最多开启三个副图，请先关闭一个' : '点击切换指标显示，选择自动保存' }}</div>
             <p v-if="customizeIndicators && detailSettings.error.value" role="alert">{{ detailSettings.error.value }}</p>
@@ -1868,6 +1947,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 .modal--indicator-detail { display:flex; flex-direction:column; max-height:calc(100dvh - 32px); }
 .modal--indicator-detail .modal__header { flex-shrink:0; }
 .modal--indicator-detail .modal__body { min-height:0; overflow-y:auto; }
+.indicator-control-row { display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:6px 0; }
 .modal__symbol {
   font-size: 13px;
   font-weight: 600;

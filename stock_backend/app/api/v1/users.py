@@ -47,6 +47,12 @@ def save_chart_settings(payload: ChartSettings, current: User = Depends(get_curr
     for field in ('overlays', 'overlay_options'):
         if old and field not in payload.model_fields_set and field in old:
             value[field] = old[field]
+    if 'zhishu' in value.get('panels', []):
+        from app.services.indicator_registry import validate_composite
+        try:
+            validate_composite(value.get('panel_options', {}).get('zhishu', {}).get('params'))
+        except ValueError as exc:
+            raise ApiError(status_code=422, code=42200, msg=str(exc)) from exc
     if payload.version == 2:
         response = dict(value)
     db.execute(text('INSERT INTO user_chart_settings(user_id,settings) VALUES(:id,CAST(:settings AS jsonb)) ON CONFLICT(user_id) DO UPDATE SET settings=EXCLUDED.settings'), {'id': current.id, 'settings': json.dumps(value)})

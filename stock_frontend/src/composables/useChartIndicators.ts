@@ -1,3 +1,4 @@
+import type { IndicatorValues } from '@/composables/useIndicatorCatalog'
 import { ref } from 'vue'
 import type { fetchIndicators, IndicatorRow } from '@/api/market'
 
@@ -26,7 +27,7 @@ export function useChartIndicators(fetch: typeof fetchIndicators) {
     params: Omit<Parameters<typeof fetchIndicators>[0], 'names'>,
     panels: boolean,
     isCurrent: () => boolean,
-    options?: { periods: number[]; panels: string[]; parameters?: Record<string, {params: Record<string,number | number[]>}> },
+    options?: { periods: number[]; panels: string[]; parameters?: Record<string, {params: IndicatorValues}> },
   ) {
     const request = ++generation
     activeRetry = null
