@@ -551,6 +551,7 @@
     "group": "市场汇总",
     "kind": "table",
     "fields": {
+      "id": "记录ID（网页返回示例包含）",
       "day": "date",
       "name": "varchar(32)",
       "a_code": "varchar(12)",

@@ -35,8 +35,9 @@ def date(value, label, optional=False, timestamp=False):
 def field_name(value, entry):
     if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,79}', value):
         raise OnlineError('查询字段名无效')
-    if entry['fields'] and value not in entry['fields']:
-        raise OnlineError('字段不属于当前数据表')
+    # The published field list is illustrative, not a complete table schema.
+    # Accept a single public identifier on this allowlisted table; the SDK/server
+    # validates its existence. Dotted paths, private attributes and SQL are rejected.
     return value
 
 def table_parameters(payload, entry):

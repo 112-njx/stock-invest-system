@@ -3,7 +3,6 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { getCatalog, getStatus, queryData, type Dataset, type Result } from '@/api/allData'
 const datasets = ref<Dataset[]>([])
 const selected = ref('get_last_tick')
-const active = computed(() => datasets.value.find((item) => item.id === selected.value))
 const groups = computed(() => [...new Set(datasets.value.map((item) => item.group))])
 const group = ref('实时逐笔')
 const search = ref('')
@@ -14,6 +13,14 @@ const choices = computed(() =>
       `${item.title} ${item.id}`.toLowerCase().includes(search.value.toLowerCase())
   )
 )
+const active = computed(() => choices.value.find((item) => item.id === selected.value))
+watch(
+  choices,
+  (options) => {
+    if (!options.some((item) => item.id === selected.value)) selected.value = options[0]?.id || ''
+  },
+  { flush: 'sync' }
+)
 const form = reactive<Record<string, string | number>>({})
 interface Filter {
   field: string
@@ -23,6 +30,7 @@ interface Filter {
 }
 const filters = ref<Filter[]>([])
 const fields = ref<string[]>([])
+const customFields = ref('')
 const orderField = ref(''),
   direction = ref('desc'),
   limit = ref(100)
@@ -71,6 +79,7 @@ function resetForm() {
   for (const param of active.value?.params || []) form[param.name] = param.default ?? ''
   filters.value = []
   fields.value = []
+  customFields.value = ''
   orderField.value = ''
   limit.value = 100
 }
@@ -124,7 +133,15 @@ async function run() {
           op: item.op,
           value: filterValue(item),
         })),
-        fields: fields.value,
+        fields: [
+          ...new Set([
+            ...fields.value,
+            ...customFields.value
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean),
+          ]),
+        ],
         limit: limit.value,
         order_field: orderField.value,
         order_direction: direction.value,
@@ -220,6 +237,7 @@ function download() {
             <label
               >搜索当前分类<input
                 v-model="search"
+                @keydown.enter.prevent
                 placeholder="数据名称或接口名"
                 :disabled="busy" /></label
             ><label
@@ -230,6 +248,9 @@ function download() {
               </select></label
             >
           </div>
+          <p v-if="!choices.length && !loading && !catalogError" class="hint">
+            当前分类没有匹配项目，请修改搜索条件。
+          </p>
           <template v-if="active"
             ><h2>
               {{ active.title }} <small>{{ active.id }}</small>
@@ -261,6 +282,9 @@ function download() {
                 </label>
               </div>
               <template v-else>
+                <p class="hint">
+                  文档字段提示并非完整表结构；筛选、排序可填写其他字段名。仅支持单个字段标识符，实际字段由上游校验。
+                </p>
                 <p class="hint">
                   筛选条件同时满足；未设置筛选时查询表内前
                   {{ limit }} 条。列表值用英文逗号分隔，代码请使用文本类型以保留前导零。
@@ -342,6 +366,12 @@ function download() {
                       </option>
                     </select></label
                   >
+                  <label
+                    >补充返回字段（可选）<input
+                      v-model="customFields"
+                      class="custom-fields"
+                      placeholder="例如 id,code，英文逗号分隔"
+                  /></label>
                 </div>
               </template>
             </fieldset>

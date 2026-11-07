@@ -183,3 +183,23 @@ def test_nested_frames_and_duplicate_index_names():
     frame.index.name = 'code'
     result = online.normalize({'factor': frame})
     assert result == {'factor': [{'原始_code': 0, 'code': '000001', 'score': None}]}
+
+@pytest.mark.parametrize('table,field', [('finance.STK_AH_PRICE_COMP', 'id'), ('finance.STK_AUDIT_OPINION', 'code'), ('finance.STK_FIN_FORCAST', 'id')])
+def test_real_fields_missing_from_documentation_can_be_used(table, field):
+    payload = {'method': table, 'filters': [{'field': field, 'op': '>', 'value': 100}],
+               'fields': [field], 'order_field': field, 'order_direction': 'asc'}
+    method, code, args = online.parameters(payload)
+    assert args['fields'] == [field]
+    calls = []
+    invoke(Expression('sdk', calls), method, code, args)
+    assert any(call[0].endswith(f'.{field}.asc') for call in calls)
+    assert sum(call[0].endswith('run_query') for call in calls) == 1
+
+@pytest.mark.parametrize('field', ['__class__', '_private', 'other.code', 'id desc', 'id;drop table', 'code()', 'id--', '1field', 'a' * 81])
+@pytest.mark.parametrize('slot', ['fields', 'filters', 'order_field'])
+def test_extended_fields_still_reject_paths_and_expressions(store, field, slot):
+    payload = {'method': 'finance.STK_FIN_FORCAST'}
+    payload[slot] = [field] if slot == 'fields' else [{'field': field, 'op': '==', 'value': 'test'}] if slot == 'filters' else field
+    with pytest.raises(online.OnlineError, match='字段名'):
+        online.query('.', payload)
+    assert online.policy()['retry_after'] == 0
