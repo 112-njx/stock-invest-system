@@ -159,7 +159,8 @@
     "engines": [
       "sdk",
       "pandas"
-    ]
+    ],
+    "precision": 3
   },
   {
     "key": "kdj",

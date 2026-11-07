@@ -4,7 +4,7 @@ import type { IndicatorRow } from '@/api/market'
 export function createIndicatorSeries(pane: IPaneApi<any>, definition: IndicatorDefinition, text: string) {
   const series: ISeriesApi<any>[] = definition.series.map(line => pane.addSeries(line.kind === 'histogram' ? HistogramSeries : LineSeries, {
     color:line.color, priceLineVisible:false, lastValueVisible:false,
-    ...(definition.format === 'volume' ? {priceFormat:{type:'volume'}} : {}),
+    ...(definition.format === 'volume' ? {priceFormat:{type:'volume'}} : {priceFormat:{type:'price',precision:definition.precision ?? 2,minMove:10 ** -(definition.precision ?? 2)}}),
   }))
   const referenceLines: IPriceLine[] = definition.reference_lines.map(price => series[0]!.createPriceLine({price,color:text,lineWidth:1,lineStyle:LineStyle.Dashed,axisLabelVisible:false}))
   return { series, referenceLines }
