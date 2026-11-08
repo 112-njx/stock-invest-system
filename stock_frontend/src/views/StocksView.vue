@@ -73,7 +73,7 @@ onBeforeUnmount(()=>{alive=false;clearTimeout(timer);observer?.disconnect();docu
 </script>
 <template>
 <section class="stocks-page">
- <header><h1>股票</h1><div class="view-tabs" role="group" aria-label="股票数据视图"><button :aria-pressed="view==='quotes'" @click="view='quotes'">行情数据</button><button :aria-pressed="view==='flows'" @click="view='flows'">资金流向</button></div><span>A股 · {{ date }} · {{ filtered.length }} / {{ rows.length }} 只</span><button :disabled="loading" @click="refresh">刷新</button></header>
+ <header><div class="view-tabs" role="group" aria-label="股票数据视图"><button :aria-pressed="view==='quotes'" @click="view='quotes'">行情数据</button><button :aria-pressed="view==='flows'" @click="view='flows'">资金流向</button></div><span>A股 · {{ date }} · {{ filtered.length }} / {{ rows.length }} 只</span><button :disabled="loading" @click="refresh">刷新</button></header>
  <div class="filters">
  <input v-model="query" aria-label="搜索股票" placeholder="代码 / 名称 / 拼音" @input="resetScroll" />
  <fieldset><legend class="sr-only">交易所</legend><label v-for="m in [['SSE','沪市'],['SZSE','深市'],['BSE','京市']]" :key="m[0]"><input v-model="exchanges" type="checkbox" :value="m[0]" @change="resetScroll"/>{{ m[1] }}</label></fieldset>

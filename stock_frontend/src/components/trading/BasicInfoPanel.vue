@@ -5,6 +5,14 @@ import { fetchLatestQuotes } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
 import { formatAmount, formatPct, formatPrice, trendClass } from '@/utils/color'
 
+function fieldColor(label: string) {
+  if (['名称', '代码', '成交量（股）', '成交额', '总市值'].includes(label)) return 'highlight'
+  if (label === '量比') {
+    const ratio = Number(quote.value?.extra?.vol_ratio)
+    return ratio >= 4 ? 'ratio-high' : ratio > 1 ? 't-up' : ratio > 0 && ratio < 1 ? 't-down' : ''
+  }
+  return ''
+}
 const market = useMarketStore()
 
 const current = computed(() => market.current)
@@ -47,8 +55,8 @@ const fields = computed(() => {
     { label: '涨跌幅', value: formatPct(s.change_pct), cls: trendClass(s.change_pct) },
     { label: '昨收', value: formatPrice(s.pre_close) },
     { label: '今开', value: formatPrice(s.open) },
-    { label: '最高', value: formatPrice(s.high), cls: 't-up' },
-    { label: '最低', value: formatPrice(s.low), cls: 't-down' },
+    { label: '最高', value: formatPrice(s.high), cls: '' },
+    { label: '最低', value: formatPrice(s.low), cls: '' },
     { label: '成交量（股）', value: formatAmount(s.volume) },
   ]
   // 指数通常无成交额、换手率数据，隐藏（bug6）
@@ -98,7 +106,7 @@ const specialFields = computed(() => {
     <div v-else class="basic-info__grid">
       <template v-for="f in fields" :key="f.label">
         <span class="basic-info__label">{{ f.label }}</span>
-        <span class="basic-info__value" :class="[f.cls, { 'is-big': f.big }]">{{ f.value }}</span>
+        <span class="basic-info__value" :class="[fieldColor(f.label), f.cls, { 'is-big': f.big }]">{{ f.value }}</span>
       </template>
 
       <template v-if="specialFields.length">
@@ -106,7 +114,7 @@ const specialFields = computed(() => {
         <span class="basic-info__sep" />
         <template v-for="f in specialFields" :key="f.label">
           <span class="basic-info__label">{{ f.label }}</span>
-          <span class="basic-info__value">{{ f.value }}</span>
+          <span class="basic-info__value" :class="fieldColor(f.label)">{{ f.value }}</span>
         </template>
       </template>
     </div>
@@ -124,6 +132,10 @@ const specialFields = computed(() => {
   border-radius: 6px;
   overflow: hidden;
 }
+.basic-info .highlight { color: var(--quote-highlight); }
+.basic-info .t-up { color: var(--quote-up); }
+.basic-info .t-down { color: var(--quote-down); }
+.basic-info .ratio-high { color: var(--quote-ratio); }
 .basic-info__header {
   flex: none;
   padding: 6px 10px;

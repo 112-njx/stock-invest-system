@@ -27,6 +27,10 @@ const fields = computed(() => {
     ['流通市值（元）', compact(metric(s, 'float_mv'))], ['总市值（元）', compact(metric(s, 'total_mv'))],
   ]
 })
+function fieldColor(label: string) {
+  if (['成交量（股）', '成交额（元）', '总市值（元）'].includes(label)) return 'highlight'
+  return ''
+}
 function trend(value: number | null | undefined) { return value == null || value === 0 ? '' : value > 0 ? 'up' : 'down' }
 watch(() => [props.stock?.code, props.stock?.bar[0], props.version, props.refreshKey, retry.value] as const, async () => {
   const id = ++requestId
@@ -49,9 +53,8 @@ onBeforeUnmount(() => { disposed = true; requestId++ })
 
 <template>
   <div v-if="stock" class="stock-summary">
-    <header class="summary-title"><strong>行情摘要</strong><small>最新收盘数据</small></header>
     <div class="summary-quote"><strong :class="trend(changePct)">{{ numberText(stock.bar[4]) }}</strong><span :class="trend(changePct)">{{ change === null ? '—' : (change > 0 ? '+' : '') + numberText(change) }}</span><span :class="trend(changePct)">{{ changePct === null ? '—' : percent(changePct) }}</span></div>
-    <dl class="summary-fields"><div v-for="[label, value] in fields" :key="label"><dt>{{ label }}</dt><dd>{{ value }}</dd></div></dl>
+    <dl class="summary-fields"><div v-for="[label, value] in fields" :key="label"><dt>{{ label }}</dt><dd :class="fieldColor(label)">{{ value }}</dd></div></dl>
     <section class="performance"><strong>阶段表现</strong><p v-if="loading" role="status">正在读取阶段行情…</p><p v-else-if="failed" role="status">阶段行情暂不可用。<button @click="retry++">重试</button></p><div class="performance-grid"><article v-for="days in [5, 20, 60]" :key="days" :title="`${dateText(performance?.returns[String(days)]?.start_date)} ～ ${dateText(performance?.as_of)}`"><small>近 {{ days }} 日</small><b :class="trend(performance?.returns[String(days)]?.value)">{{ performance?.returns[String(days)]?.value == null ? '—' : percent(performance!.returns[String(days)]!.value!) }}</b></article></div><small>按最近有效交易日收盘价前复权计算；悬停查看起止日期。历史不足显示“—”。</small></section>
     <p class="summary-date">个股数据日期 {{ dateText(stock.bar[0]) }}</p>
   </div>
@@ -71,5 +74,6 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 .performance-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
 .performance-grid article { display: grid; gap: 9px; text-align: center; background: var(--bg-panel-2); padding: 12px 4px; border-radius: 5px; }
 .summary-date { margin-top: 18px; }.summary-empty { padding: 14px; }
-.up { color: var(--blueprint-up); }.down { color: var(--blueprint-down); }
+.highlight { color: var(--quote-highlight); }
+.up { color: var(--quote-up); }.down { color: var(--quote-down); }
 </style>

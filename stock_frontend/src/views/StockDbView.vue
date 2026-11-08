@@ -449,7 +449,7 @@ onBeforeUnmount(() => {
           <button v-for="stock in members" :key="stock.code" class="stock-row member-grid" :class="{ active: stockCode === stock.code }" :aria-pressed="stockCode === stock.code"
             @pointerenter="showIntraday(stock, $event)" @pointerleave="clearHover" @click="selectStock(stock.code)">
             <strong>{{ stock.code }}</strong><span class="ellipsis" :title="stock.name">{{ stock.name }}</span>
-            <span v-for="key in (['price', 'return', 'change', 'amount', 'turnover', 'float_mv'] as const)" :key="key" :class="key === 'return' || key === 'change' ? color(memberValue(stock, key)) : ''">{{ memberText(stock, key) }}</span>
+            <span v-for="key in (['price', 'return', 'change', 'amount', 'turnover', 'float_mv'] as const)" :key="key" :class="['price', 'return', 'change'].includes(key) ? color(key === 'price' ? memberValue(stock, 'return') : memberValue(stock, key)) : key === 'amount' ? 'quote-highlight' : ''">{{ memberText(stock, key) }}</span>
           </button>
           <p v-if="detail && !members.length" class="empty">暂无成分股行情</p>
         </div>
@@ -463,7 +463,7 @@ onBeforeUnmount(() => {
         <StockDbChart v-if="detail" :bars="stockBars" :label="`${currentStock?.name ?? ''}日 K`" />
       </div>
       <div class="stock-insights"><StockSummary :stock="currentStock" :version="screen?.version" :refresh-key="summaryRevision" @stale="loadWorkspace()" /></div>
-      <div class="source"><span>本地 stockdb</span><small v-if="date">{{ date }}</small>
+      <div class="source"><small v-if="date">{{ date }}</small>
         <small v-if="error" role="status" :title="error">暂未更新</small><small v-else-if="loading || refreshing" role="status">后台更新中</small>
         <button :disabled="refreshing" @click="refresh">刷新</button>
       </div>
@@ -541,7 +541,10 @@ button:hover, .active { background: var(--blueprint-active); color: var(--bluepr
 .ranking .active, .member-sorts .active { font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
 .indices { background: var(--blueprint-workspace); }
 .index-toolbar { background: var(--bg-panel); }
-.selected-index { flex: 1.1; min-height: 210px; margin: 10px; padding: 0 9px 5px; display: flex; flex-direction: column; background: var(--bg-panel); border-radius: 7px; overflow: hidden; }
+.selected-index { flex: 1.1; min-height: 210px; margin: 0; padding: 0; display: flex; flex-direction: column; background: var(--bg-panel); border-radius: 7px; overflow: hidden; }
+.selected-index > :deep(.chart) { flex: 1; height: auto; min-height: 0; }
+.stock-row > strong, .stock-row > .ellipsis, .quote-highlight { color: var(--quote-highlight); }
+.stock-row .up { color: var(--quote-up); }.stock-row .down { color: var(--quote-down); }
 .card-head { flex: none; height: 43px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--border); }
 .member-panel { flex: 1; display: flex; flex-direction: column; min-height: 180px; overflow: hidden; background: var(--bg-panel); }
 .member-table { overflow: auto; flex: 1; min-height: 0; }
