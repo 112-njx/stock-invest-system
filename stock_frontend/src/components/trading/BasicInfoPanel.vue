@@ -5,6 +5,17 @@ import { fetchLatestQuotes } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
 import { formatAmount, formatPct, formatPrice, trendClass } from '@/utils/color'
 
+const explanations: Record<string, string> = {
+  '换手率': '当日成交股数占流通股本的比例，反映交易活跃程度。',
+  '振幅': '当日最高价与最低价之差占昨收价的比例。',
+  '总市值': '最新股价乘以总股本，表示公司的市场估值。',
+  '流通市值': '最新股价乘以流通股本。',
+  '总股本': '公司已发行股份总数，单位为股。',
+  '流通股本': '可在市场流通的股份数量，单位为股。',
+  '市盈率 PE TTM': '总市值除以最近十二个月净利润；负值通常表示亏损。',
+  '市净率 PB': '股价相对每股净资产的倍数。',
+  '量比': '当日成交量相对前五个交易日平均成交量的倍数。',
+}
 function fieldColor(label: string) {
   if (['名称', '代码', '成交量（股）', '成交额', '总市值'].includes(label)) return 'highlight'
   if (label === '量比') {
@@ -104,18 +115,16 @@ const specialFields = computed(() => {
     </div>
     <div v-else-if="!quote" class="basic-info__empty">数据加载中…</div>
     <div v-else class="basic-info__grid">
-      <template v-for="f in fields" :key="f.label">
+      <div v-for="f in fields" :key="f.label" class="basic-info__item" :class="{'full-width': ['名称','代码','最新收盘价'].includes(f.label)}" :title="explanations[f.label]">
         <span class="basic-info__label">{{ f.label }}</span>
         <span class="basic-info__value" :class="[fieldColor(f.label), f.cls, { 'is-big': f.big }]">{{ f.value }}</span>
-      </template>
-
+      </div>
       <template v-if="specialFields.length">
         <span class="basic-info__sep" />
-        <span class="basic-info__sep" />
-        <template v-for="f in specialFields" :key="f.label">
+        <div v-for="f in specialFields" :key="f.label" class="basic-info__item" :title="explanations[f.label]">
           <span class="basic-info__label">{{ f.label }}</span>
           <span class="basic-info__value" :class="fieldColor(f.label)">{{ f.value }}</span>
-        </template>
+        </div>
       </template>
     </div>
   </div>
@@ -178,18 +187,22 @@ const specialFields = computed(() => {
   min-height: 0;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
   gap: 0;
   padding: 4px 0;
   font-size: 12px;
 }
+.basic-info__item {display:flex;align-items:baseline;justify-content:space-between;min-width:0;border-bottom:1px solid var(--border);gap:3px}
+.full-width {grid-column:1 / -1}
+.basic-info__item[title] {cursor:help}
 .basic-info__label {
-  padding: 5px 8px 5px 12px;
+  padding: 5px 3px 5px 8px;
   color: var(--text-secondary);
   white-space: nowrap;
 }
 .basic-info__value {
-  padding: 5px 10px 5px 0;
+  padding: 5px 8px 5px 0;
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

@@ -187,3 +187,11 @@ def stock_flows(code: Code, start: str | None = None, end: str | None = None) ->
         raise HTTPException(422,detail=str(exc)) from exc
     except ProviderError as exc:
         raise HTTPException(503,detail='本地资金流数据源暂不可用') from exc
+
+
+@router.get("/stocks/{code}/minutes/latest")
+def latest_stock_minutes(code: Code) -> dict:
+    try:
+        return rd.latest_minutes(code)
+    except rd.StockDBError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

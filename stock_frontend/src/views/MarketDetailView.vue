@@ -3,7 +3,7 @@
  * 行情页 · 第一层（A+B/C/D 区）：
  * - A+B 区：KLineChart（蜡烛图主图 + 技术指标多 pane，共享时间轴同步缩放）
  * - C 区：基本数据（BasicInfoPanel）
- * - D 区：重点关注列表（WatchlistPanel，行点击切换标的）/ 回测策略指标（StrategyMetricsPanel）
+ * - D 区：最新分时行情及成交量 / 回测策略指标（StrategyMetricsPanel）
  * - 交互：Esc / 左上角按钮退出返回 /market；轮询刷新实时行情
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -15,7 +15,6 @@ import {
   fetchBacktestTask,
   type BacktestTrade,
 } from '@/api/ai'
-import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore, type Period } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
 import { ensureDefaultSymbol } from '@/composables/useDefaultSymbol'
@@ -23,14 +22,13 @@ import { useLatestQuotes } from '@/composables/useLatestQuotes'
 import StockFlowPanel from '@/components/trading/StockFlowPanel.vue'
 import KLineChart from '@/components/trading/KLineChart.vue'
 import BasicInfoPanel from '@/components/trading/BasicInfoPanel.vue'
-import WatchlistPanel from '@/components/trading/WatchlistPanel.vue'
+import StockMinutePanel from '@/components/trading/StockMinutePanel.vue'
 import StrategyMetricsPanel from '@/components/trading/StrategyMetricsPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
 const market = useMarketStore()
 const ws = useWsStore()
-const authModal = useAuthModalStore()
 const chartView = ref<'quotes'|'flows'>('quotes')
 
 /** 回测显示跳转：带 strategy_id 时 D 区替换为策略指标面板（4.5） */
@@ -171,7 +169,7 @@ onBeforeUnmount(() => {
       <div class="col-right">
         <BasicInfoPanel />
         <StrategyMetricsPanel v-if="strategyId" :strategy-id="strategyId" />
-        <WatchlistPanel v-else @require-login="authModal.show('login')" />
+        <StockMinutePanel v-if="market.current?.type==='stock'" :code="market.current.code" />
       </div>
     </div>
   </div>
@@ -216,7 +214,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) clamp(360px, 32vw, 480px);
   gap: 8px;
 }
 .col-left {
@@ -232,6 +230,7 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 .chart-content{display:flex;flex-direction:column}.chart-content>*{flex:1;min-height:0}.chart-tabs{display:flex;gap:5px;flex:none}.chart-tabs button{padding:5px 12px;border:1px solid var(--border);color:var(--text-secondary);border-radius:4px}.chart-tabs button[aria-pressed='true']{color:var(--accent);background:var(--bg-active)}.chart-tabs button:disabled{opacity:.4}
+@media(max-width: 800px){.detail-body{grid-template-columns:minmax(0,1fr) 340px}}
 /* G32：买卖点图例/空态条 */
 .bt-marker-bar {
   flex: none;
@@ -256,7 +255,8 @@ onBeforeUnmount(() => {
 .col-right {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, auto) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1.15fr) minmax(220px, 1fr);
+  overflow-y: auto;
   gap: 8px;
 }
 </style>

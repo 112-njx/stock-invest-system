@@ -230,3 +230,17 @@ def minutes(code: str, date: int) -> list:
          if row.get("date") and all(row.get(key) for key in ("open", "high", "low", "close"))),
         key=lambda row: row[0],
     )
+
+
+def latest_minutes(code: str) -> dict:
+    """Discover only the latest minute key, then read that single local session."""
+    with _client() as client:
+        keys = _rd(client, "keys", "分钟k", k1=f"key:{code}", k2="all:", num=-1)
+    if not keys:
+        return {"date": None, "bars": [], "previous": None}
+    day = int(keys[-1].rsplit(":", 1)[-1][:8])
+    bars = minutes(code, day)
+    with _client() as client:
+        daily = _rd(client, "vals", "日k", k1=f"key:{code}", k2=f"qz:{day}")
+    previous = next((r.get("pre_close") for r in daily if r.get("code") == code), None)
+    return {"date": day, "bars": bars, "previous": previous}
