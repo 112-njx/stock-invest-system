@@ -23,13 +23,13 @@ async function render(){
   const prices=rows.flatMap(r=>r.average==null?[r.price]:[r.price,r.average])
   const min=Math.min(...prices,baseline??Infinity),max=Math.max(...prices,baseline??-Infinity),padding=Math.max((max-min)*.06,.01)
   const autoscaleInfoProvider=()=>({priceRange:{minValue:min-padding,maxValue:max+padding}})
-  chart=createChart(host.value,{width:host.value.clientWidth,height:host.value.clientHeight,layout:{background:{type:ColorType.Solid,color:light?'#ffffff':'#111827'},textColor:text,panes:{separatorColor:grid,separatorHoverColor:'#3b82f6'}},grid:{vertLines:{color:grid},horzLines:{color:grid}},leftPriceScale:{visible:true},rightPriceScale:{visible:!!baseline},timeScale:{timeVisible:true,secondsVisible:false,borderColor:grid,tickMarkFormatter:(t:Time)=>label(t)},localization:{timeFormatter:label},crosshair:{mode:0}})
+  chart=createChart(host.value,{width:host.value.clientWidth,height:host.value.clientHeight,layout:{background:{type:ColorType.Solid,color:light?'#ffffff':'#111827'},textColor:text,panes:{separatorColor:grid,separatorHoverColor:'#3b82f6'}},grid:{vertLines:{color:grid},horzLines:{color:grid}},leftPriceScale:{visible:true},rightPriceScale:{visible:!!baseline},timeScale:{minBarSpacing:0.05,timeVisible:true,secondsVisible:false,borderColor:grid,tickMarkFormatter:(t:Time)=>label(t)},localization:{timeFormatter:label},crosshair:{mode:0}})
   const price=chart.addSeries(LineSeries,{color:light?'#394150':'#e5e7eb',lineWidth:1,priceScaleId:'left',priceLineVisible:false,autoscaleInfoProvider})
   price.setData(rows.map(r=>({time:time(r),value:r.price})))
   const average=chart.addSeries(LineSeries,{color:light?'#a88300':'#e5e65b',lineWidth:1,priceScaleId:'left',priceLineVisible:false,lastValueVisible:false,autoscaleInfoProvider})
   const averages:(LineData|WhitespaceData)[]=[]
   let previousDay=''
-  for(const r of rows){const day=String(r.date).slice(0,8);if(previousDay&&day!==previousDay)averages.push({time:(time(r)-1) as UTCTimestamp});averages.push(r.average==null?{time:time(r)}:{time:time(r),value:r.average});previousDay=day}
+  for(const r of rows){const day=String(r.date).slice(0,8);averages.push(r.average==null||(previousDay&&day!==previousDay)?{time:time(r)}:{time:time(r),value:r.average});previousDay=day}
   average.setData(averages)
   if(baseline){
     price.createPriceLine({price:baseline,color:light?'#6b7280':'#9ca3af',lineWidth:1,lineStyle:LineStyle.Dashed,axisLabelVisible:true,title:'基准'})
