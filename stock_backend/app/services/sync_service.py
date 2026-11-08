@@ -140,14 +140,30 @@ def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetim
                         watched_a_share: bool) -> dict[str, int]:
     symbol_param, asset_type = _provider_params(sym)
     fetched = {}
-    for period in ALL_PERIODS + (("1m", "5m", "30m", "60m") if sym.type == "stock" else ()):
+    local_minutes = ("1m", "5m", "30m", "60m") if sym.type == "stock" else ()
+    for period in ALL_PERIODS + local_minutes:
         fetch = provider.fetch_kline_all if watched_a_share and period == "1d" else provider.fetch_kline
         bars = fetch(symbol_param, period, start, end, asset_type)
         if period == "1d" and not bars:
             raise RuntimeError(f"{sym.name} 的所有数据源均未返回日 K")
         if asset_type in {'stock', 'etf', 'sw_index'} and period in {'1w', '1mon'} and not bars:
             raise RuntimeError(f'{sym.name} 的 {period} 数据获取失败，未完成同步，请检查数据源后重试')
-        _validate_qfq_coverage(db, period, sym, bars)
+        if period in local_minutes:
+            # Bulk synchronization must still commit supported AkShare periods
+            # when the local-only minute source is unavailable. Keep existing
+            # minute records untouched; explicit minute backfills still fail.
+            if not bars:
+                logger.warning("local minute sync skipped symbol=%s period=%s: source unavailable or empty",
+                               sym.code, period)
+                continue
+            try:
+                _validate_qfq_coverage(db, period, sym, bars)
+            except RuntimeError:
+                logger.warning("local minute sync skipped symbol=%s period=%s: incomplete qfq coverage",
+                               sym.code, period, exc_info=True)
+                continue
+        else:
+            _validate_qfq_coverage(db, period, sym, bars)
         fetched[period] = bars
     # Validate both periods before publishing or writing either of them.
     return {period: _write_bars(db, period, sym.id, bars) for period, bars in fetched.items()}

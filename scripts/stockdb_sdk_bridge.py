@@ -490,7 +490,7 @@ def calculate_indicator_rows(sdk_dir, payload):
     sys.path.insert(0, sdk_dir)
     from zhibiao import zb
     rows, names, params = payload['rows'], payload['names'], payload.get('params') or {}
-    if not isinstance(rows, list) or not 1 <= len(rows) <= 100000:
+    if not isinstance(rows, list) or not 1 <= len(rows) <= indicator_registry().MAX_HISTORY_ROWS:
         raise ValueError('invalid history length')
     registry = indicator_registry()
     if not isinstance(names, list) or not names or any(n not in registry.REGISTRY for n in names):
@@ -607,7 +607,7 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
                 return
             try:
                 size = int(self.headers.get('Content-Length', '0'))
-                if not 0 < size <= 32 * 1024 * 1024:
+                if not 0 < size <= indicator_registry().MAX_REQUEST_BYTES:
                     raise ValueError('invalid request size')
                 self.connection.settimeout(10)
                 payload = json.loads(self.rfile.read(size))

@@ -35,3 +35,39 @@ def test_sdk_qfq_and_intraday_page_crop(period):
     assert all(bar.volume == 123 for bar in result)
     assert client.get.call_args.kwargs['params'] == dict(code='600519', frequency=period,
                                                         start='20261106', end='20261106')
+
+
+def test_large_indicator_history_keeps_complete_warmup(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app.services import indicator_service, indicator_policy, sdk_indicators, market_service
+    from app.repositories import kline_repo
+    from app.data_providers.base import KlineBar
+    from app.services.indicator_registry import MAX_HISTORY_ROWS
+    stamp = datetime(2026, 11, 6, 2, tzinfo=UTC)
+    bars = [KlineBar(stamp, 10, 11, 9, 10, 100, 1000)] * 100001
+    query = Mock(return_value=bars)
+    monkeypatch.setattr(kline_repo, 'get_bars', query)
+    monkeypatch.setattr(market_service, 'resolve_symbol_id', lambda *args: 125)
+    monkeypatch.setattr(indicator_policy, 'read', lambda: {'pandas_enabled': False, 'revision': 1})
+    monkeypatch.setattr(indicator_service, '_get_cache', lambda *args: None)
+    monkeypatch.setattr(indicator_service, '_set_cache', lambda *args: None)
+    calculate = Mock(side_effect=lambda rows, *args: [{**row, 'macd_dif': 1.} for row in rows])
+    monkeypatch.setattr(sdk_indicators, 'calculate', calculate)
+    db = Mock()
+    db.get.return_value = SimpleNamespace(type='stock')
+    rows = indicator_service.compute_indicators(db, '125', '1m', ['macd'], limit=1000)
+    assert len(rows) == 1000
+    assert len(calculate.call_args.args[0]) == 100001
+    assert query.call_args.kwargs['limit'] == MAX_HISTORY_ROWS + 1
+
+
+def test_indicator_history_over_capacity_is_not_silently_truncated(monkeypatch):
+    from app.services import indicator_service, market_service
+    from app.repositories import kline_repo
+    from unittest.mock import Mock
+    monkeypatch.setattr(indicator_service, 'MAX_HISTORY_ROWS', 2)
+    monkeypatch.setattr(market_service, 'resolve_symbol_id', lambda *args: 125)
+    monkeypatch.setattr(kline_repo, 'get_bars', lambda *args, **kwargs: [object()] * 3)
+    with pytest.raises(ValueError, match='不能截断'):
+        indicator_service.compute_indicators(Mock(), '125', '1d', ['macd'])
