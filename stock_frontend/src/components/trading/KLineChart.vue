@@ -291,17 +291,23 @@ function onIndicatorDrag(event: MouseEvent) {
   if (event.buttons) scheduleIndicatorTops()
 }
 
-const PERIODS: { label: string; value: Period }[] = [
+const PERIODS = computed<{ label: string; value: Period }[]>(() => [
   { label: '日K', value: '1d' },
   { label: '周K', value: '1w' },
   { label: '月K', value: '1mon' },
   { label: '15min', value: '15m' },
-]
+  ...(props.symbol?.type === 'stock' ? [
+    { label: '1min', value: '1m' as Period },
+    { label: '5min', value: '5m' as Period },
+    { label: '30min', value: '30m' as Period },
+    { label: '60min', value: '60m' as Period },
+  ] : []),
+])
 
 const symbolTitle = computed(() =>
   props.symbol ? `${props.symbol.name} ${props.symbol.code}` : '未选择标的'
 )
-const watermarkPeriod = computed(() => PERIODS.find((p) => p.value === market.period)?.label ?? market.period)
+const watermarkPeriod = computed(() => PERIODS.value.find((p) => p.value === market.period)?.label ?? market.period)
 
 /* ---------- 指标显隐（持久化） ---------- */
 const STORAGE_KEY = 'indicator_visibility'
@@ -402,7 +408,7 @@ function chartDateParts(time: Time) {
       ? new Date(`${time}T00:00:00Z`)
       : new Date(Date.UTC(time.year, time.month - 1, time.day))
 
-  if (market.period === '15m') {
+  if (['1m', '5m', '15m', '30m', '60m'].includes(market.period)) {
     const parts = Object.fromEntries(shanghaiDateTime.formatToParts(date).map((part) => [part.type, part.value]))
     return { year: parts.year, month: parts.month, day: parts.day, hour: parts.hour, minute: parts.minute }
   }
@@ -422,7 +428,7 @@ function formatAxisMonth(time: Time): string {
 function formatCrosshairDate(time: Time): string {
   const { year, month, day, hour, minute } = chartDateParts(time)
   const weekday = weekdays[new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay()]
-  return `${weekday} ${year}-${month}-${day}${market.period === '15m' ? ` ${hour}:${minute}` : ''}`
+  return `${weekday} ${year}-${month}-${day}${['1m', '5m', '15m', '30m', '60m'].includes(market.period) ? ` ${hour}:${minute}` : ''}`
 }
 
 /* ---------- 图表初始化 ---------- */
@@ -919,7 +925,7 @@ async function loadOlder() {
   const earliest = new Date(historyCursor || loadedBars[0].ts)
   const end = period === '1w' || period === '1mon'
     ? beforePeriod(earliest.toISOString(), period) : new Date(earliest.getTime() - 1)
-  const start = threeMonthsBefore(end.toISOString())
+  const start = period.endsWith('m') ? new Date(end.getTime() - 7 * 86400000) : threeMonthsBefore(end.toISOString())
   historyBusy = true
   historyState.value = 'loading'
   try {
@@ -978,7 +984,7 @@ async function loadInitialMissing(version: number, symbolId: number, period: Per
     return
   }
   const end = new Date()
-  const start = threeMonthsBefore(end.toISOString(), period === '1w' ? 15 : 3)
+  const start = period.endsWith('m') ? new Date(end.getTime() - 7 * 86400000) : threeMonthsBefore(end.toISOString(), period === '1w' ? 15 : 3)
   historyWidth.value = container.value?.clientWidth ?? 0
   historyState.value = 'loading'
   try {
@@ -1103,6 +1109,10 @@ function setIndicatorData() {
 }
 
 async function loadKline() {
+  if (props.symbol?.type !== 'stock' && ['1m', '5m', '30m', '60m'].includes(market.period)) {
+    market.setPeriod('1d')
+    return
+  }
   if (!props.symbol) return
   const version = ++loadVersion
   const symbolId = props.symbol.id

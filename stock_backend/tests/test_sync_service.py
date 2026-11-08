@@ -60,7 +60,7 @@ def test_kline_init_fetches_all_source_periods():
     assert db.query(Kline1d).filter_by(symbol_id=sym.id).count() == 2
     assert db.query(Kline1mon).filter_by(symbol_id=sym.id).count() == 1
     assert result["600519"]["1d"] == 2
-    assert {call.args[1] for call in provider.fetch_kline.call_args_list} == {"1d", "15m", "1w", "1mon"}
+    assert {call.args[1] for call in provider.fetch_kline.call_args_list} == {"1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mon"}
     db.close()
 
 

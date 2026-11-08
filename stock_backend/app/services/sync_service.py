@@ -106,6 +106,8 @@ def prepare_history_window(db, sym, period, start, end, *, initial=False):
     from app.services import market_policy, source_history
 
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 5000000000 + sym.id})
+    if period in {'1m', '5m', '30m', '60m'} and sym.type != 'stock':
+        raise ValueError('新增分钟周期仅支持个股')
     model = KLINE_MODELS[period]
     sources = ['stockdb', 'akshare'] if market_policy.history_storage_enabled() else ['stockdb']
     first, last = db.execute(select(func.min(model.ts), func.max(model.ts)).where(
@@ -138,7 +140,7 @@ def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetim
                         watched_a_share: bool) -> dict[str, int]:
     symbol_param, asset_type = _provider_params(sym)
     fetched = {}
-    for period in ALL_PERIODS:
+    for period in ALL_PERIODS + (("1m", "5m", "30m", "60m") if sym.type == "stock" else ()):
         fetch = provider.fetch_kline_all if watched_a_share and period == "1d" else provider.fetch_kline
         bars = fetch(symbol_param, period, start, end, asset_type)
         if period == "1d" and not bars:

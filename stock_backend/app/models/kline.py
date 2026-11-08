@@ -43,8 +43,33 @@ class Kline1w(KlineMixin, Base):
     __table_args__ = (PrimaryKeyConstraint("symbol_id", "ts", "source"), {"postgresql_partition_by": "RANGE (ts)"})
 
 
+class Kline1m(KlineMixin, Base):
+    __tablename__ = "kline_1m"
+    __table_args__ = (PrimaryKeyConstraint("symbol_id", "ts", "source"), {"postgresql_partition_by": "RANGE (ts)"})
+
+
+class Kline5m(KlineMixin, Base):
+    __tablename__ = "kline_5m"
+    __table_args__ = (PrimaryKeyConstraint("symbol_id", "ts", "source"), {"postgresql_partition_by": "RANGE (ts)"})
+
+
+class Kline30m(KlineMixin, Base):
+    __tablename__ = "kline_30m"
+    __table_args__ = (PrimaryKeyConstraint("symbol_id", "ts", "source"), {"postgresql_partition_by": "RANGE (ts)"})
+
+
+class Kline60m(KlineMixin, Base):
+    __tablename__ = "kline_60m"
+    __table_args__ = (PrimaryKeyConstraint("symbol_id", "ts", "source"), {"postgresql_partition_by": "RANGE (ts)"})
+
+
 # 周期 → 模型映射
 KLINE_MODELS = {
+    "1m": Kline1m,
+    "5m": Kline5m,
+    "30m": Kline30m,
+    "60m": Kline60m,
+
     "1w": Kline1w,
     "15m": Kline15m,
     "1d": Kline1d,

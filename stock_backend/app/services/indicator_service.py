@@ -57,6 +57,11 @@ def compute_indicators(
     symbol_id = market_service.resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
+    if period in {'1m', '5m', '30m', '60m'}:
+        from app.models.symbol import Symbol
+        sym = db.get(Symbol, symbol_id)
+        if sym is None or sym.type != 'stock':
+            raise ValueError('新增分钟周期仅支持个股')
     explicit_range = start is not None or end is not None
     if end is None:
         end = datetime.now(UTC)
@@ -65,7 +70,7 @@ def compute_indicators(
 
     # Keep the bounded warmup window anchored to the newest bar for latest-N queries.
     bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end,
-                               limit=100000, source_window=(start, end), latest=not explicit_range)
+                               limit=1000000 if period.endswith("m") else 100000, source_window=(start, end), latest=not explicit_range)
     if not bars:
         return []
 
