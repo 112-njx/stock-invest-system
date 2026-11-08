@@ -255,7 +255,7 @@ onBeforeUnmount(() => {
 .col-right {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1.15fr) minmax(220px, 1fr);
+  grid-template-rows: minmax(0, 1.7fr) minmax(220px, 1fr);
   overflow-y: auto;
   gap: 8px;
 }

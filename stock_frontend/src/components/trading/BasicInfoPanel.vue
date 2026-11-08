@@ -197,12 +197,12 @@ const specialFields = computed(() => {
 .full-width {grid-column:1 / -1}
 .basic-info__item[title] {cursor:help}
 .basic-info__label {
-  padding: 5px 3px 5px 8px;
+  padding: 3px 3px 3px 8px;
   color: var(--text-secondary);
   white-space: nowrap;
 }
 .basic-info__value {
-  padding: 5px 8px 5px 0;
+  padding: 3px 8px 3px 0;
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
