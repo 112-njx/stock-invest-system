@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { createChart, LineSeries, HistogramSeries, ColorType, LineStyle, type IChartApi, type UTCTimestamp, type Time, type LineData, type WhitespaceData } from 'lightweight-charts'
+import { createChart, LineSeries, HistogramSeries, ColorType, LineStyle, type IChartApi, type UTCTimestamp, type Time } from 'lightweight-charts'
 import { useThemeStore } from '@/stores/theme'
+import { averageSegments } from '@/utils/intradaySegments'
 import { fetchStockDb } from '@/api/stockdbCache'
 const props=defineProps<{code:string}>()
 interface Row {date:number;price:number;volume:number|null;average:number|null}
-interface History {rows:Row[];latest:number|null;start:string|null;end:string|null;previous:number|null}
+interface History {rows:Row[];latest:number|null;start:string|null;end:string|null;previous:number|null;baseline_date:number|null}
 const theme=useThemeStore(), host=ref<HTMLElement>(), data=ref<History|null>(null)
 const start=ref(''),end=ref(''),busy=ref(false),error=ref(''),hover=ref('')
 let chart:IChartApi|undefined, observer:ResizeObserver|undefined,sequence=0
@@ -26,11 +27,10 @@ async function render(){
   chart=createChart(host.value,{width:host.value.clientWidth,height:host.value.clientHeight,layout:{background:{type:ColorType.Solid,color:light?'#ffffff':'#111827'},textColor:text,panes:{separatorColor:grid,separatorHoverColor:'#3b82f6'}},grid:{vertLines:{color:grid},horzLines:{color:grid}},leftPriceScale:{visible:true},rightPriceScale:{visible:!!baseline},timeScale:{minBarSpacing:0.05,timeVisible:true,secondsVisible:false,borderColor:grid,tickMarkFormatter:(t:Time)=>label(t)},localization:{timeFormatter:label},crosshair:{mode:0}})
   const price=chart.addSeries(LineSeries,{color:light?'#394150':'#e5e7eb',lineWidth:1,priceScaleId:'left',priceLineVisible:false,autoscaleInfoProvider})
   price.setData(rows.map(r=>({time:time(r),value:r.price})))
-  const average=chart.addSeries(LineSeries,{color:light?'#a88300':'#e5e65b',lineWidth:1,priceScaleId:'left',priceLineVisible:false,lastValueVisible:false,autoscaleInfoProvider})
-  const averages:(LineData|WhitespaceData)[]=[]
-  let previousDay=''
-  for(const r of rows){const day=String(r.date).slice(0,8);averages.push(r.average==null||(previousDay&&day!==previousDay)?{time:time(r)}:{time:time(r),value:r.average});previousDay=day}
-  average.setData(averages)
+  for (const segment of averageSegments(rows)) {
+    const average=chart.addSeries(LineSeries,{color:light?'#a88300':'#e5e65b',lineWidth:1,priceScaleId:'left',priceLineVisible:false,lastValueVisible:false,autoscaleInfoProvider,pointMarkersVisible:segment.length===1})
+    average.setData(segment.map(r=>({time:time(r),value:r.average!})))
+  }
   if(baseline){
     price.createPriceLine({price:baseline,color:light?'#6b7280':'#9ca3af',lineWidth:1,lineStyle:LineStyle.Dashed,axisLabelVisible:true,title:'基准'})
     const percent=chart.addSeries(LineSeries,{color:'transparent',priceScaleId:'right',lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false,autoscaleInfoProvider,priceFormat:{type:'custom',formatter:(v:number)=>`${((v/baseline-1)*100).toFixed(2)}%`}})
@@ -64,7 +64,7 @@ onBeforeUnmount(()=>{sequence++;dispose()})
 <template>
 <section class="intraday-main">
   <form @submit.prevent="load()"><strong>分时图</strong><input v-model="start" type="date" aria-label="分时开始日期"/><span>至</span><input v-model="end" type="date" aria-label="分时结束日期"/><button :disabled="busy">查询</button><button type="button" :disabled="busy" @click="load(true)">最近交易日</button><button type="button" @click="chart?.timeScale().fitContent()">适应全图</button></form>
-  <div class="legend">价格线 · 黄色为每日成交均价 · 下方成交量（股）<span v-if="data?.previous"> · 涨跌幅基准 {{ data.previous.toFixed(2) }}（{{ data.end }} 昨收）</span></div>
+  <div class="legend">价格线 · 黄色为每日成交均价 · 下方成交量（股）<span v-if="data?.previous"> · 涨跌幅基准 {{ data.previous.toFixed(2) }}（{{ data.baseline_date }} 昨收）</span></div>
   <div class="hover-info">{{ hover || '滚轮缩放，拖动查看历史；移动鼠标查看数据。每次查询最多45天。' }}</div>
   <p v-if="busy">正在读取分时数据…</p><p v-else-if="error" role="alert">{{ error }}</p><p v-else-if="!data?.rows.length">所选日期暂无分时数据</p>
   <div v-show="!busy&&!error&&data?.rows.length" ref="host" class="chart-host" aria-label="多日分时价格、每日均价及成交量" />

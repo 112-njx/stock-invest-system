@@ -36,3 +36,20 @@ def test_bound_and_missing_history():
             service.load('000001', date(2026, 1, 1), date(2026, 11, 6))
     with patch.object(service, '_client', return_value=MagicMock()), patch.object(service, '_rd', return_value=[]):
         assert service.load('000001')['rows'] == []
+
+
+def test_weekend_end_uses_last_valid_minute_day_for_baseline():
+    with patch.object(service, '_client', return_value=MagicMock()), patch.object(service, '_rd', side_effect=[['分钟k:000001:20261106150000'], [row(20261106150000), row(20261108092500)], [{'code': '000001', 'pre_close': 9}]]) as query:
+        result = service.load('000001', date(2026, 11, 1), date(2026, 11, 8))
+    assert query.call_args_list[-1].kwargs['k2'] == 'qz:20261106'
+    assert result['previous'] == 9
+    assert result['baseline_date'] == 20261106
+    assert result['end'] == '2026-11-08'
+
+
+def test_empty_window_does_not_query_unrelated_daily_baseline():
+    with patch.object(service, '_client', return_value=MagicMock()), patch.object(service, '_rd', side_effect=[['分钟k:000001:20261106150000'], []]) as query:
+        result = service.load('000001', date(2026, 11, 7), date(2026, 11, 8))
+    assert result['baseline_date'] is None
+    assert result['previous'] is None
+    assert query.call_count == 2
