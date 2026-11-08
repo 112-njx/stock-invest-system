@@ -32,6 +32,16 @@ const range = computed(() => {
   const margin = Math.max((max - min) * 0.08, max * 0.001, 0.01)
   return { min: min - margin, max: max + margin }
 })
+const extrema = computed(() => {
+  if (props.minute || !bars.value.length) return []
+  let high = 0, low = 0
+  bars.value.forEach((bar, i) => {
+    if (bar[2] > bars.value[high]![2]) high = i
+    if (bar[3] < bars.value[low]![3]) low = i
+  })
+  return [{ index: high, value: bars.value[high]![2], direction: -1 },
+          { index: low, value: bars.value[low]![3], direction: 1 }]
+})
 const volumeMax = computed(() => Math.max(1, ...bars.value.map((bar) => bar[5])))
 const active = computed(() => cursor.value ? bars.value[cursor.value.index] : undefined)
 const ticks = computed(() => Array.from({ length: 6 }, (_, i) => ({
@@ -120,6 +130,8 @@ const movingAverages = computed(() => averages.map(([period, color]) => ({
         {{ percent((tick.value / baseline - 1) * 100) }}
       </span>
     </template>
+    <span v-for="point in extrema" :key="point.direction" class="extreme" :class="{ 'extreme--low': point.direction === 1 }"
+      :style="{ left: `clamp(24px, ${x(point.index) / width * 100}%, calc(100% - 24px))`, top: `clamp(9px, calc(${y(point.value) / height * 100}% + ${point.direction * 17}px), calc(72% - 9px))` }">{{ point.value.toFixed(2) }}</span>
     <span class="volume-label">VOL {{ shortNumber(volumeMax) }}</span>
     <span v-for="tick in timeTicks" :key="tick.label" class="time"
       :style="{ left: Math.max(5, Math.min(95, tick.x / width * 100)) + '%' }">{{ tick.label }}</span>
@@ -148,6 +160,9 @@ const movingAverages = computed(() => averages.map(([period, color]) => ({
 .chart-empty { display: grid; place-items: center; min-height: 110px; height: 100%; color: var(--text-secondary); }
 svg { position: absolute; width: 100%; height: 100%; inset: 0; }
 .tick, .volume-label, .time, .cursor-date { position: absolute; font: 11px/1.1 system-ui, sans-serif; pointer-events: none; }
+.extreme { position:absolute; z-index:1; transform:translate(-50%,-50%); color:var(--text); font:12px/1 Arial,sans-serif; text-shadow:0 1px 2px var(--bg-panel),1px 0 2px var(--bg-panel); pointer-events:none }
+.extreme::after { content:'';position:absolute;left:50%;top:100%;height:7px;border-left:1px solid currentColor }
+.extreme--low::after { top:auto;bottom:100% }
 .tick { left: 3px; transform: translateY(-50%); }
 .tick--right { left: auto; right: 3px; }
 .volume-label { top: 75%; left: 3px; }

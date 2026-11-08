@@ -8,6 +8,7 @@
  * - 指标选择弹窗（showIndicators），默认开启成交量+MACD，持久化 localStorage
  * - 双击 emit，由父级决定是否进入详情页
  */
+import { visibleCandleExtrema } from '@/utils/visibleCandleExtrema'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useChartIndicators } from '@/composables/useChartIndicators'
 import { useDetailChartSettings, type MaLine } from '@/composables/useDetailChartSettings'
@@ -474,6 +475,8 @@ function initChart() {
     wickDownColor: c.down,
     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
   })
+
+  candleSeries.attachPrimitive(visibleCandleExtrema(chart, candleSeries))
 
   priceMaSeries.clear()
   for (const ma of priceMas.value) {
