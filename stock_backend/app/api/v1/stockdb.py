@@ -195,3 +195,15 @@ def latest_stock_minutes(code: Code) -> dict:
         return rd.latest_minutes(code)
     except rd.StockDBError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/stocks/{code}/minutes/history")
+def stock_minute_history(code: Code, start: str | None = None, end: str | None = None) -> dict:
+    from datetime import date
+    from app.services.stock_minute_history import load
+    try:
+        return load(code, date.fromisoformat(start) if start else None, date.fromisoformat(end) if end else None)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except rd.StockDBError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

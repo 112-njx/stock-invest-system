@@ -22,6 +22,7 @@ import { useLatestQuotes } from '@/composables/useLatestQuotes'
 import StockFlowPanel from '@/components/trading/StockFlowPanel.vue'
 import KLineChart from '@/components/trading/KLineChart.vue'
 import BasicInfoPanel from '@/components/trading/BasicInfoPanel.vue'
+import IntradayChart from '@/components/trading/IntradayChart.vue'
 import StockMinutePanel from '@/components/trading/StockMinutePanel.vue'
 import StrategyMetricsPanel from '@/components/trading/StrategyMetricsPanel.vue'
 
@@ -29,7 +30,7 @@ const router = useRouter()
 const route = useRoute()
 const market = useMarketStore()
 const ws = useWsStore()
-const chartView = ref<'quotes'|'flows'>('quotes')
+const chartView = ref<'quotes'|'minutes'|'flows'>('quotes')
 
 /** 回测显示跳转：带 strategy_id 时 D 区替换为策略指标面板（4.5） */
 const strategyId = computed(() => (route.query.strategy_id ? Number(route.query.strategy_id) : null))
@@ -138,7 +139,7 @@ onBeforeUnmount(() => {
     <div class="detail-topbar">
       <button class="detail-back" @click="goBack">← 返回</button>
       <span class="detail-hint">按 Esc 返回行情页</span>
-      <div class="chart-tabs" role="group" aria-label="详情图表视图"><button :aria-pressed="chartView==='quotes'" @click="chartView='quotes'">行情图</button><button :aria-pressed="chartView==='flows'" :disabled="market.current?.type!=='stock'" @click="chartView='flows'">资金流向</button></div>
+      <div class="chart-tabs" role="group" aria-label="详情图表视图"><button :aria-pressed="chartView==='quotes'" @click="chartView='quotes'">K线图</button><button :aria-pressed="chartView==='minutes'" :disabled="market.current?.type!=='stock'" @click="chartView='minutes'">分时图</button><button :aria-pressed="chartView==='flows'" :disabled="market.current?.type!=='stock'" @click="chartView='flows'">资金流向</button></div>
     </div>
 
     <div class="detail-body">
@@ -154,6 +155,7 @@ onBeforeUnmount(() => {
           :markers="visibleMarkers"
         />
         </div>
+        <IntradayChart v-if="chartView==='minutes' && market.current?.type==='stock'" :code="market.current.code" />
         <StockFlowPanel v-if="chartView==='flows' && market.current?.type==='stock'" :code="market.current.code" :name="market.current.name" />
         <p v-else-if="chartView==='flows'">当前标的暂无个股资金流数据</p>
         <div v-if="strategyId && chartView==='quotes'" class="bt-marker-bar">
@@ -214,7 +216,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(360px, 32vw, 480px);
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 28vw, 400px);
   gap: 8px;
 }
 .col-left {
@@ -230,7 +232,7 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 .chart-content{display:flex;flex-direction:column}.chart-content>*{flex:1;min-height:0}.chart-tabs{display:flex;gap:5px;flex:none}.chart-tabs button{padding:5px 12px;border:1px solid var(--border);color:var(--text-secondary);border-radius:4px}.chart-tabs button[aria-pressed='true']{color:var(--accent);background:var(--bg-active)}.chart-tabs button:disabled{opacity:.4}
-@media(max-width: 800px){.detail-body{grid-template-columns:minmax(0,1fr) 340px}}
+@media(max-width: 800px){.detail-body{grid-template-columns:minmax(0,1fr) 320px}}
 /* G32：买卖点图例/空态条 */
 .bt-marker-bar {
   flex: none;
