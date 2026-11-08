@@ -47,6 +47,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+.ruff_cache/
 
 # Translations
 *.mo
@@ -95,7 +96,7 @@ pdm.lock
 __pypackages__/
 
 # Celery
-celerybeat-schedule
+celerybeat-schedule*
 celerybeat.pid
 
 # SageMath parsed files
@@ -222,6 +223,9 @@ webpack/
 # Tests
 coverage/
 *.lcov
+.artifacts/
+stock_frontend/playwright-report/
+stock_frontend/test-results/
 
 # Logs
 logs/

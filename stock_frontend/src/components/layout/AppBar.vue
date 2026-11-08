@@ -5,7 +5,6 @@
  * G35：头像区回归顶部（方案 B）——未登录显示「登录」入口，已登录显示头像 + 下拉菜单；
  * 与 G16 铃铛并存，I 区用户 Cell 保留。
  */
-import StockSearch from '@/components/layout/StockSearch.vue'
 import NotificationBell from '@/components/layout/NotificationBell.vue'
 import UserMenu from '@/components/layout/UserMenu.vue'
 import { onBeforeUnmount, onMounted } from 'vue'
@@ -34,14 +33,15 @@ onBeforeUnmount(() => clearTimeout(prepareTimer))
 
     <nav class="appbar__nav">
       <RouterLink to="/" class="appbar__link">行情</RouterLink>
+      <RouterLink to="/stocks" class="appbar__link">股票</RouterLink>
       <RouterLink to="/ai" class="appbar__link">AI 策略</RouterLink>
       <RouterLink to="/stockdb" class="appbar__link" @pointerenter="prepareBlueprint" @focus="prepareBlueprint">指数蓝图</RouterLink>
       <RouterLink to="/heatmap" class="appbar__link">大盘云图</RouterLink>
+      <RouterLink to="/all-data" class="appbar__link">全数据</RouterLink>
     </nav>
 
     <div class="appbar__right">
       <RouterLink v-if="user.user?.username === 'root' && user.user.is_admin" to="/admin" class="appbar__link">管理后台</RouterLink>
-      <StockSearch />
       <NotificationBell />
       <!-- G35：头像区（未登录=登录入口；已登录=下拉菜单） -->
       <UserMenu />

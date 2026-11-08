@@ -37,3 +37,19 @@ class PriceMATests(unittest.TestCase):
     def test_short_history_has_no_fabricated_values(self):
         result = self.calculate([dict(ts='one', close=10.0)])
         self.assertTrue(all(result[0][f'ma{n}'] is None for n in (5, 10, 20, 30)))
+
+    def test_custom_periods_dynamic_fields_and_visibility_independent_values(self):
+        rows = [dict(ts=str(i), close=float(i)) for i in range(1,81)]
+        result = calculate_indicator_rows(SDK_DIR, {'rows': rows, 'names': ['ma'], 'params': {'ma': {'periods': [1,7,20,60,80,10000]}}})
+        self.assertNotIn('ma5', result[-1])
+        for n in (1,7,20,60,80):
+            self.assertAlmostEqual(result[-1][f'ma{n}'], sum(range(81-n,81))/n)
+        self.assertIsNone(result[-1]['ma10000'])
+
+    def test_registry_native_macd_kdj_and_volume_contract(self):
+        rows=[dict(ts=str(i),close=float(i+1),high=float(i+2),low=float(i),volume=100+i,amount=1000) for i in range(16)]
+        result=calculate_indicator_rows(SDK_DIR, {'rows':rows,'names':['macd','kdj','volume','amount']})
+        self.assertEqual(result[1]['macd_dif'],0.08)
+        self.assertEqual(result[-1]['macd_hist'],1.933)
+        self.assertEqual(result[-1]['kdj_k'],90.0)
+        self.assertEqual(result[-1]['volume_ma10'],110.5)

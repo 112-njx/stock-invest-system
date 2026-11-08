@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import { useRoute } from 'vue-router'
 import TrendView from '@/views/TrendView.vue'
 import StockDbChart from '@/components/stockdb/StockDbChart.vue'
+import StockSummary from '@/components/stockdb/StockSummary.vue'
+import { memberSortKeys, sortMembers, memberValue, compact, numberText, type MemberSort } from '@/utils/blueprint'
 import {
   algorithms, barReturn, categories, percent,
   type Bar, type Board, type BoardDetail, type Category, type Home, type Member,
@@ -24,7 +26,7 @@ function readPreferences() {
     return {
       days: [1, 3, 5, 10, 15, 30].includes(saved.days) ? saved.days as number : 1,
       sort: saved.sort === 'return' ? 'return' as const : 'price' as const,
-      memberSort: saved.memberSort === 'code' || saved.memberSort === 'price' ? saved.memberSort as 'code' | 'price' : 'return' as const,
+      memberSort: memberSortKeys.includes(saved.memberSort) ? saved.memberSort as MemberSort : 'return' as const,
       memberAscending: saved.memberAscending === true,
     }
   } catch {
@@ -38,21 +40,19 @@ const days = ref(preferences.days)
 const sort = ref<'price' | 'return'>(preferences.sort)
 interface IndexOrder { days: number; sort: 'price' | 'return' }
 const displayedOrder = ref<IndexOrder>({ days: preferences.days, sort: preferences.sort })
-const memberSort = ref<'return' | 'price' | 'code'>(preferences.memberSort)
+const memberSort = ref<MemberSort>(preferences.memberSort)
 const memberAscending = ref(preferences.memberAscending)
 const ready = ref(false)
 const loading = ref(false)
 const refreshing = ref(false)
+const summaryRevision = ref(0)
 const error = ref('')
 const pinnedBoard = ref(screen.value?.pinnedBoard ?? false)
-const cardScroll = ref(0)
-const cards = ref<HTMLElement | null>(null)
 const boardList = ref<HTMLElement | null>(null)
 const memberList = ref<HTMLElement | null>(null)
 const drawer = ref<HTMLDialogElement | null>(null)
 const compareBoard = shallowRef<Board | null>(null)
 const comparison = shallowRef<BoardDetail | null>(null)
-const cardHeight = 338
 const windows = [[1, '今日涨幅'], [3, '3日涨幅'], [5, '5日涨幅'], [10, '10日涨幅'], [15, '15日涨幅'], [30, '30日涨幅']] as const
 
 const shownCategory = computed(() => screen.value?.category ?? category.value)
@@ -70,10 +70,6 @@ const currentBoard = computed(() => boards.value.find((board) => board.id === bo
 function sameOrder(left: IndexOrder, right: IndexOrder) {
   return left.days === right.days && left.sort === right.sort
 }
-function viewportStart(group: Category, method: Weight, order: IndexOrder) {
-  return shownCategory.value === group && shownWeight.value === method && sameOrder(order, displayedOrder.value)
-    ? firstCard.value : 0
-}
 function rank(items: Board[], order = displayedOrder.value) {
   return items.map((board) => ({ ...board, change: board.changes[String(order.days)] ?? null })).sort((a, b) =>
     (b[order.sort === 'price' ? 'price' : 'change'] ?? -Infinity) -
@@ -81,23 +77,20 @@ function rank(items: Board[], order = displayedOrder.value) {
   )
 }
 const ranked = computed(() => rank(boards.value))
-const firstCard = computed(() => Math.max(0, Math.floor(cardScroll.value / cardHeight) - 1))
-const visibleCards = computed(() => ranked.value.slice(firstCard.value, firstCard.value + 10).map((board) => ({
-  ...board, bars: screen.value?.charts[board.id] ?? [],
-})))
-const members = computed(() => [...(detail.value?.members ?? [])].sort((a, b) => {
-  const key = memberSort.value
-  const value = key === 'code' ? a.code.localeCompare(b.code)
-    : key === 'price' ? a.bar[4] - b.bar[4] : (barReturn([a.bar], 1) ?? 0) - (barReturn([b.bar], 1) ?? 0)
-  return (memberAscending.value ? value : -value) || a.code.localeCompare(b.code)
-}))
+const selectedIndex = computed(() => ranked.value.find((board) => board.id === boardId.value))
+const indexBars = computed(() => screen.value?.charts[boardId.value] ?? [])
+const members = computed(() => sortMembers(detail.value?.members ?? [], memberSort.value, memberAscending.value))
+const memberColumns = [['code', '代码'], ['price', '收盘价'], ['return', '涨跌幅'], ['change', '涨跌额'], ['amount', '成交额'], ['turnover', '换手率'], ['float_mv', '流通市值']] as const
+function memberText(stock: Member, key: Exclude<MemberSort, 'code'>) {
+  const value = memberValue(stock, key)
+  return key === 'return' ? formatReturn(value) : key === 'turnover' ? (value === null ? '—' : numberText(value) + '%') : key === 'amount' || key === 'float_mv' ? compact(value) : numberText(value)
+}
 const currentStock = computed(() => members.value.find((stock) => stock.code === stockCode.value))
 
 let disposed = false
 let workspaceRequest = 0
 let memberRequest = 0
 let stockRequest = 0
-let chartRequest = 0
 let compareRequest = 0
 let persistTimer: ReturnType<typeof setTimeout> | undefined
 let statusTimer: ReturnType<typeof setInterval> | undefined
@@ -108,6 +101,7 @@ function workspaceKey(group: Category, method: Weight) {
 function rememberWorkspace(value: Workspace) {
   const saved = { ...value, pinnedBoard: pinnedBoard.value }
   screen.value = saved
+  summaryRevision.value++
   clearTimeout(persistTimer)
   persistTimer = setTimeout(() => {
     putCache('last-workspace', saved)
@@ -137,7 +131,7 @@ async function curves(version: string, method: Weight, ids: string[]) {
 
 function bundlePath(id: string, version: string, selected = '') {
   return '/members/' + encodeURIComponent(id) + '?' + new URLSearchParams({
-    version, selected, order: memberSort.value, ascending: String(memberAscending.value),
+    version, selected, order: ['code', 'price'].includes(memberSort.value) ? memberSort.value : 'return', ascending: String(memberAscending.value),
   })
 }
 
@@ -146,8 +140,7 @@ async function loadDetail(id: string, version: string) {
 }
 
 async function buildWorkspace(group: Category, method: Weight, order: IndexOrder): Promise<Workspace> {
-  if (group === 'sw1' && method === 'equal' && order.sort === 'price' && !pinnedBoard.value &&
-    viewportStart(group, method, order) === 0) {
+  if (group === 'sw1' && method === 'equal' && order.sort === 'price' && !pinnedBoard.value) {
     const home = await fetchStockDb<Home>('/home')
     for (const [id, bars] of Object.entries(home.charts)) putCache(`curve:${home.version}:equal:${id}`, bars)
     return { ...home, category: group, weight: method }
@@ -159,9 +152,8 @@ async function buildWorkspace(group: Category, method: Weight, order: IndexOrder
   const selected = pinnedBoard.value && ranking.boards.some((board) => board.id === boardId.value)
     ? boardId.value : ordered[0]?.id ?? ''
   const selectedStock = selected === boardId.value ? stockCode.value : ''
-  const start = viewportStart(group, method, order)
   const [charts, detail] = await Promise.all([
-    curves(ranking.version, method, ordered.slice(start, start + 10).map((board) => board.id)),
+    curves(ranking.version, method, selected ? [selected] : []),
     selected ? cachedStockDb<Members>(bundlePath(selected, ranking.version, selectedStock))
       : Promise.resolve({ members: [], count: 0, stockCode: '', stockBars: [] }),
   ])
@@ -181,31 +173,15 @@ async function loadWorkspace(retry = true) {
   try {
     const saved = await readCache<Workspace>(workspaceKey(group, method))
     if (request !== workspaceRequest || disposed) return
-    if (saved && rank(saved.boards, order).slice(0, 10).every((board) => saved.charts[board.id]) &&
+    if (saved && saved.charts[saved.boardId] &&
       saved.boardId === (pinnedBoard.value ? boardId.value : rank(saved.boards, order)[0]?.id ?? '') &&
       (saved.category !== shownCategory.value || saved.weight !== shownWeight.value || !screen.value)) {
-      cardScroll.value = 0
-      cards.value?.scrollTo(0, 0)
       boardList.value?.scrollTo(0, 0)
       screen.value = saved
       displayedOrder.value = order
     }
     const value = await buildWorkspace(group, method, order)
     if (request !== workspaceRequest || disposed) return
-    // Scrolling can continue while the next generation is being prepared.
-    // Fill the current window before publishing, even if it moved during the request.
-    let start = viewportStart(group, method, order)
-    while (true) {
-      const ids = rank(value.boards, order).slice(start, start + 10).map((board) => board.id)
-      const missing = ids.filter((id) => !value.charts[id])
-      if (missing.length) {
-        value.charts = { ...value.charts, ...await curves(value.version, method, missing) }
-      }
-      if (request !== workspaceRequest || disposed) return
-      const next = viewportStart(group, method, order)
-      if (next === start) break
-      start = next
-    }
     const changed = shownCategory.value !== group || shownWeight.value !== method ||
       !sameOrder(order, displayedOrder.value)
     const previous = screen.value
@@ -216,8 +192,6 @@ async function loadWorkspace(retry = true) {
         ? { ...previous.charts, ...value.charts } : value.charts,
     })
     if (changed) {
-      cardScroll.value = 0
-      cards.value?.scrollTo(0, 0)
       boardList.value?.scrollTo(0, 0)
     }
   } catch (cause) {
@@ -248,10 +222,10 @@ async function selectBoard(id: string) {
     return
   }
   try {
-    const next = await cachedStockDb<Members>(bundlePath(id, current.version))
+    const [next, charts] = await Promise.all([cachedStockDb<Members>(bundlePath(id, current.version)), curves(current.version, current.weight, [id])])
     if (request !== memberRequest || disposed || screen.value?.version !== current.version ||
       screen.value.category !== current.category || screen.value.weight !== current.weight) return
-    rememberWorkspace({ ...screen.value, boardId: id, detail: next })
+    rememberWorkspace({ ...screen.value, boardId: id, detail: next, charts: { ...screen.value.charts, ...charts } })
     memberList.value?.scrollTo(0, 0)
   } catch (cause) {
     if (request !== memberRequest || disposed) return
@@ -282,24 +256,6 @@ async function selectStock(code: string) {
   }
 }
 
-async function visibleCurves() {
-  const current = screen.value
-  if (!current) return
-  const request = ++chartRequest
-  try {
-    const data = await curves(current.version, current.weight, visibleCards.value.map((board) => board.id))
-    if (disposed || request !== chartRequest || screen.value?.version !== current.version ||
-      screen.value.category !== current.category || screen.value.weight !== current.weight) return
-    if (Object.keys(data).some((id) => !screen.value!.charts[id])) {
-      rememberWorkspace({ ...screen.value, charts: { ...screen.value.charts, ...data } })
-    }
-  } catch (cause) {
-    if (disposed || request !== chartRequest) return
-    if (cause instanceof StockDbHttpError && cause.status === 409) void loadWorkspace()
-    else error.value = '部分曲线暂未更新。'
-  }
-}
-
 watch([category, weight], ([group], previous) => {
   if (!ready.value) return
   if (group !== previous[0]) pinnedBoard.value = false
@@ -308,7 +264,6 @@ watch([category, weight], ([group], previous) => {
 watch([days, sort], () => {
   if (ready.value) void loadWorkspace()
 })
-watch(firstCard, () => { void visibleCurves() })
 watch([days, sort, memberSort, memberAscending], () => {
   try {
     localStorage.setItem('stockdb-workspace-preferences-v2', JSON.stringify({
@@ -472,52 +427,44 @@ onBeforeUnmount(() => {
       </header>
       <div v-if="!screen && error" class="empty state" role="alert">{{ error }} <button @click="refresh">重试</button></div>
       <div v-if="screen && !loading && !ranked.length" class="empty state">请选择板块</div>
-      <div ref="cards" class="cards" @scroll.passive="cardScroll = ($event.target as HTMLElement).scrollTop">
-        <div :style="{ height: ranked.length * cardHeight + 'px', position: 'relative' }">
-          <div class="card-window" :style="{ top: firstCard * cardHeight + 'px' }">
-            <article v-for="(board, i) in visibleCards" :key="board.id" class="card">
-              <header class="card-head">
-                <span class="rank" :class="`rank--${firstCard + i + 1}`">TOP {{ firstCard + i + 1 }}</span>
-                <button class="card-name ellipsis" :class="{ selected: boardId === board.id }" :title="board.name"
-                  @click="selectBoard(board.id)" @dblclick="!trendMode && compare(board)">{{ board.name }}</button>
-                <span class="weight-label">{{ weightName }}{{ shownWeight === 'equal' ? '' : '加权' }}</span>
-                <button class="compare" :aria-label="`${board.name}五维对比`" @click="compare(board)">五维</button>
-                <strong class="quote">{{ board.price?.toFixed(2) ?? '—' }}</strong>
-                <strong class="quote" :class="color(board.change)">{{ formatReturn(board.change) }}</strong>
-              </header>
-              <StockDbChart v-if="board.bars.length" :bars="board.bars.slice(-44)" :label="`${board.name}指数日 K`" amount synthetic />
-            </article>
+      <article v-if="selectedIndex" class="card selected-index">
+        <header class="card-head">
+          <strong class="card-name ellipsis">{{ selectedIndex.name }}</strong>
+          <span class="weight-label">{{ weightName }}{{ shownWeight === 'equal' ? '' : '加权' }}</span>
+          <button class="compare" :aria-label="`${selectedIndex.name}五维对比`" @click="compare(selectedIndex)">五维</button>
+          <strong class="quote">{{ numberText(selectedIndex.price) }}</strong>
+          <strong class="quote" :class="color(selectedIndex.change)">{{ formatReturn(selectedIndex.change) }}</strong>
+        </header>
+        <StockDbChart v-if="indexBars.length" :bars="indexBars.slice(-44)" :label="`${selectedIndex.name}指数日 K`" amount synthetic />
+      </article>
+      <section class="member-panel">
+        <header class="panel-head"><strong>{{ currentBoard?.name }} · 成分股</strong><small v-if="detail">{{ members.length }}/{{ detail.count }} 只 · 最新收盘行情</small></header>
+        <div ref="memberList" class="member-table" @scroll.passive="clearHover">
+          <div class="member-sorts member-grid">
+            <template v-for="[id, label] in memberColumns" :key="id">
+              <button :class="{ active: memberSort === id }" :aria-pressed="memberSort === id" @click="setMemberSort(id)">{{ label }}{{ memberSort === id ? (memberAscending ? '↑' : '↓') : '' }}</button>
+              <span v-if="id === 'code'">股票名称</span>
+            </template>
           </div>
+          <button v-for="stock in members" :key="stock.code" class="stock-row member-grid" :class="{ active: stockCode === stock.code }" :aria-pressed="stockCode === stock.code"
+            @pointerenter="showIntraday(stock, $event)" @pointerleave="clearHover" @click="selectStock(stock.code)">
+            <strong>{{ stock.code }}</strong><span class="ellipsis" :title="stock.name">{{ stock.name }}</span>
+            <span v-for="key in (['price', 'return', 'change', 'amount', 'turnover', 'float_mv'] as const)" :key="key" :class="['price', 'return', 'change'].includes(key) ? color(key === 'price' ? memberValue(stock, 'return') : memberValue(stock, key)) : key === 'amount' ? 'quote-highlight' : ''">{{ memberText(stock, key) }}</span>
+          </button>
+          <p v-if="detail && !members.length" class="empty">暂无成分股行情</p>
         </div>
-      </div>
+      </section>
     </section>
 
     <aside v-if="!trendMode" class="panel constituents">
-      <header class="panel-head"><strong class="ellipsis">{{ currentBoard?.name ?? '板块股票' }}</strong>
-        <small v-if="detail">{{ detail.members.length }}/{{ detail.count }} 只</small>
-      </header>
+      <header class="panel-head"><strong class="ellipsis">{{ currentBoard?.name ?? '板块股票' }}</strong><small>个股详情</small></header>
       <div class="stock-chart">
         <strong v-if="currentStock">{{ currentStock.code }} · {{ currentStock.name }} 日 K</strong>
         <StockDbChart v-if="detail" :bars="stockBars" :label="`${currentStock?.name ?? ''}日 K`" />
       </div>
-      <div class="member-sorts">
-        <button v-for="[id, label] in ([['return', '涨跌幅'], ['price', '价格'], ['code', '代码']] as const)" :key="id"
-          :class="{ active: memberSort === id }" :aria-pressed="memberSort === id" @click="setMemberSort(id)">
-          {{ label }}{{ memberSort === id ? (memberAscending ? '↑' : '↓') : '' }}
-        </button>
-      </div>
-      <div ref="memberList" class="rows" @scroll.passive="clearHover">
-        <p v-if="detail && !members.length" class="empty">暂无成分股行情</p>
-        <button v-for="stock in members" :key="stock.code" class="stock-row" :class="{ active: stockCode === stock.code }"
-          :aria-pressed="stockCode === stock.code" @pointerenter="showIntraday(stock, $event)" @pointerleave="clearHover"
-          @click="selectStock(stock.code)">
-          <strong>{{ stock.code }}</strong><span class="ellipsis">{{ stock.name }}</span><span>{{ stock.bar[4].toFixed(2) }}</span>
-          <span :class="color(barReturn([stock.bar], 1))">{{ formatReturn(barReturn([stock.bar], 1)) }}</span>
-        </button>
-      </div>
-      <div class="source"><span>本地 stockdb</span><small v-if="date">{{ date }}</small>
-        <small v-if="error" role="status" :title="error">暂未更新</small>
-        <small v-else-if="loading || refreshing" role="status">后台更新中</small>
+      <div class="stock-insights"><StockSummary :stock="currentStock" :version="screen?.version" :refresh-key="summaryRevision" @stale="loadWorkspace()" /></div>
+      <div class="source"><small v-if="date">{{ date }}</small>
+        <small v-if="error" role="status" :title="error">暂未更新</small><small v-else-if="loading || refreshing" role="status">后台更新中</small>
         <button :disabled="refreshing" @click="refresh">刷新</button>
       </div>
     </aside>
@@ -561,7 +508,7 @@ onBeforeUnmount(() => {
   --blueprint-candle-up: #d53750;
   --blueprint-candle-down: #13a479;
 }
-.blueprint { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(95px, 10.7%) minmax(170px, 19.3%) minmax(410px, 1fr) minmax(255px, 23.5%); background: var(--blueprint-workspace); color: var(--text); }
+.blueprint { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(90px, 8%) minmax(155px, 16%) minmax(0, 1fr) minmax(300px, 27%); background: var(--blueprint-workspace); color: var(--text); }
 .panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-panel); border-right: 1px solid var(--border); }
 .panel-head { flex: none; height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 small, .source { color: var(--text-secondary); font-size: 11px; }
@@ -594,24 +541,27 @@ button:hover, .active { background: var(--blueprint-active); color: var(--bluepr
 .ranking .active, .member-sorts .active { font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
 .indices { background: var(--blueprint-workspace); }
 .index-toolbar { background: var(--bg-panel); }
-.cards { flex: 1; min-height: 0; overflow: auto; padding: 10px 10px 0; }
-.card-window { position: absolute; inset-inline: 0; }
-.card { height: 328px; margin-bottom: 10px; padding: 0 9px 5px; display: flex; flex-direction: column; background: var(--bg-panel); border-radius: 7px; overflow: hidden; }
+.selected-index { flex: 1.1; min-height: 210px; margin: 0; padding: 0; display: flex; flex-direction: column; background: var(--bg-panel); border-radius: 7px; overflow: hidden; }
+.selected-index > :deep(.chart) { flex: 1; height: auto; min-height: 0; }
+.stock-row > strong, .stock-row > .ellipsis, .quote-highlight { color: var(--quote-highlight); }
+.stock-row .up { color: var(--quote-up); }.stock-row .down { color: var(--quote-down); }
 .card-head { flex: none; height: 43px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--border); }
-.rank { align-self: flex-start; margin-left: -9px; padding: 4px 8px; color: #fff; background: #57748e; font-size: 10px; white-space: nowrap; font-weight: 800; }
-.rank--1 { background: #b90040; }.rank--2 { background: #bd4a13; }.rank--3 { background: #a76920; }
+.member-panel { flex: 1; display: flex; flex-direction: column; min-height: 180px; overflow: hidden; background: var(--bg-panel); }
+.member-table { overflow: auto; flex: 1; min-height: 0; }
+.member-grid { display: grid; grid-template-columns: 62px minmax(100px, 1fr) 70px 76px 70px 83px 75px 88px; min-width: 800px; align-items: center; gap: 8px; padding: 0 12px; }
+.member-sorts { position: sticky; top: 0; z-index: 1; height: 36px; background: var(--bg-panel-2); color: var(--text-secondary); }
+.member-sorts button { text-align: right; padding: 0; font-size: 11px; }.member-sorts button:first-child { text-align: left; }
+.stock-insights { overflow: auto; flex: 1; min-height: 0; border-top: 1px solid var(--border); }
 .card-name { padding: 3px; font-weight: 700; }
 .card-name.selected::before { content: '●'; color: var(--blueprint-up); font-size: 8px; margin-right: 5px; }
 .weight-label, .compare { white-space: nowrap; color: var(--blueprint-link); background: var(--accent-soft); border: 1px solid var(--border-strong); border-radius: 4px; padding: 3px 5px; font-size: 10px; }
 .compare { margin-left: auto; }
 .quote { min-width: 66px; text-align: center; background: var(--bg-panel-2); border: 1px solid var(--border); padding: 3px 6px; border-radius: 4px; white-space: nowrap; }
 .quote.up { background: var(--up-soft); }.quote.down { background: var(--down-soft); }
-.stock-chart { flex: none; height: 246px; display: flex; flex-direction: column; padding: 6px 6px 0; overflow: hidden; }
+.stock-chart { flex: 0 0 43%; min-height: 225px; display: flex; flex-direction: column; padding: 6px 6px 0; overflow: hidden; }
 .stock-chart > strong, .intraday > strong { flex: none; padding: 0 3px; }
-.member-sorts { display: flex; gap: 5px; padding: 5px 8px; border-block: 1px solid var(--border); }
-.member-sorts button { padding: 4px 6px; font-size: 12px; }
-.stock-row { grid-template-columns: 54px minmax(0, 1fr) 53px 64px; min-height: 34px; border-bottom: 1px solid var(--border); font-size: 12px; }
-.stock-row strong { color: var(--blueprint-link); }
+.stock-row.member-grid { min-height: 39px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.stock-row strong { color: var(--quote-highlight); }
 .source { display: flex; gap: 7px; align-items: center; padding: 5px 8px; border-top: 1px solid var(--border); }.source button { margin-left: auto; }
 .empty { padding: 12px; color: var(--text-secondary); text-align: center; }.state { margin-top: 24px; }.state button { color: var(--blueprint-link); text-decoration: underline; }
 .intraday { position: fixed; z-index: 20; width: min(420px, calc(100vw - 16px)); height: 214px; display: flex; flex-direction: column; gap: 4px; padding: 8px; background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 7px; box-shadow: var(--shadow); pointer-events: none; }
@@ -622,13 +572,13 @@ dialog::backdrop { background: #23344950; }.compare-dialog { width: min(96vw, 16
 .compare-grid article { height: 235px; padding: 8px; display: flex; flex-direction: column; background: var(--bg-panel); border-radius: 5px; }
 .compare-grid article header { display: flex; justify-content: space-between; }
 @media (max-width: 1080px) {
-  .blueprint { grid-template-columns: 105px minmax(150px, 22%) minmax(0, 1fr); overflow: auto; grid-template-rows: minmax(510px, 1fr) 440px; }
+  .blueprint { grid-template-columns: 105px minmax(150px, 22%) minmax(0, 1fr); overflow: auto; grid-template-rows: minmax(650px, 1fr) 750px; }
   .constituents { grid-column: 1 / -1; }.algorithms strong { display: none; }
 }
 @media (max-width: 650px) {
   .blueprint { display: flex; flex-direction: column; }
   .categories { flex: none; }.categories__list { display: flex; flex-wrap: wrap; }
-  .boards { flex: none; max-height: 230px; }.indices { flex: none; height: 550px; }.constituents { flex: none; height: 440px; }
+  .boards { flex: none; max-height: 230px; }.indices { flex: none; height: 760px; }.constituents { flex: none; height: 800px; }
   .index-toolbar { padding: 0 4px; }.segmented button, .ranking button, .ranking select { padding-inline: 3px; }
 }
 </style>

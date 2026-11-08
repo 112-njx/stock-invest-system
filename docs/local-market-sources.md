@@ -29,7 +29,7 @@ docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d --b
 - 初始缓存配置为 256 MiB，容器总内存上限由 `STOCKDB_MEMORY_LIMIT` 控制，默认 2 GiB；缓存配置不是整个进程的内存上限。
 - 服务端配置 `readonly: yes` 禁止协议写入，但 LevelDB 打开、恢复、锁文件仍可能需要文件写权限，绑定挂载不设置只读。
 - **禁止 Windows 服务、另一套 Compose 服务或更新器同时打开同一数据集。**不要依赖跨 Windows/Linux 文件锁互斥。
-- 更新数据：先 `docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml stop stockdb-local`，确认退出后运行 Windows 更新工具；更新工具退出后 `up -d stockdb-local`，再在管理员页手动同步。
+- 更新数据：通过管理员页“一键更新原始数据”提交任务。现有容器控制进程暂停 RD/SDK 子进程，运行 Linux 更新器，校验文件后恢复服务；不要手动停止整个容器或再运行 Windows 更新器。
 - `/health` 仅探测桥进程；Docker 健康检查使用 `/opt/healthcheck.py` 调用 `/ready`，通过桥发起真实 SDK 查询并优先复用正常缓存，验证 7899、SDK 和数据；`/metrics` 提供耗时、缓存、共享请求及内存指标。关键子进程退出会导致整个容器失败并重启。
 - 回退：先停止 `stockdb-local`，恢复两个 URL 为 `host.docker.internal`，启动 Windows stockdb 与 `deploy/start_stockdb_sdk_bridge.ps1`，再重建后端容器以加载环境变量。生产和开发 Compose 不可同时使用同一数据目录。
 - 真实数据复验：运行 `scripts/verify_stockdb_container.py --base-url URL --output result.json [--compare baseline.json]`。服务仅内网可见时可把脚本复制进容器运行；脚本对比股票、ETF、申万一级指数的日期、条数、字段和值，并验证缓存结果。
@@ -56,4 +56,9 @@ K 线主键包含 `source`，区分 `stockdb` 和 `akshare`。默认最新页优
 
 SDK 桥第一阶段采用独立缓存锁与 SDK 执行锁，同参数并发请求合并，缓存命中不再排队等待长计算。缓存刷新采用版本隔离，旧请求不会回填新缓存。观测口径与验证限制见 `docs/ops/stockdb_bridge_stage1.md`。
 
-原始数据更新入口、Windows 助手、数据版本与完整行业结果缓存见 `docs/ops/stockdb_update_and_cache.md`。页面“一键更新原始数据”与“同步本地行情”是两个独立步骤；前者不自动导入项目库，后者不运行更新器。
+原始数据更新入口、容器控制器、数据版本与完整行业结果缓存见 `docs/ops/stockdb_update_and_cache.md`。页面“一键更新原始数据”与“同步本地行情”是两个独立步骤；前者不自动导入项目库，后者不运行更新器。
+
+
+容器原始数据更新：`supervise.py` 保持控制器和心跳在线，Linux 更新器仅通过现有 D 盘 bind mounts 读写原始文件，不复制数据入容器、不备份。`data1`、`data_app`、`mydb` 挂载配置保持原样。`sync_url.txt` 额外只读挂载，控制目录可写；旧 Windows 启动入口已禁用。
+
+更新事件持久化至项目控制目录的 `update-events.sqlite3`。管理员接口 `/admin/local-market/update/events` 按任务和递增序号分页，支持 `after_seq` 增量及 `before_seq` 历史回看。页面显示当前阶段、更新器可观测的文件数量/下载量/速度、文件续传状态、校验结果及完整事件记录；没有输出的统计显示“—”，不估算下载速度。运行日志固定高度，向上查看暂停跟随，返回最新后恢复。退出码 0 不代表成功：必须具有原生完成标记、通过文件校验和真实 RD/SDK 查询。中断或失败保持维护状态，允许显式重试，不自动重跑更新器。

@@ -1,9 +1,15 @@
-"""Keep the native server and existing SDK bridge in one failure domain."""
+"""Keep update control alive while the native data readers are stopped."""
+import fcntl
 import os
 import signal
 import socket
 import subprocess
+import threading
 import time
+from pathlib import Path
+from urllib.request import urlopen
+from stockdb_files import read_json, write_json
+from update_control import Controller
 
 children = []
 stopping = False
@@ -14,50 +20,84 @@ def stop(signum, frame):
     stopping = True
 
 
-def launch(args):
-    process = subprocess.Popen(args, start_new_session=True)
-    children.append(process)
-    return process
+def stop_readers():
+    for child in reversed(children):
+        if child.poll() is None:
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+    children.clear()
+
+
+def start_readers():
+    if stopping:
+        raise RuntimeError('container is stopping')
+    children.append(subprocess.Popen(['/opt/stockdb/stockdb', '/opt/stockdb/stockdb.conf'], start_new_session=True))
+    deadline = time.monotonic() + 60
+    while True:
+        if stopping or children[0].poll() is not None:
+            raise RuntimeError('RD startup interrupted or failed')
+        try:
+            with socket.create_connection(('127.0.0.1', 7899), timeout=1):
+                break
+        except OSError:
+            if time.monotonic() > deadline:
+                raise TimeoutError('RD startup timeout')
+            time.sleep(.25)
+    children.append(subprocess.Popen(['python', '/opt/stockdb_sdk_bridge.py', '--sdk-dir', '/opt/stockdb/pybao'], start_new_session=True))
+
+
+def probe():
+    deadline = time.monotonic() + 180
+    while True:
+        try:
+            with urlopen('http://127.0.0.1:7900/ready', timeout=30) as r:
+                assert r.status == 200
+            with urlopen('http://127.0.0.1:7900/indicators/ready', timeout=30) as r:
+                assert r.status == 200
+            return
+        except Exception:
+            if stopping or time.monotonic() > deadline:
+                raise RuntimeError('RD/SDK query verification failed')
+            time.sleep(1)
 
 
 def main():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    for directory in ('data', 'data1', 'data_app', 'mydb'):
-        if not os.path.isdir(directory):
-            raise RuntimeError(f'Missing bind-mounted directory: {directory}')
-    server = launch(['/opt/stockdb/stockdb', '/opt/stockdb/stockdb.conf'])
-    deadline = time.monotonic() + 60
+    root = Path(os.environ.get('STOCKDB_CONTROL_DIR', '/stockdb-control'))
+    root.mkdir(parents=True, exist_ok=True)
+    lock = (root/'linux-controller.lock').open('a+b')
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    controller = Controller(root, '/opt/stockdb', start_readers, stop_readers, probe)
+    controller.recover()
+    def heartbeat():
+        while not stopping:
+            write_json(root/'heartbeat.json', {'time':time.time(), 'pid':os.getpid(), 'kind':'linux-container'})
+            time.sleep(5)
+    threading.Thread(target=heartbeat, daemon=True).start()
+    worker = None
     try:
+        if not (root/'maintenance.json').exists():
+            start_readers()
         while not stopping:
-            if server.poll() is not None:
-                raise RuntimeError(f'stockdb exited: {server.returncode}')
-            try:
-                with socket.create_connection(('127.0.0.1', 7899), timeout=1):
-                    break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError('stockdb startup exceeded 60 seconds')
-                time.sleep(.25)
-        if not stopping:
-            launch(['python', '/opt/stockdb_sdk_bridge.py', '--sdk-dir', '/opt/stockdb/pybao'])
-        while not stopping:
-            for child in children:
-                if child.poll() is not None:
-                    raise RuntimeError(f'Child exited: {child.args}, status={child.returncode}')
+            if worker is None or not worker.is_alive():
+                job = read_json(root/'request.json')
+                if job:
+                    worker = threading.Thread(target=controller.execute, args=(job,), daemon=True)
+                    worker.start()
+                elif controller.recover_orphan():
+                    pass
+                elif not (root/'maintenance.json').exists():
+                    for child in children:
+                        if child.poll() is not None:
+                            raise RuntimeError('native reader exited')
             time.sleep(.25)
     finally:
-        for child in reversed(children):
-            try:
-                os.killpg(child.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-        for child in children:
-            try:
-                child.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                child.wait()
+        stop_readers()
 
 
 if __name__ == '__main__':

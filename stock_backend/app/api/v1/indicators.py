@@ -1,4 +1,4 @@
-"""技术指标 API：服务端计算 MACD/KDJ/成交量/成交额（前端只渲染，不计算）。"""
+"""技术指标 API：协调本地 SDK 指标引擎，前端只渲染。7899 仅存取行情。"""
 
 import json
 from datetime import datetime
@@ -12,6 +12,12 @@ from app.core.response import ok
 from app.services import indicator_service
 
 router = APIRouter(prefix="/api/v1", tags=["indicators"])
+
+
+@router.get('/indicators/catalog')
+def get_indicator_catalog() -> dict:
+    from app.services.indicator_registry import DEFINITIONS
+    return ok(data={'version': 1, 'indicators': DEFINITIONS})
 
 
 @router.get("/indicators")

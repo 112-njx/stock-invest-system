@@ -1,3 +1,5 @@
+> 当前执行方式已改为 Linux 容器内控制：后台提交 → 暂停 RD/SDK 子进程 → Linux 更新器 → 清单校验 → 服务恢复及真实查询。无需 Windows 更新助手，`deploy/start_stockdb_update_agent.ps1` 已禁用。下面涉及 Windows 助手的内容为旧方案记录，不再用于当前部署。当前使用方式见 `docs/local-market-sources.md`。
+
 # 原始数据一键更新与行业结果缓存
 
 ## 页面上的两个入口

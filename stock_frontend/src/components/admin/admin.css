@@ -544,3 +544,69 @@
     font-size: 22px;
   }
 }
+
+/* Keep the polling status in normal flow at a constant height. */
+.admin-console .resource-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 24px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.admin-console .resource-refresh { visibility: hidden; flex: none; }
+.admin-console .resource-refresh.visible { visibility: visible; }
+.admin-console .workspace-header > button { min-width: 126px; }
+.admin-console .admin-errors {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel-2);
+  min-width: 0;
+}
+.admin-console .admin-errors h4 { margin: 0 0 8px; font-size: 12px; color: var(--text); }
+.admin-console .admin-errors h4 span { color: var(--text-muted); font-weight: 400; }
+.admin-console .admin-errors ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 0 0;
+  max-height: 288px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.admin-console .admin-errors li {
+  display: grid;
+  grid-template-columns: minmax(80px, 120px) minmax(0, 1fr);
+  gap: 6px 14px;
+  padding: 10px 0;
+  line-height: 1.7;
+  color: #e05260;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.admin-console .admin-errors li + li { border-top: 1px solid var(--border); }
+.admin-console .admin-errors li > span:only-child { grid-column: 1 / -1; }
+.admin-console .admin-errors strong { font-weight: 600; }
+.admin-console .notice { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .admin-console .admin-errors li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
+
+.admin-console .update-details { margin-top:16px; min-width:0; }
+.admin-console .update-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; font-variant-numeric:tabular-nums; }
+.admin-console .update-stats dt { color:var(--text-muted); }
+.admin-console .update-stats dd { margin:4px 0; overflow-wrap:anywhere; }
+.admin-console .update-log-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:12px 0; }
+.admin-console .update-log-actions span { color:var(--text-muted); }
+.admin-console .update-log { height:288px; overflow:auto; scrollbar-gutter:stable; overscroll-behavior:contain; background:var(--bg-panel-2); border:1px solid var(--border); border-radius:6px; padding:10px; }
+.admin-console .update-log p { display:grid; grid-template-columns:75px 90px minmax(0,1fr); gap:8px; font-family:monospace; font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.admin-console .update-log time { color:var(--text-muted); }
+.admin-console .update-files { max-height:260px; overflow:auto; }
+@media(max-width:600px) { .admin-console .update-log p { grid-template-columns:65px minmax(0,1fr); } .admin-console .update-log p span { grid-column:1/-1; } }

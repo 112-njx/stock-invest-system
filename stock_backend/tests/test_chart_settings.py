@@ -1,0 +1,185 @@
+"""Account isolation, validation and custom MA API contracts."""
+import json
+from types import SimpleNamespace
+from uuid import uuid4
+import pytest
+from app.main import app
+from app.api.deps import get_current_user
+from app.models.user import User
+from app.utils.db import get_session
+from app.schemas.chart_settings import ChartSettings, MaParameters
+
+@pytest.fixture
+def accounts():
+    with get_session() as db:
+        users = [User(username='chart_' + uuid4().hex, password_hash='test-only') for _ in range(2)]
+        db.add_all(users); db.commit()
+        ids = [u.id for u in users]
+    try:
+        yield ids
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        with get_session() as db:
+            db.query(User).filter(User.id.in_(ids)).delete(synchronize_session=False); db.commit()
+
+def test_chart_settings_require_login(client):
+    assert client.get('/api/v1/users/me/chart-settings').status_code == 401
+    assert client.put('/api/v1/users/me/chart-settings', json={}).status_code == 401
+
+def test_accounts_save_reload_and_isolation(client, accounts):
+    active = [accounts[0]]
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=active[0])
+    url = '/api/v1/users/me/chart-settings'
+    default = client.get(url).json()['data']
+    assert default == ChartSettings().model_dump(exclude_none=True)
+    custom = {'ma': {'lines': [{'period': n, 'visible': n != 7} for n in [7,20,60,120,250,10000]]}, 'panels': ['volume','macd','kdj']}
+    assert client.put(url, json=custom).json()['data'] == custom
+    assert client.get(url).json()['data'] == custom
+    active[0] = accounts[1]
+    assert client.get(url).json()['data'] == default
+    active[0] = accounts[0]
+    custom['panels'] = []
+    assert client.put(url, json=custom).json()['data']['panels'] == []
+    assert client.put(url, json={**custom, 'panels': ['volume','amount','macd','kdj']}).status_code == 422
+    assert client.get(url).json()['data']['panels'] == []
+
+@pytest.mark.parametrize('periods', [[], [5,5], [0], [10001], [True], [1.5], list(range(1,8))])
+def test_reject_invalid_ma_parameters(client, periods):
+    result = client.get('/api/v1/indicators', params={'symbol': '300502', 'names': 'ma', 'params': json.dumps({'ma': {'periods': periods}})})
+    assert result.status_code == 400
+
+@pytest.mark.parametrize('lines', [[], [{'period':5},{'period':5}], [{'period':0}], [{'period':True}], [{'period':i} for i in range(1,8)]])
+def test_preferences_validate_ma(lines):
+    with pytest.raises(ValueError): ChartSettings.model_validate({'ma': {'lines': lines}})
+
+def test_ma_parameter_default_compatibility():
+    assert MaParameters().periods == [5,10,20,30]
+
+
+def test_v2_preferences_preserve_parameters_through_legacy_writes(client, accounts):
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=accounts[0])
+    url = '/api/v1/users/me/chart-settings'
+    v2 = {'version':2,'ma':ChartSettings().model_dump()['ma'],'panels':['kdj','macd'], 'panel_options':{'kdj':{'params':{'n':14}},'macd':{'params':{'fast':7,'slow':20,'signal':5}}}}
+    assert client.put(url,json=v2).json()['data'] == v2
+    assert client.get(url,params={'version':2}).json()['data'] == v2
+    legacy = client.get(url).json()['data']
+    assert set(legacy) == {'ma','panels'}
+    legacy['panels'] = ['macd']
+    assert client.put(url,json=legacy).json()['data'] == legacy
+    restored = client.get(url,params={'version':2}).json()['data']
+    assert restored['panel_options'] == v2['panel_options']
+    assert restored['panels'] == ['macd']
+    assert client.put(url,json={**v2,'panel_options':{'kdj':{'params':{'n':0}}}}).status_code == 422
+
+
+def test_common_panel_parameters_save_reload_and_account_isolation(client,accounts):
+    active=[accounts[0]]
+    app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=active[0])
+    url='/api/v1/users/me/chart-settings'
+    config={'version':2,'ma':ChartSettings().model_dump()['ma'],'panels':['rsi','wr','cci'],'panel_options':{'rsi':{'params':{'n':7}},'wr':{'params':{'n':14,'n1':5}},'cci':{'params':{'n':9}},'atr':{'params':{'n':6}}}}
+    assert client.put(url,json=config).status_code==200
+    assert client.get(url,params={'version':2}).json()['data']==config
+    assert client.put(url,json={**config,'panels':['rsi','wr','cci','atr']}).status_code==422
+    config['panels']=['rsi','wr','atr']
+    assert client.put(url,json=config).json()['data']==config
+    active[0]=accounts[1]
+    assert client.get(url,params={'version':2}).json()['data']['panels']==['volume','macd']
+    active[0]=accounts[0]
+    assert client.get(url,params={'version':2}).json()['data']==config
+
+
+def test_main_overlays_do_not_use_panel_slots_and_survive_old_clients(client,accounts):
+    active=[accounts[0]]
+    app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=active[0])
+    url='/api/v1/users/me/chart-settings'
+    config={'version':2,'ma':ChartSettings().model_dump()['ma'],'panels':['rsi','wr','atr'],'panel_options':{},'overlays':['boll','ema','expma','bbi','wma','sma','dma'],'overlay_options':{'boll':{'params':{'n':10,'p':2.5}},'dma':{'params':{'a':.25}},'sma':{'params':{'n':9,'m':2}}}}
+    assert client.put(url,json=config).json()['data']==config
+    assert client.get(url,params={'version':2}).json()['data']==config
+    active[0]=accounts[1]
+    assert 'overlays' not in client.get(url,params={'version':2}).json()['data']
+    active[0]=accounts[0]
+    legacy=client.get(url).json()['data']
+    assert set(legacy)=={'ma','panels'}
+    assert client.put(url,json=legacy).json()['data']==legacy
+    assert client.get(url,params={'version':2}).json()['data']==config
+    older_v2={k:v for k,v in config.items() if k not in ('overlays','overlay_options')}
+    assert client.put(url,json=older_v2).json()['data']==config
+    for invalid in [{'overlays':['ma']},{'overlays':['rsi']},{'overlays':['ema','ema']},{'overlay_options':{'rsi':{'params':{}}}},{'overlay_options':{'dma':{'params':{'a':0}}}}]:
+        assert client.put(url,json={**config,**invalid}).status_code==422
+    config['overlays']=[]
+    assert client.put(url,json=config).json()['data']['overlay_options']==config['overlay_options']
+
+
+def test_momentum_panels_preserve_defaults_other_options_and_account_isolation(client,accounts):
+    active=[accounts[0]]
+    app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=active[0])
+    url='/api/v1/users/me/chart-settings'
+    config={'version':2,'ma':ChartSettings().model_dump()['ma'],'panels':['bias','psy','dpo'],'overlays':['boll'],'overlay_options':{'boll':{'params':{'p':2.5}}},'panel_options':{'bias':{'params':{'l1':3,'l2':9,'l3':18}},'psy':{'params':{'n':9,'m':3}},'dpo':{'params':{'m1':12,'m2':6,'m3':3}},'mtm':{'params':{'n':7,'m':3}},'roc':{'params':{'n':7,'m':3}}}}
+    assert client.put(url,json=config).json()['data']==config
+    assert client.get(url,params={'version':2}).json()['data']==config
+    assert client.put(url,json={**config,'panels':['bias','psy','dpo','mtm']}).status_code==422
+    config['panels']=['bias','mtm','roc']
+    assert client.put(url,json=config).json()['data']==config
+    active[0]=accounts[1]
+    assert client.get(url,params={'version':2}).json()['data']['panels']==['volume','macd']
+    active[0]=accounts[0]
+    assert client.get(url,params={'version':2}).json()['data']==config
+    legacy=client.get(url).json()['data']
+    assert client.put(url,json=legacy).json()['data']==legacy
+    assert client.get(url,params={'version':2}).json()['data']==config
+    assert client.put(url,json={**config,'panel_options':{'bias':{'params':{'l1':0}}}}).status_code==422
+
+
+def test_trend_volume_channels_settings_slots_parameters_and_legacy(client, accounts):
+    from tests.test_trend_volume_channels import KEYS, CHANNELS, CUSTOM
+    active = [accounts[0]]
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=active[0])
+    url = '/api/v1/users/me/chart-settings'
+    panels = [k for k in KEYS if k not in CHANNELS]
+    config = {'version': 2, 'ma': {'lines': [{'period': n, 'visible': True} for n in [5, 10, 20, 30, 60, 120]]},
+              'panels': [], 'overlays': ['boll', *CHANNELS],
+              'overlay_options': {k: {'params': CUSTOM[k]} for k in CHANNELS},
+              'panel_options': {k: {'params': CUSTOM[k]} for k in panels}}
+    for index in range(0, len(panels), 3):
+        config['panels'] = panels[index:index + 3]
+        assert client.put(url, json=config).json()['data'] == config
+        assert client.get(url, params={'version': 2}).json()['data'] == config
+    assert client.put(url, json={**config, 'panels': panels[:4]}).status_code == 422
+    assert client.put(url, json={**config, 'panels': ['taq']}).status_code == 422
+    assert client.put(url, json={**config, 'overlays': ['dmi']}).status_code == 422
+    assert client.put(url, json={**config, 'panel_options': {'obv': {'params': {'n': 7}}}}).status_code == 422
+    legacy = client.get(url).json()['data']
+    assert client.put(url, json=legacy).json()['data'] == legacy
+    assert client.get(url, params={'version': 2}).json()['data'] == config
+    active[0] = accounts[1]
+    assert client.get(url, params={'version': 2}).json()['data']['panels'] == ['volume', 'macd']
+    active[0] = accounts[0]
+    assert client.get(url, params={'version': 2}).json()['data'] == config
+    config['panels'] = []
+    assert client.put(url, json=config).json()['data']['panels'] == []
+
+
+def test_statistics_index_controls_order_reset_and_legacy_roundtrip(client,accounts):
+    from tests.test_statistics_composite import INDEX
+    active=[accounts[0]]
+    app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=active[0])
+    url='/api/v1/users/me/chart-settings'
+    config={'version':2,'ma':ChartSettings().model_dump()['ma'],'panels':['std','zhishu','macd'],
+            'panel_options':{'std':{'params':{'n':7,'field':'volume'}},'zhishu':{'params':INDEX},'macd':{'params':{'cross':True}}},
+            'overlays':['ema'],'overlay_options':{'ema':{'params':{'n':9,'field':'open'}}}}
+    assert client.put(url,json=config).json()['data']==config
+    config['panels']=['zhishu','macd','std']
+    assert client.put(url,json=config).json()['data']==config
+    legacy=client.get(url).json()['data']
+    assert client.put(url,json=legacy).json()['data']==legacy
+    assert client.get(url,params={'version':2}).json()['data']==config
+    # Reset one indicator independently; the index, order and overlays survive.
+    del config['panel_options']['std']
+    assert client.put(url,json=config).json()['data']==config
+    assert client.put(url,json={**config,'panels':['std','sum','zhishu','macd']}).status_code==422
+    assert client.put(url,json={**config,'panel_options':{}}).status_code==422
+    active[0]=accounts[1]
+    assert client.get(url,params={'version':2}).json()['data']['panels']==['volume','macd']
+    assert client.put(url,json={'panels':['zhishu']}).status_code==422
+    active[0]=accounts[0]
+    assert client.get(url,params={'version':2}).json()['data']==config

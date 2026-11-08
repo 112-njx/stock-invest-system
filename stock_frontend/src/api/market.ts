@@ -102,6 +102,71 @@ export interface SyncStatus {
 
 /** 技术指标行：K 线基础字段 + 请求的指标列（macd_dif/dea/hist、kdj_k/d/j；成交量成交额为基础字段） */
 export interface IndicatorRow extends KLineBar {
+  std?: number | null
+  sum?: number | null
+  hhv?: number | null
+  llv?: number | null
+  ref?: number | null
+  zhishu_close?: number | null
+  zhishu_count?: number | null
+  [field: `${string}_cross`]: number | null | undefined
+  dmi_pdi?: number | null
+  dmi_mdi?: number | null
+  dmi_adx?: number | null
+  dmi_adxr?: number | null
+  trix?: number | null
+  trix_ma?: number | null
+  dfma_dif?: number | null
+  dfma_difma?: number | null
+  mass?: number | null
+  mass_ma?: number | null
+  vr?: number | null
+  cr?: number | null
+  emv?: number | null
+  emv_ma?: number | null
+  brar_ar?: number | null
+  brar_br?: number | null
+  obv?: number | null
+  mfi?: number | null
+  asi?: number | null
+  asi_ma?: number | null
+  taq_up?: number | null
+  taq_mid?: number | null
+  taq_down?: number | null
+  ktn_up?: number | null
+  ktn_mid?: number | null
+  ktn_down?: number | null
+  xsii_td1?: number | null
+  xsii_td2?: number | null
+  xsii_td3?: number | null
+  xsii_td4?: number | null
+  bias1?: number | null
+  bias2?: number | null
+  bias3?: number | null
+  psy?: number | null
+  psy_ma?: number | null
+  dpo?: number | null
+  dpo_ma?: number | null
+  mtm?: number | null
+  mtm_ma?: number | null
+  roc?: number | null
+  roc_ma?: number | null
+  boll_upper?: number | null
+  boll_mid?: number | null
+  boll_lower?: number | null
+  ema?: number | null
+  expma1?: number | null
+  expma2?: number | null
+  bbi?: number | null
+  wma?: number | null
+  sma?: number | null
+  dma?: number | null
+  rsi?: number | null
+  wr1?: number | null
+  wr2?: number | null
+  cci?: number | null
+  atr?: number | null
+  [key: `ma${number}`]: number | null | undefined
   ma5?: number | null
   ma10?: number | null
   ma20?: number | null
@@ -181,16 +246,17 @@ export function removeWatchlist(watchlistId: number) {
   return request<null>({ url: `/watchlist/${watchlistId}`, method: 'delete' })
 }
 
-/** 技术指标（服务端计算 MACD/KDJ/成交量/成交额，前端只渲染） */
+/** 本地 SDK 指标引擎结果；前端只渲染。 */
 export function fetchIndicators(params: {
   symbol: string | number
   period: Period
   names?: string
+  params?: string
   limit?: number
   start?: string
   end?: string
 }) {
-  return request<IndicatorRow[]>({ url: '/indicators', params })
+  return request<IndicatorRow[]>({ url: '/indicators', params, ...(params.names==='zhishu' ? {timeout:60000} : {}) })
 }
 
 /** 支撑/压力位列表（可按标的过滤） */

@@ -43,6 +43,7 @@ export interface LocalSync {
   message: string
 }
 export interface LocalUpdate extends LocalSync {
+  details?: Record<string, string | number>
   helper_online: boolean
   maintenance: boolean
   can_retry: boolean

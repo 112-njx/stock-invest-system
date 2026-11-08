@@ -6,6 +6,9 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+import json
+from app.schemas.chart_settings import ChartSettings
 
 from app.api.deps import get_current_user, get_db
 from app.core.config import get_settings
@@ -20,6 +23,41 @@ from app.services.llm.user_key import ApiKeyFormatError, validate_api_key
 _settings = get_settings()
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
+
+
+@router.get('/me/chart-settings')
+def get_chart_settings(version: int = Query(1, ge=1, le=2), current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    value = db.execute(text('SELECT settings FROM user_chart_settings WHERE user_id=:id'), {'id': current.id}).scalar_one_or_none()
+    value = ChartSettings.model_validate(value or {}).model_dump(exclude_none=True)
+    if version == 2:
+        value.update(version=2, panel_options=value.get('panel_options', {}))
+    else:
+        value = {k: value[k] for k in ('ma', 'panels')}
+    return ok(data=value)
+
+
+@router.put('/me/chart-settings')
+def save_chart_settings(payload: ChartSettings, current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    value = payload.model_dump(exclude_none=True)
+    response = dict(value)
+    old = db.execute(text('SELECT settings FROM user_chart_settings WHERE user_id=:id'), {'id': current.id}).scalar_one_or_none()
+    if payload.version is None:
+        if old and old.get('version') == 2:
+            value.update(version=2, panel_options=old.get('panel_options', {}))
+    for field in ('overlays', 'overlay_options'):
+        if old and field not in payload.model_fields_set and field in old:
+            value[field] = old[field]
+    if 'zhishu' in value.get('panels', []):
+        from app.services.indicator_registry import validate_composite
+        try:
+            validate_composite(value.get('panel_options', {}).get('zhishu', {}).get('params'))
+        except ValueError as exc:
+            raise ApiError(status_code=422, code=42200, msg=str(exc)) from exc
+    if payload.version == 2:
+        response = dict(value)
+    db.execute(text('INSERT INTO user_chart_settings(user_id,settings) VALUES(:id,CAST(:settings AS jsonb)) ON CONFLICT(user_id) DO UPDATE SET settings=EXCLUDED.settings'), {'id': current.id, 'settings': json.dumps(value)})
+    db.commit()
+    return ok(data=response)
 
 
 @router.get("/me")

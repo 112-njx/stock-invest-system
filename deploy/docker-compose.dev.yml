@@ -53,8 +53,13 @@ services:
       STOCKDB_CONTROL_DIR: /stockdb-control
       STOCKDB_CACHE_DIR: /var/cache/stockdb
     volumes:
-      - ../stock_backend/data/stockdb-control:/stockdb-control:ro
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - ../stock_backend/data/stockdb-cache:/var/cache/stockdb
+      - type: bind
+        source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/sync_url.txt
+        target: /opt/stockdb/sync_url.txt
+        read_only: true
+        bind: { create_host_path: false }
       - type: bind
         source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data
         target: /opt/stockdb/data

@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from .v1 import (
     admin,
+    all_data,
     agent_ops,
     agents,
     announcements,
@@ -48,3 +49,5 @@ api_router.include_router(memory.router)  # /api/v1/memory/facts（记忆管理�
 api_router.include_router(notifications.router)  # /api/v1/notifications（G16 通知中心）
 api_router.include_router(announcements.router)  # /api/v1/announcements|admin/announcements（G16 公告）
 api_router.include_router(ws_market.router)  # WS /api/v1/ws/market（实时行情）
+
+api_router.include_router(all_data.router)

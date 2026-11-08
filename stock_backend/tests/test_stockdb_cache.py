@@ -2,6 +2,7 @@
 
 import json
 from contextlib import nullcontext
+from datetime import date, timedelta
 from threading import Lock
 from time import time
 from unittest.mock import Mock
@@ -183,3 +184,80 @@ def test_content_version_changes_for_same_day_corrections(monkeypatch):
     corrected = rd._load_snapshot()
     assert original.dates == corrected.dates
     assert original.version != corrected.version
+
+
+@pytest.mark.parametrize("length", [6, 61])
+def test_phase_returns_use_factor_adjustment_and_exact_history(monkeypatch, length):
+    dates = list(range(20260101, 20260101 + length))
+    def query(client, command, table, **params):
+        if command == "keys":
+            return [f"日k:600001:{day}" for day in dates] + ["日k:600001:20990101"]
+        if table == "复权":
+            return [[f"复权:600001:{dates[-1]}", 2]]
+        assert "num" not in params
+        assert params["k2"] == f"fwd:{dates[0]},{dates[-1]}"
+        return [[day, 50 if day == dates[-1] else 100] for day in dates]
+    monkeypatch.setattr(rd, "_client", lambda: nullcontext(None))
+    monkeypatch.setattr(rd, "_rd", query)
+    result = rd.performance("600001", dates[-1])
+    assert result["returns"]["5"]["value"] == 0
+    assert result["returns"]["60"]["value"] == (0 if length == 61 else None)
+    assert result["as_of"] == dates[-1]
+
+
+def test_phase_returns_reject_missing_snapshot_day(monkeypatch):
+    monkeypatch.setattr(rd, "_client", lambda: nullcontext(None))
+    monkeypatch.setattr(rd, "_rd", lambda *args, **kwargs: ["日k:600001:20260101"] if args[1] == "keys" else [])
+    with pytest.raises(rd.StockDBError):
+        rd.performance("600001", 20260102)
+
+
+def test_phase_etag_revalidates_corrections_outside_snapshot_window(monkeypatch):
+    first = date(2026, 7, 1)
+    days = [first + timedelta(days=i) for i in range(100)]
+    dates = [int(day.strftime("%Y%m%d")) for day in days if day.weekday() < 5]
+    rows = [[day, "600519", "test", 100, 100, 100, 100, 100, 10, 1000, 2000, 3000, 1]
+            for day in dates]
+
+    def query(client, command, table, **params):
+        if command == "keys":
+            return [f"日k:600519:{day}" for day in dates]
+        if table in ("板块*", "复权*", "复权"):
+            return []
+        start, end = map(int, params["k2"].split(":")[1].split(","))
+        selected = [row for row in rows if start <= row[0] <= end]
+        if params["k1"].startswith("qz:") and params["k1"] != "qz:6":
+            return []
+        return [[row[0], row[6]] for row in selected] if params["ap"] == "get.date,close" else selected
+
+    monkeypatch.setattr(rd, "_client", lambda: nullcontext(None))
+    monkeypatch.setattr(rd, "_rd", query)
+    original = rd._load_snapshot()
+    monkeypatch.setattr(rd, "snapshot", lambda: original)
+    # An existing version-keyed response must never suppress the fresh history read.
+    monkeypatch.setattr(cache, "response_bytes", Mock(side_effect=AssertionError("snapshot cache used")))
+    app = FastAPI()
+    app.include_router(stockdb.router)
+    path = f"/api/v1/stockdb/stocks/600519/performance?version={original.version}"
+    with TestClient(app) as client:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json()["returns"]["60"]["value"] == 0
+        headers = {"If-None-Match": response.headers["etag"]}
+        unchanged = client.get(path, headers=headers)
+        assert unchanged.status_code == 304
+        assert unchanged.content == b""
+
+        assert rows[-61][0] < original.dates[0]
+        rows[-61][6] = 50
+        corrected = rd._load_snapshot()
+        assert corrected.version == original.version
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+        assert response.json()["returns"]["60"]["value"] == 100
+        assert response.headers["etag"] != headers["If-None-Match"]
+        assert response.json()["version"] == original.version
+
+        assert client.get(path.replace(original.version, "stale")).status_code == 409
+        monkeypatch.setattr(rd, "performance", Mock(side_effect=rd.StockDBError("RD offline")))
+        assert client.get(path, headers=headers).status_code == 503

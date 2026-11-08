@@ -4,7 +4,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -27,6 +27,13 @@ logger = logging.getLogger(__name__)
 def get_local_update(current: User = Depends(get_current_admin)):
     from app.services.stockdb_update import status
     return ok(data=status())
+
+
+@router.get('/local-market/update/events')
+def local_update_events(task_id: str, after_seq: int = Query(0, ge=0), before_seq: int | None = Query(None, ge=1),
+                        limit: int = Query(200, ge=1, le=500), current: User = Depends(get_current_admin)):
+    from app.services.stockdb_update import events
+    return ok(data=events(task_id, after_seq, before_seq, limit))
 
 
 @router.post('/local-market/update')

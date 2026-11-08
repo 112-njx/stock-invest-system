@@ -1,0 +1,2070 @@
+[
+  {
+    "key": "ma",
+    "label": "MA",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "MA",
+    "parameters": [
+      {
+        "key": "periods",
+        "label": "周期",
+        "type": "integer_list",
+        "default": [
+          5,
+          10,
+          20,
+          30
+        ],
+        "min": 1,
+        "max": 10000,
+        "max_items": 6
+      }
+    ],
+    "series": [],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "volume",
+    "label": "成交量",
+    "placement": "panel",
+    "inputs": [
+      "volume"
+    ],
+    "native": null,
+    "parameters": [],
+    "series": [
+      {
+        "field": "volume",
+        "label": "VOL",
+        "color": "#888888",
+        "kind": "histogram",
+        "direction": "candle"
+      },
+      {
+        "field": "volume_ma5",
+        "label": "MA5",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "volume_ma10",
+        "label": "MA10",
+        "color": "#ef4444",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "format": "volume",
+    "engines": [
+      "sdk",
+      "pandas"
+    ]
+  },
+  {
+    "key": "amount",
+    "label": "成交额",
+    "placement": "panel",
+    "inputs": [
+      "amount"
+    ],
+    "native": null,
+    "parameters": [],
+    "series": [
+      {
+        "field": "amount",
+        "label": "成交额",
+        "color": "#888888",
+        "kind": "histogram",
+        "direction": "candle"
+      }
+    ],
+    "reference_lines": [],
+    "format": "volume",
+    "engines": [
+      "sdk",
+      "pandas"
+    ]
+  },
+  {
+    "key": "macd",
+    "label": "MACD",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "MACD",
+    "parameters": [
+      {
+        "key": "fast",
+        "label": "FAST",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "slow",
+        "label": "SLOW",
+        "type": "integer",
+        "default": 26,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "signal",
+        "label": "SIGNAL",
+        "type": "integer",
+        "default": 9,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "macd_hist",
+        "label": "柱",
+        "color": "#888888",
+        "kind": "histogram",
+        "direction": "sign"
+      },
+      {
+        "field": "macd_dif",
+        "label": "DIF",
+        "color": "#3b82f6",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "macd_dea",
+        "label": "DEA",
+        "color": "#f97316",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "macd_dif",
+      "macd_dea",
+      "macd_hist"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk",
+      "pandas"
+    ],
+    "precision": 3,
+    "cross": true
+  },
+  {
+    "key": "kdj",
+    "label": "KDJ",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "KDJ",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "N",
+        "type": "integer",
+        "default": 9,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m1",
+        "label": "M1",
+        "type": "integer",
+        "default": 3,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m2",
+        "label": "M2",
+        "type": "integer",
+        "default": 3,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "kdj_k",
+        "label": "K",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "kdj_d",
+        "label": "D",
+        "color": "#3b82f6",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "kdj_j",
+        "label": "J",
+        "color": "#a855f7",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "kdj_k",
+      "kdj_d",
+      "kdj_j"
+    ],
+    "reference_lines": [
+      20,
+      80
+    ],
+    "engines": [
+      "sdk",
+      "pandas"
+    ],
+    "cross": true
+  },
+  {
+    "key": "rsi",
+    "label": "RSI 相对强弱",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "RSI",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 24,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "rsi",
+        "label": "RSI",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "rsi"
+    ],
+    "reference_lines": [
+      30,
+      70
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "wr",
+    "label": "WR 威廉指标",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "WR",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期1",
+        "type": "integer",
+        "default": 10,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "n1",
+        "label": "周期2",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "wr1",
+        "label": "WR1",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "wr2",
+        "label": "WR2",
+        "color": "#3b82f6",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "wr1",
+      "wr2"
+    ],
+    "reference_lines": [
+      20,
+      80
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "cci",
+    "label": "CCI 顺势指标",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "CCI",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 14,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "cci",
+        "label": "CCI",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "cci"
+    ],
+    "reference_lines": [
+      -100,
+      0,
+      100
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "atr",
+    "label": "ATR 真实波幅",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "ATR",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "atr",
+        "label": "ATR",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "atr"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "boll",
+    "label": "BOLL 布林带",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "BOLL",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "p",
+        "label": "倍数",
+        "type": "number",
+        "default": 2.0,
+        "min": 0,
+        "max": 100,
+        "exclusive_min": true
+      }
+    ],
+    "series": [
+      {
+        "field": "boll_upper",
+        "label": "上轨",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "boll_mid",
+        "label": "中轨",
+        "color": "#f59e0b",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "boll_lower",
+        "label": "下轨",
+        "color": "#a78bfa",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "boll_upper",
+      "boll_mid",
+      "boll_lower"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "ema",
+    "label": "EMA 指数移动平均",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "EMA",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "ema",
+        "label": "EMA",
+        "color": "#22c55e",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "ema"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3,
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low"
+    ]
+  },
+  {
+    "key": "expma",
+    "label": "EXPMA 指数平均线",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "EXPMA",
+    "parameters": [
+      {
+        "key": "n1",
+        "label": "周期1",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "n2",
+        "label": "周期2",
+        "type": "integer",
+        "default": 50,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "expma1",
+        "label": "EXPMA1",
+        "color": "#e879f9",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "expma2",
+        "label": "EXPMA2",
+        "color": "#fb7185",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "expma1",
+      "expma2"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "bbi",
+    "label": "BBI 多空指标",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "BBI",
+    "parameters": [
+      {
+        "key": "m1",
+        "label": "周期1",
+        "type": "integer",
+        "default": 3,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m2",
+        "label": "周期2",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m3",
+        "label": "周期3",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m4",
+        "label": "周期4",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "bbi",
+        "label": "BBI",
+        "color": "#f97316",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "bbi"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "wma",
+    "label": "WMA 加权移动平均",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "WMA",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "wma",
+        "label": "WMA",
+        "color": "#06b6d4",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "wma"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3,
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low"
+    ]
+  },
+  {
+    "key": "sma",
+    "label": "SMA 平滑移动平均",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "SMA",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "权重",
+        "type": "integer",
+        "default": 1,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "sma",
+        "label": "SMA",
+        "color": "#c084fc",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "sma"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3,
+    "constraints": [
+      {
+        "left": "m",
+        "op": "le",
+        "right": "n"
+      }
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low"
+    ]
+  },
+  {
+    "key": "dma",
+    "label": "DMA 动态移动平均",
+    "placement": "main",
+    "inputs": [
+      "close"
+    ],
+    "native": "DMA",
+    "parameters": [
+      {
+        "key": "a",
+        "label": "平滑系数",
+        "type": "number",
+        "default": 0.1,
+        "min": 0,
+        "max": 1,
+        "exclusive_min": true
+      }
+    ],
+    "series": [
+      {
+        "field": "dma",
+        "label": "DMA",
+        "color": "#facc15",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "dma"
+    ],
+    "reference_lines": [],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3,
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low"
+    ]
+  },
+  {
+    "key": "bias",
+    "label": "BIAS 乖离率",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "BIAS",
+    "parameters": [
+      {
+        "key": "l1",
+        "label": "周期1",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "l2",
+        "label": "周期2",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "l3",
+        "label": "周期3",
+        "type": "integer",
+        "default": 24,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "bias1",
+        "label": "BIAS1",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "bias2",
+        "label": "BIAS2",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "bias3",
+        "label": "BIAS3",
+        "color": "#c084fc",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "bias1",
+      "bias2",
+      "bias3"
+    ],
+    "reference_lines": [
+      0
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "psy",
+    "label": "PSY 心理线",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "PSY",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "统计周期",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "psy",
+        "label": "PSY",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "psy_ma",
+        "label": "PSYMA",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "psy",
+      "psy_ma"
+    ],
+    "reference_lines": [
+      25,
+      75
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3
+  },
+  {
+    "key": "dpo",
+    "label": "DPO 区间震荡",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "DPO",
+    "parameters": [
+      {
+        "key": "m1",
+        "label": "统计周期",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m2",
+        "label": "位移周期",
+        "type": "integer",
+        "default": 10,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m3",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "dpo",
+        "label": "DPO",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "dpo_ma",
+        "label": "MADPO",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "dpo",
+      "dpo_ma"
+    ],
+    "reference_lines": [
+      0
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3,
+    "cross": true
+  },
+  {
+    "key": "mtm",
+    "label": "MTM 动量指标",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "MTM",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "动量周期",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "mtm",
+        "label": "MTM",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "mtm_ma",
+        "label": "MTMMA",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "mtm",
+      "mtm_ma"
+    ],
+    "reference_lines": [
+      0
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3,
+    "cross": true
+  },
+  {
+    "key": "roc",
+    "label": "ROC 变动率",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "ROC",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "变动周期",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "series": [
+      {
+        "field": "roc",
+        "label": "ROC",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "roc_ma",
+        "label": "MAROC",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "native_outputs": [
+      "roc",
+      "roc_ma"
+    ],
+    "reference_lines": [
+      0
+    ],
+    "engines": [
+      "sdk"
+    ],
+    "precision": 3,
+    "cross": true
+  },
+  {
+    "key": "dmi",
+    "label": "DMI 趋向指标",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "DMI",
+    "parameters": [
+      {
+        "key": "m1",
+        "label": "统计周期",
+        "type": "integer",
+        "default": 14,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m2",
+        "label": "平滑周期",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "dmi_pdi",
+      "dmi_mdi",
+      "dmi_adx",
+      "dmi_adxr"
+    ],
+    "series": [
+      {
+        "field": "dmi_pdi",
+        "label": "PDI",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "dmi_mdi",
+        "label": "MDI",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "dmi_adx",
+        "label": "ADX",
+        "color": "#c084fc",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "dmi_adxr",
+        "label": "ADXR",
+        "color": "#f97316",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [
+      20,
+      40
+    ],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ],
+    "cross": true
+  },
+  {
+    "key": "trix",
+    "label": "TRIX 三重指数平滑",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "TRIX",
+    "parameters": [
+      {
+        "key": "m1",
+        "label": "平滑周期",
+        "type": "integer",
+        "default": 12,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m2",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "trix",
+      "trix_ma"
+    ],
+    "series": [
+      {
+        "field": "trix",
+        "label": "TRIX",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "trix_ma",
+        "label": "TRMA",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [
+      0
+    ],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ],
+    "cross": true
+  },
+  {
+    "key": "dfma",
+    "label": "DFMA 平均线差",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "native": "DFMA",
+    "parameters": [
+      {
+        "key": "n1",
+        "label": "短周期",
+        "type": "integer",
+        "default": 10,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "n2",
+        "label": "长周期",
+        "type": "integer",
+        "default": 50,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 10,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "dfma_dif",
+      "dfma_difma"
+    ],
+    "series": [
+      {
+        "field": "dfma_dif",
+        "label": "DIF",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "dfma_difma",
+        "label": "DIFMA",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [
+      0
+    ],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ],
+    "cross": true
+  },
+  {
+    "key": "mass",
+    "label": "MASS 梅斯线",
+    "placement": "panel",
+    "inputs": [
+      "high",
+      "low"
+    ],
+    "native": "MASS",
+    "parameters": [
+      {
+        "key": "n1",
+        "label": "平滑周期",
+        "type": "integer",
+        "default": 9,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "n2",
+        "label": "累计周期",
+        "type": "integer",
+        "default": 25,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 6,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "mass",
+      "mass_ma"
+    ],
+    "series": [
+      {
+        "field": "mass",
+        "label": "MASS",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "mass_ma",
+        "label": "MAMASS",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [
+      26.5,
+      27
+    ],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ],
+    "cross": true
+  },
+  {
+    "key": "vr",
+    "label": "VR 成交量比率",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "volume"
+    ],
+    "native": "VR",
+    "parameters": [
+      {
+        "key": "m1",
+        "label": "统计周期",
+        "type": "integer",
+        "default": 26,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "vr"
+    ],
+    "series": [
+      {
+        "field": "vr",
+        "label": "VR",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [
+      70,
+      150
+    ],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "cr",
+    "label": "CR 价格能量",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "CR",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "统计周期",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "cr"
+    ],
+    "series": [
+      {
+        "field": "cr",
+        "label": "CR",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [
+      100
+    ],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "emv",
+    "label": "EMV 简易波动",
+    "placement": "panel",
+    "inputs": [
+      "high",
+      "low",
+      "volume"
+    ],
+    "native": "EMV",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "统计周期",
+        "type": "integer",
+        "default": 14,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 9,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "emv",
+      "emv_ma"
+    ],
+    "series": [
+      {
+        "field": "emv",
+        "label": "EMV",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "emv_ma",
+        "label": "MAEMV",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [
+      0
+    ],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ],
+    "cross": true
+  },
+  {
+    "key": "brar",
+    "label": "BRAR 情绪指标",
+    "placement": "panel",
+    "inputs": [
+      "open",
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "BRAR",
+    "parameters": [
+      {
+        "key": "m1",
+        "label": "统计周期",
+        "type": "integer",
+        "default": 26,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "brar_ar",
+      "brar_br"
+    ],
+    "series": [
+      {
+        "field": "brar_ar",
+        "label": "AR",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "brar_br",
+        "label": "BR",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [
+      100
+    ],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "obv",
+    "label": "OBV 能量潮",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "volume"
+    ],
+    "native": "OBV",
+    "parameters": [],
+    "native_outputs": [
+      "obv"
+    ],
+    "series": [
+      {
+        "field": "obv",
+        "label": "OBV",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "mfi",
+    "label": "MFI 资金流量",
+    "placement": "panel",
+    "inputs": [
+      "close",
+      "high",
+      "low",
+      "volume"
+    ],
+    "native": "MFI",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "统计周期",
+        "type": "integer",
+        "default": 14,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "mfi"
+    ],
+    "series": [
+      {
+        "field": "mfi",
+        "label": "MFI",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [
+      20,
+      80
+    ],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "asi",
+    "label": "ASI 振动升降",
+    "placement": "panel",
+    "inputs": [
+      "open",
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "ASI",
+    "parameters": [
+      {
+        "key": "m1",
+        "label": "累计周期",
+        "type": "integer",
+        "default": 26,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m2",
+        "label": "均线周期",
+        "type": "integer",
+        "default": 10,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "asi",
+      "asi_ma"
+    ],
+    "series": [
+      {
+        "field": "asi",
+        "label": "ASI",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "asi_ma",
+        "label": "ASIT",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ],
+    "cross": true
+  },
+  {
+    "key": "taq",
+    "label": "TAQ 唐安奇通道",
+    "placement": "main",
+    "inputs": [
+      "high",
+      "low"
+    ],
+    "native": "TAQ",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "通道周期",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "taq_up",
+      "taq_mid",
+      "taq_down"
+    ],
+    "series": [
+      {
+        "field": "taq_up",
+        "label": "UP",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "taq_mid",
+        "label": "MID",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "taq_down",
+        "label": "DOWN",
+        "color": "#c084fc",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "ktn",
+    "label": "KTN 肯特纳通道",
+    "placement": "main",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "KTN",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "中轨周期",
+        "type": "integer",
+        "default": 20,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "波幅周期",
+        "type": "integer",
+        "default": 10,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "ktn_up",
+      "ktn_mid",
+      "ktn_down"
+    ],
+    "series": [
+      {
+        "field": "ktn_up",
+        "label": "UP",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "ktn_mid",
+        "label": "MID",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "ktn_down",
+        "label": "DOWN",
+        "color": "#c084fc",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "xsii",
+    "label": "XSII 薛斯通道 II",
+    "placement": "main",
+    "inputs": [
+      "close",
+      "high",
+      "low"
+    ],
+    "native": "XSII",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "通道系数 N（%）",
+        "type": "integer",
+        "default": 102,
+        "min": 1,
+        "max": 10000
+      },
+      {
+        "key": "m",
+        "label": "通道系数 M（%）",
+        "type": "integer",
+        "default": 7,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "xsii_td1",
+      "xsii_td2",
+      "xsii_td3",
+      "xsii_td4"
+    ],
+    "series": [
+      {
+        "field": "xsii_td1",
+        "label": "TD1",
+        "color": "#eab308",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "xsii_td2",
+        "label": "TD2",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "xsii_td3",
+        "label": "TD3",
+        "color": "#c084fc",
+        "kind": "line",
+        "direction": "sign"
+      },
+      {
+        "field": "xsii_td4",
+        "label": "TD4",
+        "color": "#f97316",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "std",
+    "label": "STD 标准差",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "amount"
+    ],
+    "native": "STD",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "std"
+    ],
+    "series": [
+      {
+        "field": "std",
+        "label": "标准差",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "sum",
+    "label": "SUM 周期累计值",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "amount"
+    ],
+    "native": "SUM",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "sum"
+    ],
+    "series": [
+      {
+        "field": "sum",
+        "label": "周期累计值",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "hhv",
+    "label": "HHV 周期最高值",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "amount"
+    ],
+    "native": "HHV",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "hhv"
+    ],
+    "series": [
+      {
+        "field": "hhv",
+        "label": "周期最高值",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "llv",
+    "label": "LLV 周期最低值",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "amount"
+    ],
+    "native": "LLV",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "周期",
+        "type": "integer",
+        "default": 5,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "llv"
+    ],
+    "series": [
+      {
+        "field": "llv",
+        "label": "周期最低值",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "ref",
+    "label": "REF 前期值",
+    "placement": "panel",
+    "inputs": [
+      "close"
+    ],
+    "input_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "amount"
+    ],
+    "native": "REF",
+    "parameters": [
+      {
+        "key": "n",
+        "label": "回看根数",
+        "type": "integer",
+        "default": 1,
+        "min": 1,
+        "max": 10000
+      }
+    ],
+    "native_outputs": [
+      "ref"
+    ],
+    "series": [
+      {
+        "field": "ref",
+        "label": "前期值",
+        "color": "#38bdf8",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  },
+  {
+    "key": "zhishu",
+    "label": "ZHISHU 合成指数",
+    "placement": "panel",
+    "inputs": [],
+    "native": "ZHISHU",
+    "parameters": [],
+    "native_outputs": [
+      "zhishu_close"
+    ],
+    "series": [
+      {
+        "field": "zhishu_close",
+        "label": "合成指数",
+        "color": "#f97316",
+        "kind": "line",
+        "direction": "sign"
+      }
+    ],
+    "reference_lines": [],
+    "precision": 3,
+    "engines": [
+      "sdk"
+    ]
+  }
+]

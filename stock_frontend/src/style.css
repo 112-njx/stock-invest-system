@@ -232,3 +232,7 @@ select {
 .md-body em {
   font-style: italic;
 }
+
+/* 股票数据统一配色：与股票列表保持一致。 */
+:root { --quote-highlight:#e5e65b; --quote-up:#ff3535; --quote-down:#00cf4a; --quote-ratio:#f044e8; }
+[data-theme='light'] { --quote-highlight:#806600; --quote-up:#cf202f; --quote-down:#008740; --quote-ratio:#a520a0; }

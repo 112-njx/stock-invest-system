@@ -10,6 +10,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useChartIndicators } from '@/composables/useChartIndicators'
+import { useDetailChartSettings, type MaLine } from '@/composables/useDetailChartSettings'
 import { useSyntheticWicks } from '@/composables/useSyntheticWicks'
 import { displaySyntheticCandle } from '@/utils/syntheticWicks'
 import {
@@ -40,6 +41,7 @@ import {
   requestKlineBackfill,
   removeSupportResistance,
   type KLineBar,
+  type IndicatorRow,
   type KlineQuality,
   type SupportResistanceItem,
 } from '@/api/market'
@@ -52,9 +54,16 @@ import { useWsStore } from '@/stores/wsStore'
 import { useThemeStore } from '@/stores/theme'
 import { trackTiming } from '@/utils/monitor'
 import { toast } from '@/utils/toast'
+import { useOverlayIndicators } from '@/composables/useOverlayIndicators'
+import { useIndicatorCatalog } from '@/composables/useIndicatorCatalog'
+import {createIndicatorSeries, fillIndicatorSeries} from './indicatorRenderer'
+import IndicatorParameters from './IndicatorParameters.vue'
+import DetailMaSettings from './DetailMaSettings.vue'
+import CompositeIndexSettings from './CompositeIndexSettings.vue'
+import type { IndicatorDefinition, IndicatorValues, IndexMember } from '@/composables/useIndicatorCatalog'
 import BaseButton from '@/components/base/BaseButton.vue'
 
-type IndicatorKey = 'volume' | 'amount' | 'macd' | 'kdj'
+type IndicatorKey = string
 
 interface IndicatorMeta {
   key: IndicatorKey
@@ -74,6 +83,7 @@ const props = withDefaults(
     symbol: SymbolInfo | null
     showSrButton?: boolean
     showIndicators?: boolean
+    customizeIndicators?: boolean
     /** 首次打开时的可见自然月数；更早数据仍可向左加载 */
     recentMonths?: number
     /** G32：回测买卖点标记（空数组/不传则不渲染） */
@@ -120,16 +130,35 @@ const qualityWarning = computed(() => {
   if (quality.value?.status === 'unchecked') return '历史数据尚未初始化'
   return ''
 })
+const catalog = useIndicatorCatalog(() => !!props.customizeIndicators)
+const catalogOverlays = computed(() => catalog.definitions.value.filter(d => d.placement === 'main' && d.key !== 'ma'))
+const catalogPanels = computed(() => catalog.definitions.value.filter(d => d.placement === 'panel'))
+const pickerIndicators = computed(() => props.customizeIndicators ? catalogPanels.value.map(d => ({...d,icon:INDICATORS.find(i=>i.key===d.key)?.icon || ''})) : INDICATORS)
+const detailSettings = useDetailChartSettings(() => !!props.customizeIndicators, () => catalogPanels.value.map(d=>d.key), () => catalogOverlays.value.map(d=>d.key))
+const FIELD_LABELS:Record<string,string>={close:'收盘价',open:'开盘价',high:'最高价',low:'最低价',volume:'成交量',amount:'成交额'}
+function displayDefinition(definition:IndicatorDefinition):IndicatorDefinition {
+  const field=detailSettings.settings.value.panel_options?.[definition.key]?.params.field
+  return field==='volume'||field==='amount' ? {...definition,format:'volume'} : definition
+}
+function fieldLabel(key:string) {
+  const option=detailSettings.settings.value.panel_options?.[key] || detailSettings.settings.value.overlay_options?.[key]
+  return FIELD_LABELS[String(option?.params.field || 'close')]
+}
 const currentPrice = computed(() => props.symbol ? market.quotes[props.symbol.id]?.price : null)
 
 let chart: IChartApi | null = null
 let candleSeries: ISeriesApi<'Candlestick'> | null = null
-const PRICE_MAS = [
+const DEFAULT_PRICE_MAS = [
   { key: 'ma5', label: 'MA5', color: '#d4a72c' },
   { key: 'ma10', label: 'MA10', color: '#db61a2' },
   { key: 'ma20', label: 'MA20', color: '#38bdf8' },
   { key: 'ma30', label: 'MA30', color: '#a78bfa' },
 ] as const
+const MA_COLORS = ['#d4a72c','#db61a2','#38bdf8','#a78bfa','#f97316','#14b8a6']
+const priceMas = computed(() => props.customizeIndicators
+  ? detailSettings.settings.value.ma.lines.map((line, i) => ({ key: `ma${line.period}` as `ma${number}`, label: `MA${line.period}`, color: MA_COLORS[i]!, visible: line.visible }))
+  : DEFAULT_PRICE_MAS.map(ma => ({ ...ma, visible: true })))
+const visiblePriceMas = computed(() => priceMas.value.filter(ma => ma.visible))
 const priceMaSeries = new Map<string, ISeriesApi<'Line'>>()
 let srLines: IPriceLine[] = []
 let lastBar: KLineBar | null = null
@@ -175,6 +204,7 @@ interface IndicatorPaneRef {
 const indicatorPanes = new Map<IndicatorKey, IndicatorPaneRef>()
 const indicatorTops = ref<Partial<Record<IndicatorKey, number>>>({})
 const macdCrossPoints = ref<{ x: number; y: number; golden: boolean }[]>([])
+const technicalCrossPoints = ref<{key:string;x:number;y:number;golden:boolean}[]>([])
 const hoveredIndicatorTime = ref<number | null>(null)
 let paneLayoutFrame = 0
 let chartResizeObserver: ResizeObserver | null = null
@@ -192,9 +222,40 @@ function updateIndicatorTops() {
   if (Object.keys(tops).some((key) => tops[key as IndicatorKey] !== indicatorTops.value[key as IndicatorKey]) ||
       Object.keys(tops).length !== Object.keys(indicatorTops.value).length) indicatorTops.value = tops
   updateMacdCrossPoints()
+  updateTechnicalCrossPoints()
+}
+
+function updateTechnicalCrossPoints() {
+  const points:typeof technicalCrossPoints.value=[]
+  if(!props.customizeIndicators||!chart||!chartHost.value){technicalCrossPoints.value=[];return}
+  for(const [key,entry] of indicatorPanes) {
+    if(detailSettings.settings.value.panel_options?.[key]?.params.cross!==true)continue
+    const definition=catalogPanels.value.find(d=>d.key===key)
+    const field=key==='macd'?'macd_dif':definition?.series[0]?.field
+    const index=definition?.series.findIndex(s=>s.field===field) ?? -1
+    const series=entry.series[index],top=indicatorTops.value[key]
+    if(!field||!series||top==null)continue
+    for(const row of indicatorRows.value) {
+      const signal=row[`${key}_cross`],value=(row as unknown as Record<string,unknown>)[field]
+      if((signal!==1&&signal!==-1)||typeof value!=='number'||!Number.isFinite(value))continue
+      const x=chart.timeScale().timeToCoordinate(toUtcSeconds(row.ts)),y=series.priceToCoordinate(value)
+      if(x!=null&&y!=null&&x>=0&&x<=chartHost.value.clientWidth)points.push({key,x,y:top+y,golden:signal===1})
+    }
+  }
+  technicalCrossPoints.value=points
+}
+
+function crossCounts(key:string) {
+  let golden=0,death=0
+  for(const row of indicatorRows.value.slice(0,selectedIndicatorIndex.value+1)){
+    if(row[`${key}_cross`]===1)golden++
+    if(row[`${key}_cross`]===-1)death++
+  }
+  return {golden,death}
 }
 
 function updateMacdCrossPoints() {
+  if(props.customizeIndicators){macdCrossPoints.value=[];return}
   const macd = indicatorPanes.get('macd')
   const top = indicatorTops.value.macd
   if (!chart || !macd || top == null || !chartHost.value) { macdCrossPoints.value = []; return }
@@ -247,6 +308,7 @@ const STORAGE_KEY = 'indicator_visibility'
 const enabledIndicators = ref<Set<IndicatorKey>>(new Set(['volume', 'macd']))
 
 function loadVisibility() {
+  if (props.customizeIndicators) return
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
@@ -267,7 +329,17 @@ function saveVisibility() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...enabledIndicators.value])) } catch { /* ignore */ }
 }
 
-function toggleIndicator(key: IndicatorKey) {
+async function toggleIndicator(key: IndicatorKey) {
+  if (props.customizeIndicators) {
+    if(key==='zhishu'&&!detailSettings.settings.value.panel_options?.zhishu){parameterKey.value='zhishu';enableCompositeAfterSave.value=true;return}
+    const panels = [...detailSettings.settings.value.panels]
+    const index = panels.indexOf(key)
+    if (index >= 0) panels.splice(index, 1)
+    else if (panels.length < 3) panels.push(key)
+    else return
+    await detailSettings.save({ ...detailSettings.settings.value, panels })
+    return
+  }
   const next = new Set(enabledIndicators.value)
   if (next.has(key)) next.delete(key)
   else next.add(key)
@@ -288,7 +360,7 @@ function toggleIndicator(key: IndicatorKey) {
   }
 }
 
-const enabledList = computed(() => INDICATORS.filter((i) => enabledIndicators.value.has(i.key)))
+const enabledList = computed(() => props.customizeIndicators ? detailSettings.settings.value.panels.map(key => pickerIndicators.value.find(i=>i.key===key)).filter((i): i is (typeof pickerIndicators.value)[number] => !!i) : INDICATORS.filter(i => enabledIndicators.value.has(i.key)))
 
 /* ---------- 配色 ---------- */
 function cssColors() {
@@ -398,12 +470,14 @@ function initChart() {
   })
 
   priceMaSeries.clear()
-  for (const ma of PRICE_MAS) {
+  for (const ma of priceMas.value) {
     priceMaSeries.set(ma.key, chart.addSeries(LineSeries, {
       color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
-      crosshairMarkerVisible: false,
+      crosshairMarkerVisible: false, visible: ma.visible,
     }, 0))
   }
+
+  syncOverlaySeries()
 
   // 优化7：window capture 阶段拦截 wheel，达到最大放大（≤15条）时阻止继续放大，可无限缩小
   window.addEventListener('wheel', onWheel, { capture: true, passive: false })
@@ -441,6 +515,12 @@ function applyTheme() {
   // 重新应用指标 series 配色
   for (const [key, ref] of indicatorPanes) {
     const c2 = cssColors()
+    if (props.customizeIndicators) {
+      const definition = catalogPanels.value.find(d=>d.key===key)
+      definition?.series.forEach((line,i)=>ref.series[i]?.applyOptions({color:line.color}))
+      ref.referenceLines?.forEach(line=>line.applyOptions({color:c2.text}))
+      continue
+    }
     if (key === 'volume' || key === 'amount') {
       if (key === 'volume') {
         ref.series[1]?.applyOptions({ color: c2.indMa5 })
@@ -487,6 +567,7 @@ function removeAllIndicatorPanes() {
   indicatorPanes.clear()
   indicatorTops.value = {}
   macdCrossPoints.value = []
+  technicalCrossPoints.value = []
 }
 
 function rebuildIndicatorPanes() {
@@ -500,6 +581,13 @@ function rebuildIndicatorPanes() {
     const series: ISeriesApi<any>[] = []
     const referenceLines: IPriceLine[] = []
 
+    if (props.customizeIndicators) {
+      const definition = catalogPanels.value.find(d=>d.key===meta.key)
+      if (!definition) continue
+      const built = createIndicatorSeries(pane, displayDefinition(definition), c.text)
+      indicatorPanes.set(meta.key as IndicatorKey, {pane,...built})
+      continue
+    }
     if (meta.key === 'volume') {
       const s = pane.addSeries(HistogramSeries, {
         priceFormat: { type: 'volume' },
@@ -627,18 +715,64 @@ function reasonText(t: BacktestTrade): string {
 }
 
 /* ---------- 数据 ---------- */
+const overlays = useOverlayIndicators(fetchIndicators)
+const overlaySeries = new Map<string, ReturnType<typeof createIndicatorSeries>>()
+function syncOverlaySeries() {
+  if (!chart || !props.customizeIndicators) return
+  for (const entry of overlaySeries.values()) for (const series of entry.series) chart.removeSeries(series)
+  overlaySeries.clear()
+  for (const key of detailSettings.settings.value.overlays || []) {
+    const definition = catalogOverlays.value.find(d=>d.key===key)
+    if (definition) overlaySeries.set(key, createIndicatorSeries(chart.panes()[0]!, definition, cssColors().text))
+  }
+  drawOverlays()
+}
+function drawOverlays() {
+  const times = new Set(loadedBars.map(bar=>toUtcSeconds(bar.ts)))
+  for (const [key,entry] of overlaySeries) {
+    const definition = catalogOverlays.value.find(d=>d.key===key)
+    if (definition) fillIndicatorSeries(entry.series,definition,(overlays.rows.value[key] || []).filter(r=>times.has(toUtcSeconds(r.ts))),toUtcSeconds,cssColors())
+  }
+}
+watch(overlays.rows, drawOverlays, {flush:'sync'})
+const selectedOverlays = computed(() => catalogOverlays.value.filter(d=>(detailSettings.settings.value.overlays || []).includes(d.key)))
+function selectedOverlayRow(key:string) {
+  const rows = overlays.rows.value[key] || []
+  return hoveredIndicatorTime.value == null ? rows[rows.length-1] : rows.find(r=>toUtcSeconds(r.ts)===hoveredIndicatorTime.value)
+}
 const indicators = useChartIndicators(fetchIndicators)
-const { indicatorRows, priceMaRows, indicatorError, priceMaError } = indicators
-watch(priceMaRows, (rows) => {
+const { indicatorRows, priceMaRows, indicatorError, priceMaError, panelErrors, panelRetrying } = indicators
+function drawPriceMas(rows: IndicatorRow[]) {
   const times = new Set(loadedBars.map(bar => toUtcSeconds(bar.ts)))
-  for (const ma of PRICE_MAS) {
+  for (const ma of priceMas.value) {
     priceMaSeries.get(ma.key)?.setData(rows.filter(row => times.has(toUtcSeconds(row.ts))).map(row => {
       const value = row[ma.key]
       const time = toUtcSeconds(row.ts)
       return value != null && Number.isFinite(value) ? { time, value } : { time }
     }))
   }
-}, { flush: 'sync' })
+}
+watch(priceMaRows, drawPriceMas, { flush: 'sync' })
+watch(priceMas, () => {
+  if (!chart) return
+  const range = chart.timeScale().getVisibleLogicalRange()
+  for (const series of priceMaSeries.values()) chart.removeSeries(series)
+  priceMaSeries.clear()
+  for (const ma of priceMas.value) priceMaSeries.set(ma.key, chart.addSeries(LineSeries, { color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: ma.visible }, 0))
+  drawPriceMas(priceMaRows.value)
+  if (range) chart.timeScale().setVisibleLogicalRange(range)
+})
+watch([detailSettings.settings, detailSettings.ready, catalog.definitions], () => {
+  if (!props.customizeIndicators) return
+  const range = chart?.timeScale().getVisibleLogicalRange()
+  enabledIndicators.value = new Set(detailSettings.settings.value.panels)
+  indicators.reset()
+  overlays.reset()
+  rebuildIndicatorPanes()
+  syncOverlaySeries()
+  if (props.symbol && detailSettings.ready.value) void refreshIndicators(loadVersion, props.symbol.id, market.period)
+  if (range) chart?.timeScale().setVisibleLogicalRange(range)
+}, { immediate: true })
 const selectedIndicatorIndex = computed(() => {
   const rows = indicatorRows.value
   if (!rows.length) return -1
@@ -649,7 +783,7 @@ const selectedIndicator = computed(() => indicatorRows.value[selectedIndicatorIn
 
 watch(indicatorRows, rows => {
   if (rows.length) setIndicatorData()
-  else for (const pane of indicatorPanes.values()) for (const series of pane.series) series.setData([])
+  else {for (const pane of indicatorPanes.values()) for (const series of pane.series) series.setData([]);technicalCrossPoints.value=[]}
 }, { flush: 'sync' })
 const selectedPriceMa = computed(() => {
   const rows = priceMaRows.value
@@ -765,11 +899,16 @@ onBeforeUnmount(() => window.removeEventListener('indicator-settings-changed', r
 
 async function refreshIndicators(version: number, symbolId: number, period: Period) {
   if (!loadedBars.length) return
+  if (props.customizeIndicators && !detailSettings.ready.value) return
+  if (props.customizeIndicators) void overlays.load({symbol:symbolId,period,start:loadedBars[0].ts,end:loadedBars[loadedBars.length-1].ts},
+    [...(detailSettings.settings.value.overlays || [])], detailSettings.settings.value.overlay_options || {},
+    () => version === loadVersion && props.symbol?.id === symbolId && market.period === period)
   await indicators.load({
     symbol: symbolId, period,
     start: loadedBars[0].ts, end: loadedBars[loadedBars.length - 1].ts,
   }, props.showIndicators && enabledList.value.length > 0,
-  () => version === loadVersion && props.symbol?.id === symbolId && market.period === period)
+  () => version === loadVersion && props.symbol?.id === symbolId && market.period === period,
+  props.customizeIndicators ? { periods: detailSettings.settings.value.ma.lines.map(l => l.period), panels: [...enabledIndicators.value], parameters: detailSettings.settings.value.panel_options } : undefined)
 }
 
 async function loadOlder() {
@@ -923,6 +1062,11 @@ function setIndicatorData() {
   const rows = indicatorRows.value
 
   for (const [key, ref] of indicatorPanes) {
+    if (props.customizeIndicators) {
+      const definition = catalogPanels.value.find(d=>d.key===key)
+      if (definition) fillIndicatorSeries(ref.series, displayDefinition(definition), rows, toUtcSeconds, c)
+      continue
+    }
     if (key === 'volume') {
       ref.series[0].setData(rows.map((r) => ({
         time: toUtcSeconds(r.ts),
@@ -989,6 +1133,7 @@ async function loadKline() {
     candleSeries?.setData(toCandleData(bars))
     if (!bars.length) {
       indicators.reset()
+  overlays.reset()
       if (period === '1w' || period === '1mon') showInitialPeriodRange(period, 1)
       void loadInitialMissing(version, symbolId, period)
       return
@@ -1102,6 +1247,7 @@ watch(() => props.symbol, (newSym, oldSym) => {
     candleSeries?.setData([])
     clearSRLines()
     indicators.reset()
+  overlays.reset()
     barRange = null
     markersPlugin?.setMarkers([])
     hoverTip.value = null
@@ -1112,6 +1258,7 @@ watch(() => props.symbol, (newSym, oldSym) => {
   clearSRLines()
   if (oldSym && newSym && oldSym.id !== newSym.id) {
     indicators.reset()
+  overlays.reset()
     if (props.showIndicators) removeAllIndicatorPanes()
   }
   loadKline()
@@ -1122,6 +1269,7 @@ watch(() => market.period, () => {
   hoveredCandle.value = null
   hoveredIndicatorTime.value = null
   indicators.reset()
+  overlays.reset()
   initialViewport = true
   historyState.value = ''
   loadedBars = []
@@ -1171,6 +1319,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   loadVersion++
   indicators.reset()
+  overlays.reset()
   cancelAnimationFrame(paneLayoutFrame)
   chartResizeObserver?.disconnect()
   window.removeEventListener('mousemove', onIndicatorDrag, true)
@@ -1186,6 +1335,7 @@ onBeforeUnmount(() => {
   chart?.remove()
   chart = null
   priceMaSeries.clear()
+  overlaySeries.clear()
   candleSeries = null
   srLines = []
   indicatorPanes.clear()
@@ -1251,6 +1401,49 @@ async function onDeleteSr(item: SupportResistanceItem) {
 }
 
 /* ---------- 指标选择弹窗 ---------- */
+const parameterKey = ref('')
+const enableCompositeAfterSave = ref(false)
+const selectedPanelDefinitions=computed(()=>detailSettings.settings.value.panels.map(key=>catalogPanels.value.find(d=>d.key===key)).filter((d):d is IndicatorDefinition=>!!d))
+function editParameters(key:string){enableCompositeAfterSave.value=false;parameterKey.value=key}
+const parameterDefinition = computed(() => [...catalogPanels.value,...catalogOverlays.value].find(d=>d.key===parameterKey.value))
+async function savePanelParameters(params: IndicatorValues) {
+  const key = parameterKey.value
+  const value = detailSettings.settings.value
+  const field = parameterDefinition.value?.placement === 'main' ? 'overlay_options' : 'panel_options'
+  const panels=key==='zhishu'&&enableCompositeAfterSave.value&&!value.panels.includes(key)?[...value.panels,key]:value.panels
+  if (await detailSettings.save({...value,version:2,panels,[field]:{...value[field],[key]:{params}}})) {parameterKey.value = '';enableCompositeAfterSave.value=false}
+}
+async function movePanel(key:string,offset:number) {
+  const value=detailSettings.settings.value,panels=[...value.panels],index=panels.indexOf(key),next=index+offset
+  if(index<0||next<0||next>=panels.length)return
+  ;[panels[index],panels[next]]=[panels[next]!,panels[index]!]
+  await detailSettings.save({...value,panels})
+}
+async function resetIndicator(key:string,placement:'main'|'panel') {
+  const value=detailSettings.settings.value,field=placement==='main'?'overlay_options':'panel_options'
+  const next:Record<string,{params:IndicatorValues}>={...value[field]}
+  if(key==='zhishu') {
+    const members=value.panel_options?.zhishu?.params.members
+    if(!Array.isArray(members)||!members.length){editParameters('zhishu');return}
+    next.zhishu={params:{members:(members as IndexMember[]).map(m=>({code:m.code,weight:1})),weighting:'equal',base:1000,start:'2020-01-01'}}
+  }else{
+    delete next[key]
+  }
+  if(await detailSettings.save({...value,[field]:next}) && parameterKey.value===key){parameterKey.value='';enableCompositeAfterSave.value=false}
+}
+function legendValue(row: unknown, field: string) { return row ? (row as Record<string,number | null>)[field] : null }
+async function toggleOverlay(key:string) {
+  const value=detailSettings.settings.value
+  const next=[...(value.overlays || [])]
+  const index=next.indexOf(key)
+  if(index>=0) next.splice(index,1);else next.push(key)
+  await detailSettings.save({...value,overlays:next})
+}
+const maSettingsOpen = ref(false)
+async function saveMa(lines: MaLine[]) {
+  if (await detailSettings.saveMa(lines)) maSettingsOpen.value = false
+}
+watch(() => user.user?.id, () => { maSettingsOpen.value = false; parameterKey.value = '';enableCompositeAfterSave.value=false })
 const indicatorPickerOpen = ref(false)
 function openIndicatorPicker() { indicatorPickerOpen.value = true }
 function closeIndicatorPicker() { indicatorPickerOpen.value = false }
@@ -1258,8 +1451,11 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
 <template>
   <div class="kline-chart">
+    <p v-if="customizeIndicators && catalog.error.value" role="alert">{{ catalog.error.value }} <button @click="catalog.load">重试目录</button></p>
     <p v-if="priceMaError" class="notice danger" role="alert">{{ priceMaError }}</p>
     <p v-if="indicatorError" class="notice danger" role="alert">{{ indicatorError }}</p>
+    <p v-if="customizeIndicators && detailSettings.error.value" class="notice danger" role="alert">{{ detailSettings.error.value }} <button v-if="!detailSettings.ready.value" @click="detailSettings.load">重试</button></p>
+    <DetailMaSettings v-if="customizeIndicators && maSettingsOpen" :lines="detailSettings.settings.value.ma.lines" :saving="detailSettings.saving.value" :error="detailSettings.error.value" @close="maSettingsOpen = false" @save="saveMa" />
     <header class="kline-chart__header">
       <div class="kline-chart__header-left">
         <span class="kline-chart__symbol">{{ symbolTitle }}</span>
@@ -1277,6 +1473,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
         </button>
       </div>
       <div class="kline-chart__header-right">
+        <button v-if="customizeIndicators" class="sr-btn" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="maSettingsOpen = true">MA 设置</button>
         <button v-if="showIndicators" class="gear-btn" title="选择技术指标" @click="openIndicatorPicker">
           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
             <path d="M8 0 9.4 2.1l2.5-.5 1 2.3 2.3 1-.5 2.5L16.7 8l-2 1.6.5 2.5-2.3 1-1 2.3-2.5-.5L8 16l-1.4-2.1-2.5.5-1-2.3-2.3-1 .5-2.5L-.7 8l2-1.6-.5-2.5 2.3-1 1-2.3 2.5.5L8 0zm0 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z" />
@@ -1301,9 +1498,14 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
     <div ref="container" class="kline-chart__body">
       <div ref="chartHost" class="kline-chart__canvas" />
       <div v-if="props.symbol" class="kline-chart__ma-legend">
-        <span v-for="ma in PRICE_MAS" :key="ma.key" :style="{ color: ma.color }">{{ ma.label }}:{{ indicatorNumber(selectedPriceMa?.[ma.key]) }}</span>
+        <div v-for="definition in selectedOverlays" :key="definition.key" class="overlay-legend">
+          <span>{{ definition.label }}({{ definition.parameters.map(p=>detailSettings.settings.value.overlay_options?.[definition.key]?.params[p.key] ?? p.default).join(',') }}){{ definition.input_fields ? ` · ${fieldLabel(definition.key)}` : '' }}</span>
+          <span v-if="overlays.errors.value[definition.key]" role="alert">{{ overlays.errors.value[definition.key] }} <button style="pointer-events:auto" :disabled="overlays.retrying.value[definition.key]" @click="overlays.retry(definition.key)">重试</button></span>
+          <span v-for="line in definition.series" :key="line.field" :style="{color:line.color}">{{ line.label }}:{{ indicatorNumber(legendValue(selectedOverlayRow(definition.key),line.field)) }}</span>
+        </div>
+        <span v-for="ma in visiblePriceMas" :key="ma.key" :style="{ color: ma.color }">{{ ma.label }}:{{ indicatorNumber(selectedPriceMa?.[ma.key]) }}</span>
       </div>
-      <svg v-if="showIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
+      <svg v-if="showIndicators && !customizeIndicators && indicatorTops.macd != null" class="kline-chart__crosses" aria-hidden="true">
         <circle
           v-for="(point, index) in macdCrossPoints"
           :key="index"
@@ -1315,6 +1517,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
           stroke-width="1.5"
         />
       </svg>
+      <svg v-if="customizeIndicators && showIndicators" class="kline-chart__crosses" aria-hidden="true"><circle v-for="(point,index) in technicalCrossPoints" :key="index" :data-indicator="point.key" :cx="point.x" :cy="point.y" r="4" :fill="point.golden?'var(--up)':'var(--down)'" stroke="var(--bg-panel)" stroke-width="1"><title>{{ point.key }} {{ point.golden?'金叉':'死叉' }}</title></circle></svg>
       <div
         v-for="indicator in showIndicators ? enabledList : []"
         :key="indicator.key"
@@ -1322,7 +1525,16 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
         :style="{ top: `${indicatorTops[indicator.key] ?? 0}px`, visibility: indicatorTops[indicator.key] == null ? 'hidden' : 'visible' }"
         aria-live="off"
       >
-        <template v-if="indicator.key === 'volume'">
+        <template v-if="customizeIndicators">
+          <span v-if="indicator.key==='zhishu'">{{ indicator.label }}（{{ detailSettings.settings.value.panel_options?.zhishu?.params.weighting==='custom'?'自定义权重':'等权' }}，基点 {{ detailSettings.settings.value.panel_options?.zhishu?.params.base ?? 1000 }}）</span>
+          <span v-else>{{ indicator.label }}({{ catalogPanels.find(d=>d.key===indicator.key)?.parameters.map(p => detailSettings.settings.value.panel_options?.[indicator.key]?.params[p.key] ?? p.default).join(',') }}){{ catalogPanels.find(d=>d.key===indicator.key)?.input_fields ? ` · ${fieldLabel(indicator.key)}` : '' }}</span>
+          <span v-if="panelErrors[indicator.key]" role="alert">{{ panelErrors[indicator.key] }} <button style="pointer-events:auto" :disabled="panelRetrying[indicator.key]" @click="indicators.retryPanel(indicator.key)">{{ panelRetrying[indicator.key] ? '重试中…' : '重试' }}</button></span>
+          <span v-else-if="panelRetrying[indicator.key]" role="status">计算中…</span>
+          <span v-for="line in catalogPanels.find(d=>d.key===indicator.key)?.series || []" :key="line.field" :style="{color:line.color}">{{ line.label }}:{{ displayDefinition(catalogPanels.find(d=>d.key===indicator.key)!).format === 'volume' ? indicatorQuantity(legendValue(selectedIndicator, line.field)) : indicatorNumber(legendValue(selectedIndicator, line.field)) }}</span>
+          <span v-if="detailSettings.settings.value.panel_options?.[indicator.key]?.params.cross===true">金叉:{{ selectedIndicator ? crossCounts(indicator.key).golden : '—' }} 死叉:{{ selectedIndicator ? crossCounts(indicator.key).death : '—' }}（红/绿点）</span>
+          <span v-if="indicator.key==='zhishu'">参与股票:{{ selectedIndicator?.zhishu_count ?? '—' }}</span>
+        </template>
+        <template v-else-if="indicator.key === 'volume'">
           <span>成交量(5,10)</span>
           <span>VOL:{{ indicatorQuantity(selectedIndicator?.volume) }}</span>
           <span class="legend-ma5">MA5:{{ indicatorQuantity(selectedVolumeAverages.ma5) }}</span>
@@ -1423,26 +1635,48 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
     <!-- 指标选择弹窗 -->
     <Teleport to="body">
       <div v-if="indicatorPickerOpen" class="modal-mask" @click.self="closeIndicatorPicker">
-        <div class="modal">
+        <div class="modal" :class="{ 'modal--indicator-detail': customizeIndicators }">
           <header class="modal__header">
             <span>选择技术指标</span>
             <button class="modal__close" @click="closeIndicatorPicker">×</button>
           </header>
           <div class="modal__body">
+            <div v-if="customizeIndicators">
+              <p>主图叠加（不占副图名额）</p>
+              <button v-for="definition in catalogOverlays" :key="definition.key" class="overlay-item" :class="{active:detailSettings.settings.value.overlays?.includes(definition.key)}" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="toggleOverlay(definition.key)">{{ definition.label }} {{ detailSettings.settings.value.overlays?.includes(definition.key) ? '✓' : '' }}</button>
+              <div v-for="definition in selectedOverlays" :key="`params-${definition.key}`" class="indicator-control-row"><button :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="editParameters(definition.key)">{{ definition.label }} 参数</button><button :disabled="!detailSettings.ready.value || detailSettings.saving.value" :aria-label="`恢复 ${definition.label} 默认`" @click="resetIndicator(definition.key,'main')">恢复默认</button></div>
+            </div>
+            <p v-if="customizeIndicators">已开启 {{ enabledIndicators.size }}/3</p>
             <div class="picker-grid">
               <button
-                v-for="ind in INDICATORS"
+                v-for="ind in pickerIndicators"
                 :key="ind.key"
                 class="picker-item"
                 :class="{ active: enabledIndicators.has(ind.key) }"
-                @click="toggleIndicator(ind.key)"
+                :disabled="customizeIndicators && (!detailSettings.ready.value || detailSettings.saving.value || (!enabledIndicators.has(ind.key) && enabledIndicators.size >= 3))"
+                :title="customizeIndicators && !enabledIndicators.has(ind.key) && enabledIndicators.size >= 3 ? '最多开启三个副图，请先关闭一个' : ''"
+                @click="toggleIndicator(ind.key as IndicatorKey)"
               >
                 <span class="picker-item__icon" v-html="ind.icon" />
                 <span class="picker-item__label">{{ ind.label }}</span>
                 <span class="picker-item__check">{{ enabledIndicators.has(ind.key) ? '✓' : '' }}</span>
               </button>
             </div>
-            <div class="picker-hint">点击切换指标显示，选择自动保存</div>
+            <div v-if="customizeIndicators">
+              <p>副图排列（从上到下）</p>
+              <div v-for="(definition,index) in selectedPanelDefinitions" :key="definition.key" class="indicator-control-row">
+                <span>{{ definition.label }}</span>
+                <button v-if="definition.parameters.length||definition.input_fields||definition.cross||definition.key==='zhishu'" :disabled="!detailSettings.ready.value||detailSettings.saving.value" @click="editParameters(definition.key)">{{ definition.label }} 参数</button>
+                <button :disabled="!detailSettings.ready.value||detailSettings.saving.value||index===0" :aria-label="`上移 ${definition.label}`" @click="movePanel(definition.key,-1)">↑</button>
+                <button :disabled="!detailSettings.ready.value||detailSettings.saving.value||index===selectedPanelDefinitions.length-1" :aria-label="`下移 ${definition.label}`" @click="movePanel(definition.key,1)">↓</button>
+                <button :disabled="!detailSettings.ready.value||detailSettings.saving.value" :aria-label="`恢复 ${definition.label} 默认`" @click="resetIndicator(definition.key,'panel')">恢复默认</button>
+              </div>
+              <button :disabled="!detailSettings.ready.value||detailSettings.saving.value" @click="editParameters('zhishu')">配置合成指数</button>
+              <CompositeIndexSettings v-if="parameterKey==='zhishu'" :key="`${parameterKey}-${user.user?.id || 'guest'}`" :values="detailSettings.settings.value.panel_options?.zhishu?.params || {}" :saving="detailSettings.saving.value" @save="savePanelParameters" @close="parameterKey='';enableCompositeAfterSave=false" />
+              <IndicatorParameters v-else-if="parameterDefinition" :key="parameterKey" :definition="parameterDefinition" :values="(parameterDefinition.placement === 'main' ? detailSettings.settings.value.overlay_options : detailSettings.settings.value.panel_options)?.[parameterKey]?.params || {}" :saving="detailSettings.saving.value" @save="savePanelParameters" @close="parameterKey = ''" />
+            </div>
+            <div class="picker-hint">{{ customizeIndicators && enabledIndicators.size >= 3 ? '最多开启三个副图，请先关闭一个' : '点击切换指标显示，选择自动保存' }}</div>
+            <p v-if="customizeIndicators && detailSettings.error.value" role="alert">{{ detailSettings.error.value }}</p>
           </div>
         </div>
       </div>
@@ -1711,6 +1945,10 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   flex-direction: column;
   gap: 10px;
 }
+.modal--indicator-detail { display:flex; flex-direction:column; max-height:calc(100dvh - 32px); }
+.modal--indicator-detail .modal__header { flex-shrink:0; }
+.modal--indicator-detail .modal__body { min-height:0; overflow-y:auto; }
+.indicator-control-row { display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:6px 0; }
 .modal__symbol {
   font-size: 13px;
   font-weight: 600;
@@ -1790,6 +2028,10 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   transition: all 0.15s;
   position: relative;
 }
+.overlay-item { padding:6px; margin:3px; border:1px solid var(--border); background:var(--bg-panel); color:var(--text); cursor:pointer; }
+.overlay-item.active { border-color:var(--accent); color:var(--accent); }
+.overlay-legend { display:flex; flex-wrap:wrap; gap:4px 8px; }
+.picker-item:disabled { opacity: .5; cursor: default; }
 .picker-item:hover { border-color: var(--accent); }
 .picker-item.active {
   border-color: var(--accent);

@@ -32,13 +32,15 @@ await build({
       name: 'admin-fixture',
       setup(builder) {
         builder.onResolve(
-          { filter: /^(vue-router|@\/api\/admin|@\/composables\/useSyntheticWicks)$/ },
+          { filter: /^(vue-router|@\/api\/admin|@\/api\/http|@\/composables\/useSyntheticWicks)$/ },
           ({ path }) => ({ path, namespace: 'fixture' })
         )
         builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({
           resolveDir: root,
           contents:
-            path === 'vue-router'
+            path === '@/api/http'
+              ? 'export const request=async config=>globalThis.adminFixture.http(config)'
+              : path === 'vue-router'
               ? 'export const useRoute=()=>globalThis.adminFixture.route;export const useRouter=()=>({replace:async ({query})=>{globalThis.adminFixture.route.query=query}})'
               : path.endsWith('useSyntheticWicks')
                 ? "import {ref} from 'vue';export const syntheticWickFactor=ref(.5)"
@@ -68,7 +70,7 @@ const replies={
  sync:{status:'idle',task_id:null,error:null,progress:0,message:'尚未同步本地行情'},display:{synthetic_wick_factor:.5},
  requests:{requests:[{id:'1',task_id:'test-task',queue:'fixed_indices',provider:'stockdb',interface:'日k',symbol:'600519',symbol_name:'贵州茅台',symbols:[],period:'1d',phase:'requesting',attempt:1,attempts:1,started_at:'2026-11-06T00:00:00Z',updated_at:'2026-11-06T00:00:00Z'}]},
 };
-const fixture={calls:[],failSave:false,reply:replies,route:null,async call(key,data){this.calls.push(key);if(key.startsWith('save')){if(this.failSave)throw Error('save failed');if(key==='saveIndicatorSettings')return this.reply.indicatorSettings={...data,revision:2};if(key==='savePolicy')return this.reply.policy={...data};if(key==='saveLimits')return this.reply.traffic={...this.reply.traffic,...data};return this.reply.display={...data}}if(key==='startUpdate'){this.reply.update={...this.reply.update,status:'queued',maintenance:true,task_id:'update-task'};return this.reply.update}if(key==='startSync'){this.reply.sync={status:'queued',task_id:'new-task',error:null,progress:0,message:'等待同步'};return this.reply.sync}return structuredClone(this.reply[key])}};
+const fixture={calls:[],failSave:false,reply:replies,route:null,async http(config){if(config.url.includes('/events')){const before=config.params.before_seq;const after=config.params.after_seq||0;const all=Array.from({length:10},(_,i)=>({seq:i+1,time:1794020400,phase:i<8?'downloading':'verifying',level:'info',file:'007593.ldb',message:i<8?'续传 2 007593.ldb':'正在校验原始文件'}));const rows=before?all.filter(e=>e.seq<before).slice(-3):all.filter(e=>e.seq>after);return {events:rows,files:[{file:'007593.ldb',status:'retrying',retries:2}],has_more:!!before&&rows[0]?.seq>1}}return {interval_seconds:30}},async call(key,data){this.calls.push(key);if(key.startsWith('save')){if(this.failSave)throw Error('save failed');if(key==='saveIndicatorSettings')return this.reply.indicatorSettings={...data,revision:2};if(key==='savePolicy')return this.reply.policy={...data};if(key==='saveLimits')return this.reply.traffic={...this.reply.traffic,...data};return this.reply.display={...data}}if(key==='startUpdate'){this.reply.update={...this.reply.update,status:'queued',maintenance:true,task_id:'update-task'};return this.reply.update}if(key==='startSync'){this.reply.sync={status:'queued',task_id:'new-task',error:null,progress:0,message:'等待同步'};return this.reply.sync}return structuredClone(this.reply[key])}};
 globalThis.adminFixture=fixture;
 `
 if (process.argv.includes('--preview')) {
@@ -123,6 +125,9 @@ globalThis.clearTimeout = (id) => {
 }
 fixture.route = reactive({ query: {} })
 const app = createApp(Admin)
+const style = document.createElement('style')
+style.textContent = await readFile('src/components/admin/admin.css', 'utf8')
+document.head.appendChild(style)
 app.mount('#app')
 const settle = async () => {
   await new Promise((r) => setTimeout(r, 10))
@@ -143,6 +148,21 @@ assert.ok(updateButton && !updateButton.disabled)
 updateButton.click(); await settle()
 assert.equal(fixture.calls.filter(c => c === 'startUpdate').length, 1)
 assert.ok(syncButton.disabled, 'manual sync must be blocked during raw-file maintenance')
+assert.match(document.querySelector('.update-log').textContent, /正在校验原始文件/)
+assert.match(document.querySelector('.update-files').textContent, /007593.ldb/)
+assert.match(document.querySelector('.update-files').textContent, /重试中/)
+const logViewport = document.querySelector('.update-log')
+assert.equal(dom.window.getComputedStyle(logViewport).height, '288px')
+Object.defineProperty(logViewport, 'scrollHeight', {configurable:true,value:1000})
+Object.defineProperty(logViewport, 'clientHeight', {configurable:true,value:288})
+logViewport.scrollTop = 0
+logViewport.dispatchEvent(new dom.window.Event('scroll'))
+await nextTick()
+assert.match(document.body.textContent, /正在查看历史，已暂停跟随/)
+const earlier = [...document.querySelectorAll('button')].find(b=>b.textContent.includes('加载更早记录'))
+earlier.click(); await settle()
+assert.equal(document.querySelectorAll('.update-log time').length, 6)
+
 fixture.reply.update = {...fixture.reply.update, status:'success', maintenance:false, progress:100}
 await navigate('overview'); await navigate('sources')
 assert.equal(syncButton.isConnected, false)
@@ -179,7 +199,7 @@ fixture.failSave = false
 await submit(form)
 assert.equal(fixture.reply.policy.akshare_enabled, true)
 assert.equal(document.querySelectorAll('input[type=checkbox]').length, 4, 'enabling AkShare must not duplicate policy switches')
-const limitsForm = document.querySelector('input[type=number]').closest('form')
+const limitsForm = document.querySelector('input[type=number][min="1"]').closest('form')
 assert.equal(limitsForm.querySelectorAll('input[type=checkbox]').length, 0, 'request protection must not contain policy controls')
 inputs[2].click()
 await nextTick()
@@ -190,7 +210,7 @@ await nextTick()
 inputs[0].click()
 await nextTick()
 assert.equal(inputs[1].checked, true, 'AkShare storage preference is independent of the fallback switch')
-const interval = document.querySelector('input[type=number]')
+const interval = document.querySelector('input[type=number][min="1"]')
 interval.value = '7'
 interval.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
 await nextTick()
@@ -234,6 +254,19 @@ Object.defineProperty(document, 'hidden', { configurable: true, value: false })
 document.dispatchEvent(new dom.window.Event('visibilitychange'))
 await settle()
 assert.equal(pollTimers.size, 1, 'resume must schedule a single polling timer')
+fixture.reply.sync.error = Array.from({length:24}, (_,i) => `行业${i}: 行业${i} 的所有数据源均未返回日 K`).join('；')
+fixture.reply.sync.status = 'failed'
+await navigate('overview')
+assert.equal(document.querySelectorAll('.admin-errors li').length, 24)
+assert.equal(document.querySelector('.admin-errors li strong').textContent, '行业0')
+assert.equal(document.querySelector('.admin-errors li span').textContent, '所有数据源均未返回日 K')
+assert.equal(dom.window.getComputedStyle(document.querySelector('.admin-errors ul')).maxHeight, '288px')
+await navigate('sources')
+assert.equal(document.querySelectorAll('.admin-errors li').length, 24, 'both sync cards use the same readable list')
+fixture.reply.sync.error = '<img src=x onerror=alert(1)>;单条错误'
+await navigate('overview')
+assert.equal(document.querySelector('.admin-errors img'), null, 'errors must remain escaped text')
+fixture.reply.sync.error = null
 await navigate('requests')
 let release
 const previousCall = fixture.call
@@ -249,11 +282,20 @@ fixture.call = function (key, data) {
 const baseline = fixture.calls.filter((key) => key === 'requests').length
 const [id, callback] = [...pollTimers][0]
 pollTimers.delete(id)
+const statusRow = document.querySelector('.resource-status')
+const timestamp = statusRow.firstElementChild.textContent
+const workspace = document.querySelector('.admin-workspace')
+workspace.scrollTop = 250
 const polling = callback()
 await nextTick()
 const activeRefresh = [...document.querySelectorAll('button')].find((b) =>
   b.textContent.includes('更新中')
 )
+assert.equal(document.querySelector('.resource-status'), statusRow, 'polling must keep the same status row')
+assert.equal(statusRow.firstElementChild.textContent, timestamp, 'polling must preserve the last update text')
+assert.equal(dom.window.getComputedStyle(statusRow).minHeight, '24px')
+assert.equal(workspace.scrollTop, 250)
+assert.equal(document.querySelector('.resource-refresh.visible').textContent, '正在刷新…')
 assert.ok(activeRefresh.disabled, 'refresh must be disabled during an in-flight request')
 fixture.route.query = { section: 'overview' }
 await settle()
