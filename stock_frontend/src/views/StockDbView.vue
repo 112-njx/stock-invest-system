@@ -561,7 +561,7 @@ button:hover, .active { background: var(--blueprint-active); color: var(--bluepr
 .stock-chart { flex: 0 0 43%; min-height: 225px; display: flex; flex-direction: column; padding: 6px 6px 0; overflow: hidden; }
 .stock-chart > strong, .intraday > strong { flex: none; padding: 0 3px; }
 .stock-row.member-grid { min-height: 39px; border-bottom: 1px solid var(--border); font-size: 12px; }
-.stock-row strong { color: var(--blueprint-link); }
+.stock-row strong { color: var(--quote-highlight); }
 .source { display: flex; gap: 7px; align-items: center; padding: 5px 8px; border-top: 1px solid var(--border); }.source button { margin-left: auto; }
 .empty { padding: 12px; color: var(--text-secondary); text-align: center; }.state { margin-top: 24px; }.state button { color: var(--blueprint-link); text-decoration: underline; }
 .intraday { position: fixed; z-index: 20; width: min(420px, calc(100vw - 16px)); height: 214px; display: flex; flex-direction: column; gap: 4px; padding: 8px; background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 7px; box-shadow: var(--shadow); pointer-events: none; }
