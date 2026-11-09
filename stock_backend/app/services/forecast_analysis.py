@@ -5,11 +5,11 @@ import json
 import re
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
 from app.services.indicator_registry import FORECAST_FEATURES
 
-PLAYBOOK_VERSION = 4
+PLAYBOOK_VERSION = 5
 REGIME_HORIZON = 5
 Regime = Literal["trend", "tight_channel", "broad_channel", "range", "breakout", "undetermined"]
 Direction = Literal["up", "down", "flat", "undetermined"]
@@ -74,17 +74,23 @@ class Prediction(StrictOutput):
     next_regime: RegimePrediction
 
 
+class EvidenceError(ValueError):
+    """A schema-valid reference could not be grounded."""
+
+
 def _ground(items, rows, *, required):
     if required and not items:
-        raise ValueError("directional result must cite evidence")
+        raise EvidenceError("明确结论需要引用证据。")
     used = set()
     grounded = []
     for item in items:
         key = (item["session"], item["feature"])
         fields = rows.get(item["session"], {})
         value = fields.get(item["feature"])
-        if key in used or value is None or value == []:
-            raise ValueError("missing or duplicate evidence")
+        if key in used:
+            raise EvidenceError(f"evidence 重复引用 {key[0]} 的 {key[1]}，请删除重复项。")
+        if value is None or value == []:
+            raise EvidenceError(f"evidence 中 {key[0]} 的 {key[1]} 不在输入中或为空，请替换为有效引用。")
         used.add(key)
         grounded.append({"session": key[0], "feature": key[1], "value": value})
     return grounded
@@ -126,13 +132,19 @@ async def _structured(llm, schema, instructions, context, validate):
             try:
                 result = schema.model_validate_json(raw).model_dump()
                 validate(result)
-            except ValueError:
+            except ValueError as exc:
                 if attempt:
                     raise
+                feedback = str(exc) if isinstance(exc, EvidenceError) else ""
+                if isinstance(exc, ValidationError):
+                    feedback = "校验失败的字段：" + "、".join(
+                        ".".join(map(str, error["loc"])) for error in exc.errors(include_input=False)[:6]
+                    ) + "。"
                 messages += [
                     {"role": "assistant", "content": response.text[:6000]},
                     {"role": "user", "content": (
                         "上次输出未通过格式或证据校验。重写完整 JSON。"
+                        f"{feedback}"
                         "逐项核对每条 evidence 的 session 和 feature，feature 只允许原始字段键。"
                         "例如某天存在 ema20 时填写 feature=\"ema20\"。每条证据仅允许 session 和 feature。"
                         "summary 和 reason 只能写定性解释，不填写日期、价格或其他数值。"

@@ -88,6 +88,15 @@ def test_model_can_repair_nonliteral_evidence_once():
     assert result["evidence"][0]["feature"] == "ema20"
 
 
+def test_model_gets_the_invalid_date_and_field_during_repair():
+    invalid = {**DIAGNOSIS, "evidence": [{**EVIDENCE[0], "session": "2026-11-06"}]}
+    model = Model(invalid, DIAGNOSIS)
+    result, _ = asyncio.run(analysis.diagnose(model, snapshot()))
+    feedback = model.messages[-1][-1]["content"]
+    assert "2026-11-06 的 ema20" in feedback
+    assert result["evidence"][0]["session"] == DAY
+
+
 @pytest.fixture
 def db_factory(monkeypatch):
     with engine.connect() as connection, connection.begin() as tx:
