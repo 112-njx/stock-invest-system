@@ -96,14 +96,17 @@ function goBack() {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') goBack()
+  if (e.key === 'Escape' && !e.defaultPrevented &&
+      !document.querySelector('[aria-modal="true"], dialog[open]')) goBack()
 }
 
 /**
  * 双向标的联动：AI 页「回测显示」跳转时携带 ?symbol=code，
  * 若与当前标的不同则解析并切换，保证 K 线区展示的策略回测标的一致。
  */
+let symbolRequest = 0
 async function resolveSymbolParam() {
+  const request = ++symbolRequest
   const q = route.query.symbol
   if (q == null) return
   const kw = String(q)
@@ -112,11 +115,19 @@ async function resolveSymbolParam() {
   try {
     const list = stockOnly ? await fetchSymbols({ search: kw }) : await searchSymbols(kw)
     const found = list.find((s) => (!stockOnly || s.type === 'stock') && (s.code === kw || String(s.id) === kw))
-    if (found) market.setCurrent(found)
+    if (found && request === symbolRequest) market.setCurrent(found)
   } catch {
     /* 解析失败保持当前标的，不阻塞页面 */
   }
 }
+
+watch(() => [route.query.symbol, route.query.asset_type], async () => {
+  if (route.name !== 'market-detail') return
+  await resolveSymbolParam()
+  chartView.value = route.query.view === 'flows' && market.current?.type === 'stock' &&
+    market.current.code === route.query.symbol ? 'flows' : 'quotes'
+  await loadBacktestMarkers()
+})
 
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
@@ -132,6 +143,7 @@ onMounted(async () => {
   start()
 })
 onBeforeUnmount(() => {
+  symbolRequest++
   window.removeEventListener('keydown', onKeydown)
 })
 </script>
@@ -145,6 +157,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="detail-body">
+      <p v-if="market.current" class="detail-summary mobile-only">{{ market.current.name }} · {{ market.current.code }}</p>
       <div class="col-left">
         <div v-show="chartView==='quotes'" class="chart-content">
         <!-- A+B 合并：K 线 + 技术指标多 pane，共享时间轴；G32：叠加回测买卖点 -->
@@ -234,7 +247,7 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 .chart-content{display:flex;flex-direction:column}.chart-content>*{flex:1;min-height:0}.chart-tabs{display:flex;gap:5px;flex:none}.chart-tabs button{padding:5px 12px;border:1px solid var(--border);color:var(--text-secondary);border-radius:4px}.chart-tabs button[aria-pressed='true']{color:var(--accent);background:var(--bg-active)}.chart-tabs button:disabled{opacity:.4}
-@media(max-width: 800px){.detail-body{grid-template-columns:minmax(0,1fr) 320px}}
+@media (min-width: 768px) and (max-width: 1023px) { .detail-body { grid-template-columns: minmax(0, 1fr) minmax(240px, 30%); } }
 /* G32：买卖点图例/空态条 */
 .bt-marker-bar {
   flex: none;
@@ -262,5 +275,16 @@ onBeforeUnmount(() => {
   grid-template-rows: minmax(0, 1.7fr) minmax(220px, 1fr);
   overflow-y: auto;
   gap: 8px;
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .detail { height: auto; }
+  .detail-topbar, .chart-tabs { flex-wrap: wrap; }
+  .detail-hint { display: none; }
+  .detail-back, .chart-tabs button { min-height: var(--touch-target); }
+  .detail-body { grid-template-columns: minmax(0, 1fr); }
+  .detail-summary { margin: 0; padding: 0 4px; font-weight: 600; }
+  .col-left { min-height: var(--mobile-chart-height); }
+  .chart-content { min-height: var(--mobile-chart-height); }
+  .col-right { grid-template-rows: auto; grid-auto-rows: minmax(170px, auto); overflow: visible; }
 }
 </style>

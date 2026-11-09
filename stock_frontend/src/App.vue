@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AnnouncementBanner from '@/components/layout/AnnouncementBanner.vue'
 import AppBar from '@/components/layout/AppBar.vue'
@@ -20,6 +20,20 @@ const notification = useNotificationStore()
 // G35：独立页（登录/找回密码/法律页）不显示顶部导航与公告条；其余页面一律显示
 const showAppbar = computed(() => !route.meta.bare)
 
+const viewport = window.visualViewport
+function syncVisibleHeight() {
+  if (viewport && viewport.scale === 1 && viewport.height < window.innerHeight) {
+    document.documentElement.style.setProperty('--visible-height', `${Math.floor(viewport.height)}px`)
+  } else {
+    document.documentElement.style.removeProperty('--visible-height')
+  }
+}
+onMounted(() => viewport?.addEventListener('resize', syncVisibleHeight))
+onUnmounted(() => {
+  viewport?.removeEventListener('resize', syncVisibleHeight)
+  document.documentElement.style.removeProperty('--visible-height')
+})
+
 // G16：登录后初始化通知（WS 绑定 + 未读数 + 活跃公告），登出时清理
 onMounted(() => {
   if (user.token) notification.init()
@@ -34,7 +48,7 @@ watch(
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'app-shell--workspace': route.name === 'ai' }">
     <AppBar v-if="showAppbar" />
     <!-- G16：系统公告 banner（有活跃公告时展示，可关闭） -->
     <AnnouncementBanner v-if="showAppbar" />
@@ -61,5 +75,14 @@ watch(
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+.app-main { min-width: 0; }
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .app-shell {
+    height: auto;
+    min-height: var(--screen-height);
+    padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+  }
+  .app-shell--workspace { height: var(--visible-height, var(--screen-height)); min-height: 0; }
 }
 </style>

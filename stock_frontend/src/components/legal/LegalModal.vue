@@ -8,11 +8,12 @@
  * 层级 z-index 1600，高于登录弹窗（1500），以便在登录弹窗内点协议链接时叠在其上层；
  * 此时 ESC 由本弹窗优先消费（LoginModal 的 ESC 处理会检测本弹窗开启状态而跳过）。
  */
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Component } from 'vue'
 import LegalDisclaimerContent from '@/components/legal/LegalDisclaimerContent.vue'
 import LegalPrivacyContent from '@/components/legal/LegalPrivacyContent.vue'
 import LegalTermsContent from '@/components/legal/LegalTermsContent.vue'
+import { useDialogFocus } from '@/composables/useDialogFocus'
 import { useLegalModalStore, type LegalDocKey } from '@/stores/legalModal'
 import '@/components/legal/legal-doc.css'
 
@@ -38,13 +39,15 @@ function onKeydown(e: KeyboardEvent) {
 
 onMounted(() => document.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
+const dialog = ref<HTMLElement>()
+useDialogFocus(dialog, () => legal.open)
 </script>
 
 <template>
   <Teleport to="body">
-    <div v-if="current" class="legal-mask" @click.self="legal.hide()">
+    <div v-if="current" class="legal-mask safe-overlay" @click.self="legal.hide()">
       <div
-        class="legal-modal"
+        ref="dialog" class="legal-modal viewport-dialog"
         role="dialog"
         aria-modal="true"
         :aria-label="current.title"
@@ -54,7 +57,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
             <h2 class="legal-modal__title">{{ current.title }}</h2>
             <p class="legal-modal__meta">生效日期：{{ current.updatedAt }}</p>
           </div>
-          <button class="legal-modal__close" type="button" title="关闭（ESC）" @click="legal.hide()">
+          <button class="legal-modal__close" type="button" title="关闭（ESC）" aria-label="关闭" data-dialog-focus @click="legal.hide()">
             ×
           </button>
         </header>
@@ -149,5 +152,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 }
 .legal-modal__ok:hover {
   opacity: 0.9;
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .legal-mask { padding: max(12px, var(--safe-top)) max(12px, var(--safe-right)) max(12px, var(--safe-bottom)) max(12px, var(--safe-left)); }
+  .legal-modal { max-height: calc(var(--screen-height) - max(12px, var(--safe-top)) - max(12px, var(--safe-bottom))); }
+  .legal-modal__close { min-height: var(--touch-target); min-width: var(--touch-target); }
+  .legal-modal__head, .legal-modal__body, .legal-modal__foot { padding-inline: 14px; }
 }
 </style>

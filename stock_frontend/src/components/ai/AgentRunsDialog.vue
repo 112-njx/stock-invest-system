@@ -278,4 +278,8 @@ onMounted(() => void load())
   font-size: 11px;
   color: var(--text-muted);
 }
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .dialog { max-height: calc(var(--screen-height) - 24px); }
+  .dialog__head { flex-wrap: wrap; }
+}
 </style>

@@ -248,6 +248,7 @@ onUnmounted(() => {
           <span class="wl-pct" :class="trendClass(item.change_pct)">
             {{ formatPct(item.change_pct) }}
           </span>
+          <button type="button" class="wl-more mobile-only" :aria-label="`${item.name}的更多操作`" @click.stop="openMenu($event, item)">⋯</button>
           <button v-if="!readonly" class="wl-del" title="删除" @click.stop="onDelete(item)">×</button>
         </ListRow>
       </template>
@@ -461,5 +462,9 @@ onUnmounted(() => {
   text-align: center;
   font-size: 12px;
   color: var(--text-muted);
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .wl-more { min-height: var(--touch-target); min-width: 32px; color: var(--text-secondary); }
+  .wl-context button { min-height: var(--touch-target); }
 }
 </style>

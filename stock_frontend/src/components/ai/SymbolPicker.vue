@@ -211,4 +211,10 @@ onMounted(loadBase)
   font-size: 12px;
   color: var(--text-muted);
 }
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .symbol-picker { min-width: 0; max-width: 100%; }
+  .symbol-picker__trigger { min-height: var(--touch-target); }
+  .symbol-picker__panel { width: min(300px, calc(100vw - 36px)); left: 0; }
+  .symbol-picker__search { font-size: 16px; }
+}
 </style>

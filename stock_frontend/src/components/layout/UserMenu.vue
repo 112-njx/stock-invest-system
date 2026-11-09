@@ -77,7 +77,7 @@ const menuStyle = computed(() => ({
 
 <template>
   <div ref="rootRef" class="um">
-    <button class="um__btn" :title="user.token ? '账户菜单' : '登录 / 注册'" @click="toggle">
+    <button class="um__btn" :aria-label="user.token ? '账户菜单' : '登录 / 注册'" :title="user.token ? '账户菜单' : '登录 / 注册'" @click="toggle">
       <span class="um__avatar" :class="{ 'um__avatar--guest': !user.token }">
         {{ user.token ? user.avatarText : '👤' }}
       </span>
@@ -246,5 +246,10 @@ const menuStyle = computed(() => ({
   height: 1px;
   margin: 4px 6px;
   background: var(--border);
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .um__btn { justify-content: center; }
+  .um-menu { max-width: calc(100vw - 24px); }
+  .um-menu__item { min-height: var(--touch-target); }
 }
 </style>

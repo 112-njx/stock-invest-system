@@ -499,7 +499,7 @@
     padding: 24px 20px;
   }
 }
-@media (max-width: 700px) {
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
   .admin-console {
     flex-direction: column;
   }
@@ -522,12 +522,14 @@
   .admin-console nav button {
     flex: none;
     padding: 0 10px;
+    min-height: var(--touch-target);
   }
   .admin-console nav button > span {
     display: none;
   }
   .admin-console .workspace-header {
     align-items: flex-start;
+    flex-wrap: wrap;
   }
   .admin-console .workspace-header p {
     max-width: 220px;

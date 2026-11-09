@@ -95,4 +95,10 @@ const cards: Array<{ type: QuickCardType; title: string; desc: string; icon: str
   color: var(--text-muted);
   line-height: 1.4;
 }
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .quick-cards__row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-cards__row--center { grid-template-columns: minmax(0, 1fr); }
+  .quick-cards__row--center .qc-card { grid-column: 1; }
+  .qc-card { min-width: 0; }
+}
 </style>

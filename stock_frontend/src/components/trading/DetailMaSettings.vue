@@ -41,4 +41,8 @@ p { font-size:12px; color:var(--text-secondary); }
 button { padding:5px 9px; cursor:pointer; border:1px solid var(--border); border-radius:4px; background:var(--bg-panel); color:var(--text); }
 button:disabled { opacity:.45; cursor:default; }
 input[type=number] { width:90px; padding:4px; color:var(--text); background:var(--bg-panel); border:1px solid var(--border); }
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .ma-settings { max-height: calc(var(--screen-height) - 24px); overflow: auto; padding: 12px; }
+  .ma-row { flex-wrap: wrap; }
+}
 </style>

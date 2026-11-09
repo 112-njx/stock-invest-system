@@ -2159,4 +2159,15 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   color: var(--text-muted);
   text-align: center;
 }
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .kline-chart__header { flex-wrap: wrap; padding: 4px 8px; }
+  .kline-chart__header-left { flex-basis: 100%; gap: 4px 8px; }
+  .kline-chart__header-right { flex: 1 1 100%; min-width: 0; flex-wrap: wrap; gap: 4px; }
+  .kline-chart__hover-data, .kline-chart__symbol { white-space: normal; overflow-wrap: anywhere; }
+  .kline-chart__tabs { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+  .period-tab, .gear-btn, .sr-btn { min-height: 40px; }
+  .gear-btn { min-width: var(--touch-target); justify-content: center; }
+  .modal { max-height: calc(var(--screen-height) - 24px); overflow-y: auto; }
+  .modal--indicator-detail :is(.picker-item, .overlay-item) { min-height: var(--touch-target); }
+}
 </style>

@@ -396,6 +396,10 @@ onBeforeUnmount(() => {
 
     <aside class="panel boards">
       <header class="panel-head"><strong>{{ categoryName }}</strong><small>{{ boards.length }} 个板块</small></header>
+      <select class="mobile-only board-picker" :value="boardId" aria-label="选择板块" @change="selectBoard(($event.target as HTMLSelectElement).value)">
+        <option v-if="!ranked.length" value="" disabled>暂无板块</option>
+        <option v-for="board in ranked" :key="board.id" :value="board.id">{{ board.name }} · {{ formatReturn(board.change) }}</option>
+      </select>
       <div ref="boardList" class="rows">
         <button v-for="board in ranked" :key="board.id" class="board-row" :class="{ active: boardId === board.id }"
           :aria-pressed="boardId === board.id" :title="board.name" @click="selectBoard(board.id)" @dblclick="!trendMode && compare(board)">
@@ -439,7 +443,8 @@ onBeforeUnmount(() => {
       </article>
       <section class="member-panel">
         <header class="panel-head"><strong>{{ currentBoard?.name }} · 成分股</strong><small v-if="detail">{{ members.length }}/{{ detail.count }} 只 · 最新收盘行情</small></header>
-        <div ref="memberList" class="member-table" @scroll.passive="clearHover">
+        <a class="member-detail-link mobile-only" href="#constituent-details">查看选中个股详情 ↓</a>
+        <div ref="memberList" class="member-table scroll-x" @scroll.passive="clearHover">
           <div class="member-sorts member-grid">
             <template v-for="[id, label] in memberColumns" :key="id">
               <button :class="{ active: memberSort === id }" :aria-pressed="memberSort === id" @click="setMemberSort(id)">{{ label }}{{ memberSort === id ? (memberAscending ? '↑' : '↓') : '' }}</button>
@@ -456,7 +461,7 @@ onBeforeUnmount(() => {
       </section>
     </section>
 
-    <aside v-if="!trendMode" class="panel constituents">
+    <aside v-if="!trendMode" id="constituent-details" class="panel constituents">
       <header class="panel-head"><strong class="ellipsis">{{ currentBoard?.name ?? '板块股票' }}</strong><small>个股详情</small></header>
       <div class="stock-chart">
         <strong v-if="currentStock">{{ currentStock.code }} · {{ currentStock.name }} 日 K</strong>
@@ -474,7 +479,7 @@ onBeforeUnmount(() => {
       <StockDbChart :bars="hover.bars" :label="`${hover.stock.name}分时`" minute :baseline="hover.stock.bar[7]" />
     </div>
 
-    <dialog ref="drawer" class="compare-dialog" @close="compareRequest++">
+    <dialog ref="drawer" class="compare-dialog viewport-dialog" aria-label="五维指数对比" @close="compareRequest++">
       <header class="panel-head"><strong>{{ compareBoard?.name }} · 五维指数全景对比</strong>
         <small>{{ compareBoard?.count }} 只成分股</small><button aria-label="关闭对比" @click="drawer?.close()">✕</button>
       </header>
@@ -587,5 +592,27 @@ dialog::backdrop { background: #23344950; }.compare-dialog { width: min(96vw, 16
 .embedded-trends { grid-column: 3 / -1; min-width: 0; min-height: 0; overflow: hidden; }
 @media (max-width: 1080px) {
   .blueprint.blueprint--trends { grid-template-rows: minmax(510px, 1fr); }
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .blueprint { display: flex; flex-direction: column; gap: 8px; overflow: visible; }
+  .blueprint > .panel { height: auto; flex: none; }
+  .categories__list { display: flex; flex-wrap: wrap; }
+  .categories__list button, .board-picker, .compare { min-height: var(--touch-target); }
+  .boards .rows { display: none; }
+  .board-picker { margin: 4px 12px; border: 1px solid var(--border); font-size: 16px; }
+  .index-toolbar, .card-head, .compare-dialog .panel-head { height: auto; min-height: 44px; flex-wrap: wrap; white-space: normal; }
+  .index-toolbar { padding: 4px 8px; }
+  .algorithms, .segmented, .ranking { flex-wrap: wrap; }
+  .segmented button, .ranking button, .ranking select { min-height: var(--touch-target); }
+  .selected-index { min-height: 290px; }
+  .selected-index > :deep(.chart) { min-height: 235px; }
+  .member-panel { flex: none; }
+  .member-table { max-height: 420px; }
+  .member-detail-link { color: var(--accent); padding: 10px 12px; }
+  .stock-row.member-grid { min-height: var(--touch-target); }
+  .stock-chart { flex: none; height: 270px; }
+  .stock-insights { overflow: visible; }
+  .compare-dialog { width: calc(100% - 24px); margin: auto; }
+  .compare-grid { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

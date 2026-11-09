@@ -5,6 +5,7 @@ import router from './router'
 import { useUserStore } from '@/stores/user'
 import { initMonitor, reportError, trackTiming } from '@/utils/monitor'
 import './style.css'
+import './responsive.css'
 // G27：虚拟滚动组件基础样式（RecycleScroller 的滚动容器与 item 定位）
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 

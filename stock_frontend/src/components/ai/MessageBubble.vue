@@ -105,4 +105,8 @@ function isDegradedContent(text?: string): boolean {
   background: rgba(59, 130, 246, 0.12);
   border-left: 2px solid var(--accent);
 }
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .chat-msg__body { max-width: calc(100% - 36px); overflow-wrap: anywhere; }
+  .chat-msg__body :deep(pre) { max-width: 100%; overflow-x: auto; }
+}
 </style>

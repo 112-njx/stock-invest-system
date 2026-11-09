@@ -4,7 +4,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, njx-branch]
   pull_request:
   workflow_dispatch:
 
@@ -57,9 +57,26 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+  frontend-responsive:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: stock_frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: stock_frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run test:responsive
+
   docker-build:
     runs-on: ubuntu-latest
-    needs: backend-test
+    needs: [backend-test, frontend-responsive]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx

@@ -17,7 +17,8 @@
     "verify:routing": "node scripts/verify-g35-routing.mjs",
     "verify:default-symbol": "node scripts/verify-default-symbol.mjs",
     "verify:indicators": "node scripts/verify-detail-chart-settings.mjs && node scripts/verify-indicator-isolation.mjs",
-    "test:indicators": "playwright test -c playwright.indicators.config.ts"
+    "test:indicators": "playwright test -c playwright.indicators.config.ts",
+    "test:responsive": "playwright test -c playwright.responsive.config.ts"
   },
   "dependencies": {
     "axios": "^1.19.0",

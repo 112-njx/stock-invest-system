@@ -82,8 +82,8 @@ function timeText(iso: string): string {
     </button>
 
     <Teleport to="body">
-      <div v-if="store.panelOpen" class="notif-mask" @click.self="store.closePanel()">
-        <div class="notif-modal" role="dialog" aria-modal="true" aria-label="通知中心">
+      <div v-if="store.panelOpen" class="notif-mask safe-overlay" @click.self="store.closePanel()">
+        <div class="notif-modal viewport-dialog" role="dialog" aria-modal="true" aria-label="通知中心">
           <header class="notif-modal__head">
             <h2 class="notif-modal__title">通知中心</h2>
             <div class="notif-modal__head-actions">
@@ -181,7 +181,7 @@ function timeText(iso: string): string {
   flex-direction: column;
   width: 720px;
   max-width: 100%;
-  max-height: calc(100vh - 96px);
+  max-height: calc(var(--screen-height) - 96px);
   background: var(--bg-panel);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
@@ -328,5 +328,14 @@ function timeText(iso: string): string {
 }
 .notif-modal__ok:hover {
   opacity: 0.9;
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .bell__btn { justify-content: center; }
+}
+@media (max-width: 767px) {
+  .notif-mask { padding: 12px; }
+  .notif-modal { max-height: calc(var(--screen-height) - 24px); }
+  .notif-modal__head, .notif-modal__body { padding-inline: 12px; }
+  .notif-modal__close { width: var(--touch-target); height: var(--touch-target); }
 }
 </style>

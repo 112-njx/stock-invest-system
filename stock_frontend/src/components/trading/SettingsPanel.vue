@@ -491,7 +491,7 @@ const menuStyle = computed(() => ({
     <!-- G03：关于本产品弹窗（产品定位声明） -->
     <Teleport to="body">
       <div v-if="aboutOpen" class="sec-mask" @click.self="aboutOpen = false">
-        <div class="sec-dialog">
+        <div class="sec-dialog viewport-dialog">
           <h3 class="sec-dialog__title">关于量化回测助手</h3>
           <div class="about-body">
             <p class="about-claim">
@@ -1010,5 +1010,9 @@ const menuStyle = computed(() => ({
 .about-meta {
   color: var(--text-muted);
   font-size: 11.5px;
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .sec-dialog { max-height: calc(var(--screen-height) - 24px); overflow: auto; }
+  .sec-dialog input { min-width: 0; font-size: 16px; }
 }
 </style>
