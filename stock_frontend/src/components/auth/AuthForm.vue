@@ -21,8 +21,9 @@ const props = withDefaults(
   defineProps<{
     /** 初始 Tab（登录页默认 login，注册视角可传 register） */
     initialTab?: 'login' | 'register'
+    showQqLogin?: boolean
   }>(),
-  { initialTab: 'login' }
+  { initialTab: 'login', showQqLogin: true }
 )
 const router = useRouter()
 
@@ -188,13 +189,13 @@ defineExpose({ restoreOpen })
     <p class="auth-form__sub">{{ subtitle }}</p>
 
     <!-- 规格书 §3.2：QQ 邮箱登录（替代参考图 Google 按钮） -->
-    <button type="button" class="qq-btn" @click="onQqLogin">
+    <button v-if="showQqLogin" type="button" class="qq-btn" @click="onQqLogin">
       <span class="qq-btn__icon" aria-hidden="true">@</span>
       <span>使用 QQ 邮箱登录</span>
     </button>
 
     <!-- 规格书 §3.3：居中分隔线 -->
-    <div class="or"><span>或者继续使用</span></div>
+    <div v-if="showQqLogin" class="or"><span>或者继续使用</span></div>
 
     <form class="form" @submit.prevent="submit">
       <BaseInput
