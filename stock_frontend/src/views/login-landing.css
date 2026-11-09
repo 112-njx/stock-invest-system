@@ -242,6 +242,7 @@
   overflow: hidden;
 }
 .login-landing .workflow-graphic { height: clamp(114px, 17vw, 208px); margin-top: 15px; }
+.login-landing .workflow-graphic--table { height: auto; }
 
 .login-landing .landing-cta {
   display: flex;

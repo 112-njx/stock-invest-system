@@ -5,6 +5,7 @@ import AuthForm from '@/components/auth/AuthForm.vue'
 import DatasetPreview from '@/components/login/DatasetPreview.vue'
 import IndustryPreview from '@/components/login/IndustryPreview.vue'
 import ResearchChart from '@/components/login/ResearchChart.vue'
+import ResearchStockTable from '@/components/login/ResearchStockTable.vue'
 import './login-landing.css'
 
 const route = useRoute()
@@ -236,7 +237,10 @@ onBeforeUnmount(() => {
         <article v-for="(step, index) in steps" :key="step.mode" class="workflow-slide" :class="{ 'is-current': index === currentStep }">
           <h3>{{ step.title }}</h3>
           <p>{{ step.text }}</p>
-          <div class="workflow-graphic"><ResearchChart :mode="step.mode" /></div>
+          <div class="workflow-graphic" :class="{ 'workflow-graphic--table': step.mode === 'market' }">
+            <ResearchStockTable v-if="step.mode === 'market'" />
+            <ResearchChart v-else :mode="step.mode" />
+          </div>
         </article>
       </div>
     </section>
