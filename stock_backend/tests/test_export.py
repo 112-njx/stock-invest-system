@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 os.environ.setdefault("APP_ENV", "test")
 os.environ["EMBEDDING_MODEL"] = "hash"
 
@@ -269,6 +271,43 @@ class TestExportDownload:
 
     def test_download_without_token_422(self, client: TestClient):
         assert client.get("/api/v1/users/me/export/1/download").status_code == 422
+
+    @pytest.mark.parametrize("first_access", ["download", "status", "cleanup"])
+    def test_legacy_export_is_invalidated(
+        self, client: TestClient, tmp_path: Path, first_access: str,
+    ):
+        uname = _uname()
+        try:
+            access_token, uid = _register(client, uname)
+            zip_path = tmp_path / "legacy-export.zip"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("user.json", '{"username":"legacy_user","nickname":"Former Name"}')
+
+            with get_session() as db:
+                row = export_repo.create(db, uid, expires_at=datetime.now(UTC) + timedelta(hours=1))
+                export_repo.update_status(db, row, "success", file_path=str(zip_path))
+                task_id = row.id
+                db.commit()
+
+            status_url = f"/api/v1/users/me/export/{task_id}"
+            download_token = export_token.create_download_token(uid, task_id)
+            download_url = f"{status_url}/download?token={download_token}"
+            if first_access == "status":
+                response = client.get(status_url, headers=_auth(access_token))
+                assert response.json()["data"]["status"] == "expired"
+            if first_access == "cleanup":
+                with get_session() as db:
+                    assert export_service.cleanup_expired_exports(db) >= 1
+
+            response = client.get(download_url)
+            assert response.status_code == 400
+            assert response.json()["code"] == 40030
+            assert not zip_path.exists()
+            status = client.get(status_url, headers=_auth(access_token)).json()["data"]
+            assert status["status"] == "expired"
+            assert status["download_url"] is None
+        finally:
+            _cleanup(uname)
 
     def test_download_with_bad_token_403(self, client: TestClient):
         resp = client.get("/api/v1/users/me/export/1/download?token=bogus.token")
