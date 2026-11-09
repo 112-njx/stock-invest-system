@@ -1,63 +1,65 @@
+/* Use Satoshi when available locally; the terminal works without remote fonts. */
+@font-face {
+  font-family: Satoshi;
+  src: local('Satoshi Variable');
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+2000-206F, U+2190-219F;
+}
+
 .login-landing {
-  --landing-accent: var(--accent);
-  --landing-base: color-mix(in srgb, var(--bg) 84%, #1c385e);
-  --landing-panel: color-mix(in srgb, var(--bg-panel) 88%, #365985);
-  --landing-edge: color-mix(in srgb, var(--border-strong) 72%, var(--accent));
-  --landing-glow: #317af346;
-  --landing-wash: #3f7ec524;
-  --landing-grid: #86a8d10e;
+  --landing-accent: #a1d4ff;
+  --landing-ink: #09182a;
+  --landing-rule: color-mix(in srgb, var(--border-strong) 85%, var(--accent));
+  --landing-panel: color-mix(in srgb, var(--bg-panel) 94%, var(--accent));
+  --landing-glow: #2979e62e;
+  --chapter-space: clamp(64px, 9vw, 132px);
   flex: 1;
   width: 100%;
+  max-width: 100%;
   min-height: 0;
-  overflow: hidden auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   scroll-behavior: smooth;
   color: var(--text);
-  background:
-    radial-gradient(ellipse 760px 430px at 50% 12%, var(--landing-glow), transparent 90%),
-    radial-gradient(ellipse 680px 610px at 92% 56%, var(--landing-wash), transparent 90%),
-    radial-gradient(ellipse 740px 520px at 8% 82%, var(--landing-wash), transparent 85%),
-    linear-gradient(var(--landing-grid) 1px, transparent 1px) 0 0 / 48px 48px,
-    linear-gradient(90deg, var(--landing-grid) 1px, transparent 1px) 0 0 / 48px 48px,
-    var(--landing-base);
+  background: radial-gradient(ellipse 780px 490px at 24% 7%, var(--landing-glow), transparent 90%) var(--bg);
+  font-family: Satoshi, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
 }
 
 [data-theme='light'] .login-landing {
-  --landing-base: #edf3fb;
-  --landing-panel: #fff;
-  --landing-edge: #b9c9e2;
-  --landing-glow: #8ab3ef48;
-  --landing-wash: #a0bfe32e;
-  --landing-grid: #42669b0d;
+  --landing-accent: #1c53a0;
+  --landing-ink: #fff;
+  --landing-glow: #2979e619;
 }
 
-.login-landing .landing-width {
-  width: min(1200px, 100% - clamp(32px, 8vw, 100px));
-  margin-inline: auto;
+.login-landing :is(a, button):focus-visible {
+  outline: 2px solid var(--landing-accent);
+  outline-offset: 4px;
 }
 
 .login-landing a { text-decoration: none; }
 
-.login-landing :is(a, button):focus-visible,
-.landing-drawer-panel :is(a, button):focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
+.login-landing .landing-width {
+  width: min(1220px, 100% - clamp(32px, 8vw, 104px));
+  margin-inline: auto;
 }
 
 .login-landing .landing-nav {
   position: sticky;
   z-index: 3;
   top: 0;
-  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
-  border-bottom: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--bg) 91%, transparent);
+  border-bottom: 1px solid var(--border);
   backdrop-filter: blur(14px);
 }
 
-.login-landing :is(.nav-inner, .landing-brand, .landing-nav nav, .hero-actions, .landing-button, .hero-figure figcaption, .plot-caption, .report-head, .report-trade) {
+.login-landing :is(.nav-inner, .landing-brand, .landing-nav nav, .hero-actions, .landing-button, .hero-figure figcaption, .plot-caption, .strip-inner, .workflow-controls) {
   display: flex;
   align-items: center;
 }
 
-.login-landing .nav-inner { justify-content: space-between; min-height: 62px; gap: 12px; }
+.login-landing .nav-inner { justify-content: space-between; min-height: 64px; gap: 12px; }
 .login-landing .landing-brand { gap: 10px; font-weight: 750; color: var(--text); white-space: nowrap; }
 .login-landing .brand-mark {
   display: grid;
@@ -66,241 +68,258 @@
   aspect-ratio: 1;
   border-radius: 8px;
   color: white;
-  background: var(--accent);
+  background: #2363cc;
   font-size: 19px;
 }
-.login-landing .landing-nav nav { gap: clamp(12px, 2.4vw, 30px); }
-.login-landing .landing-nav a { color: var(--text-secondary); }
-.login-landing .landing-nav .landing-brand { color: var(--text); }
-.login-landing .landing-nav a:hover { color: var(--text); }
+.login-landing .landing-nav nav { gap: clamp(14px, 2.8vw, 38px); }
+.login-landing .landing-nav a { color: var(--text); }
+.login-landing .landing-nav a:hover { color: var(--landing-accent); }
+.login-landing .nav-market { padding-block: 6px; border-bottom: 1px solid var(--landing-rule); white-space: nowrap; }
 
-.login-landing .landing-hero { text-align: center; padding-block: clamp(23px, 5vh, 64px) 32px; }
-.login-landing .hero-title {
-  max-width: 56rem;
-  margin-inline: auto;
-  font-size: clamp(30px, 5vw, 70px);
-  font-weight: 780;
-  line-height: 1.12;
-  letter-spacing: normal;
-  text-wrap: balance;
+.login-landing .landing-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.63fr) minmax(326px, 1fr);
+  align-items: center;
+  gap: clamp(36px, 6.3vw, 96px);
+  padding-block: clamp(37px, 6vh, 80px) clamp(34px, 5vh, 64px);
 }
-.login-landing .hero-intro { margin-top: 12px; color: var(--text-secondary); font-size: clamp(14px, 1.4vw, 18px); line-height: 1.65; }
-.login-landing .hero-actions { justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 17px; }
+.login-landing .hero-editorial { min-width: 0; }
+.login-landing .hero-category { color: var(--landing-accent); font-size: 13px; font-weight: 700; letter-spacing: .08em; }
+.login-landing .hero-title {
+  width: 100%;
+  max-width: 64rem;
+  margin: 11px 0 15px;
+  font-size: clamp(36px, 5.05vw, 76px);
+  font-weight: 780;
+  line-height: 1.13;
+  letter-spacing: -.055em;
+}
+.login-landing .hero-title span { display: block; white-space: nowrap; }
+.login-landing .hero-title span + span { color: var(--landing-accent); }
+.login-landing .hero-intro { max-width: 34em; color: var(--text-secondary); font-size: clamp(14px, 1.24vw, 17px); line-height: 1.75; }
+.login-landing .hero-actions { gap: 10px; flex-wrap: wrap; margin-top: 20px; }
 .login-landing .landing-button {
-  justify-content: center;
   width: fit-content;
   min-height: 42px;
-  gap: 9px;
-  padding: 8px 16px;
+  gap: 14px;
+  padding: 9px 15px;
   border: 1px solid transparent;
-  border-radius: 8px;
-  font-weight: 700;
-  transition: box-shadow .2s, border-color .2s, transform .2s;
+  border-radius: 6px;
+  font-weight: 720;
+  transition: background .2s, border-color .2s, transform .2s;
 }
 .login-landing .landing-button:hover { transform: translateY(-2px); }
-.login-landing .primary-action {
-  background: linear-gradient(155deg, color-mix(in srgb, var(--accent) 78%, #183bb0), #1d4ed8);
-  color: #fff;
-  border-color: #508aff;
-  box-shadow: inset 0 1px #ffffff45, 0 6px 22px #265de83b;
-}
-.login-landing .primary-action:hover { box-shadow: inset 0 1px #ffffff55, 0 0 23px #387cff71; }
-.login-landing .nav-login { min-height: 36px; }
-.login-landing .secondary-action { border-color: var(--landing-edge); color: var(--text); background: var(--landing-panel); }
-.login-landing .secondary-action:hover { border-color: var(--accent); }
+.login-landing .primary-action { background: var(--landing-accent); color: var(--landing-ink); }
+.login-landing .primary-action:hover { background: color-mix(in srgb, var(--landing-accent) 88%, var(--bg)); }
+.login-landing .secondary-action { border-color: var(--landing-rule); color: var(--text); background: var(--bg-panel); }
+.login-landing .secondary-action:hover { border-color: var(--landing-accent); }
 .login-landing .hero-figure {
-  width: min(100%, 1120px, max(690px, calc((100svh - 300px) * 2.68)));
-  margin: clamp(17px, 3vh, 33px) auto 0;
   overflow: hidden;
-  border: 1px solid var(--landing-edge);
-  border-top-color: #7db5ff;
-  border-radius: 13px;
-  background: var(--landing-panel);
-  box-shadow: 0 18px 64px #030a1a54, 0 0 46px #387ce534, inset 0 1px #ffffff20;
-}
-.login-landing .hero-figure figcaption {
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 14px;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
-}
-.login-landing .hero-figure figcaption small { color: var(--text-secondary); font-weight: 400; }
-.login-landing .hero-figure picture, .login-landing .hero-figure img { display: block; width: 100%; }
-.login-landing .hero-figure img, .login-landing .feature-media img { height: auto; }
-
-.login-landing :is(.coverage-section, .landing-section) { scroll-margin-block-start: 82px; }
-.login-landing .coverage-section {
+  position: relative;
   margin-top: 24px;
-  padding: clamp(21px, 3.2vw, 38px);
-  border: 1px solid var(--landing-edge);
-  border-top-color: color-mix(in srgb, var(--accent) 52%, var(--landing-edge));
-  border-radius: 12px;
-  background: linear-gradient(145deg, var(--landing-panel), var(--bg-panel));
-  box-shadow: inset 0 1px #ffffff20, 0 15px 38px #1a53a323;
+  margin-inline-start: clamp(18px, 5.8vw, 92px);
+  border: 1px solid var(--landing-rule);
+  border-radius: 10px;
+  background: var(--landing-panel);
+  box-shadow: 0 18px 48px #030b1c45;
 }
-.login-landing :is(.section-heading h2, .workflow h2, .landing-cta h2) {
-  font-size: clamp(25px, 3.4vw, 43px);
-  line-height: 1.25;
-  letter-spacing: normal;
-}
-.login-landing .section-heading p { margin-top: 7px; color: var(--text-secondary); line-height: 1.65; }
-.login-landing .coverage-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 21px; }
-.login-landing .coverage-grid > div { padding: 8px clamp(9px, 2.2vw, 24px); border-left: 1px solid var(--border-strong); }
-.login-landing .coverage-grid > div:first-child { padding-left: 0; border-left: 0; }
-.login-landing .coverage-grid dt { color: var(--text-secondary); font-size: 13px; }
-.login-landing .coverage-grid dd {
-  margin-top: 4px;
-  font-size: clamp(18px, 2.65vw, 36px);
-  font-weight: 740;
-  line-height: 1.24;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-.login-landing .coverage-grid .metric-detail { font-size: 12px; font-weight: 400; color: var(--text-secondary); }
+.login-landing .hero-figure figcaption, .login-landing .plot-caption { padding: 9px 13px; gap: 9px; }
+.login-landing .hero-figure figcaption { border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; }
+.login-landing .hero-figure figcaption small { margin-left: auto; color: var(--text-secondary); font-weight: 500; }
+.login-landing .chart-key { width: 8px; height: 8px; background: var(--landing-accent); border-radius: 2px; }
+.login-landing .hero-plot { height: clamp(108px, 20vh, 210px); padding: 6px 9px; }
+.login-landing .plot-caption { justify-content: space-between; color: var(--text-secondary); font-size: 11px; }
+.login-landing .hero-figure .plot-caption { border-top: 1px solid var(--border); }
 
-.login-landing .landing-section { padding-block: clamp(50px, 7vw, 94px); }
+.login-landing .landing-form {
+  min-width: 0;
+  padding: clamp(23px, 3.4vw, 42px);
+  border: 1px solid var(--landing-rule);
+  border-top-color: var(--landing-accent);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  box-shadow: 0 26px 78px #0208133b;
+}
+.login-landing .landing-form .base-input__field { min-height: 43px; border-radius: 6px; }
+.login-landing .landing-form :is(.auth-form__sub, .switch-line),
+.login-landing .landing-form .base-input__field::placeholder { color: var(--text-secondary); }
+.login-landing .landing-form .link { color: var(--landing-accent); }
+.login-landing .landing-form .submit { color: var(--landing-ink); background: var(--landing-accent); border-radius: 6px; }
+
+.login-landing .data-strip { border-block: 1px solid var(--border); background: var(--bg-panel); }
+.login-landing .strip-inner { gap: clamp(14px, 3vw, 36px); min-height: 62px; }
+.login-landing .strip-title { font-weight: 720; white-space: nowrap; }
+.login-landing .marquee-window { flex: 1; min-width: 0; overflow: hidden; container-type: inline-size; }
+.login-landing .marquee-track { display: flex; width: max-content; animation: research-marquee 32s linear infinite; }
+.login-landing .marquee-list {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  flex: none;
+  min-width: 100cqw;
+  gap: clamp(20px, 4vw, 66px);
+  padding-inline: 14px;
+  list-style: none;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-size: 14px;
+}
+.login-landing .marquee-list li::before { content: '/'; margin-inline-end: 9px; color: var(--landing-accent); }
+.login-landing .marquee-control { color: var(--text-secondary); white-space: nowrap; }
+.login-landing .marquee-control:hover { color: var(--landing-accent); }
+.login-landing .marquee-track.is-paused, .login-landing .marquee-window:hover .marquee-track { animation-play-state: paused; }
+.login-landing .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@keyframes research-marquee { to { transform: translateX(-50%); } }
+
+.login-landing :is(.landing-section, .landing-form, .workflow-slide) { scroll-margin-block-start: 84px; }
+.login-landing .landing-section { padding-block: var(--chapter-space); }
+.login-landing :is(.section-heading h2, .workflow-heading h2, .landing-cta h2) {
+  font-size: clamp(29px, 4.5vw, 59px);
+  line-height: 1.14;
+  letter-spacing: -.045em;
+}
+.login-landing :is(.section-heading, .workflow-heading, .landing-cta) p {
+  margin-top: 13px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+}
 .login-landing .feature-grid {
   display: grid;
   grid-auto-flow: dense;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: clamp(20px, 2vw, 24px);
-  margin-top: 26px;
+  gap: 12px;
+  margin-top: 32px;
 }
 .login-landing .feature-card {
-  --module-glow: #367fe133;
   grid-column: span 5;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
   min-width: 0;
-  padding: clamp(17px, 2.3vw, 30px);
+  padding: clamp(19px, 2.7vw, 34px);
   border: 1px solid var(--border-strong);
-  border-top-color: color-mix(in srgb, var(--module-glow) 74%, var(--landing-edge));
-  border-radius: 12px;
-  background: radial-gradient(ellipse 440px 175px at 50% 0, var(--module-glow), transparent 100%), var(--landing-panel);
-  box-shadow: inset 0 1px #ffffff17, 0 12px 40px #102b4f2c;
+  border-radius: 10px;
+  background: var(--bg-panel);
   overflow: hidden;
-  transition: box-shadow .25s, border-color .25s;
+  transition: border-color .25s;
 }
-.login-landing .feature-card:is(:hover, :focus-within) { border-color: var(--landing-edge); box-shadow: inset 0 1px #ffffff22, 0 0 25px var(--module-glow); }
+.login-landing .feature-card:focus-within, .login-landing .feature-card:hover { border-color: var(--landing-rule); }
 .login-landing .feature-wide { grid-column: span 7; }
-.login-landing .market-card { --module-glow: #22966942; }
-.login-landing .backtest-card { --module-glow: #7355bf36; }
-.login-landing .data-card { --module-glow: #2b9fbe36; }
-.login-landing :is(.feature-card h3, .workflow-step h3) { font-size: clamp(20px, 2.1vw, 27px); }
-.login-landing :is(.feature-card p, .workflow-step p, .landing-cta p) { color: var(--text-secondary); line-height: 1.7; }
-.login-landing .feature-media { overflow: hidden; border-radius: 7px; }
-.login-landing .feature-media img { display: block; width: 100%; }
-.login-landing .forecast-card .feature-media { margin-top: auto; border: 1px solid var(--landing-edge); background: var(--bg-panel); }
-.login-landing .plot-caption { justify-content: space-between; gap: 6px; color: var(--text-secondary); font-size: 12px; }
-.login-landing .feature-link { width: fit-content; margin-top: auto; padding-block: 3px; color: var(--text); font-weight: 700; }
-.login-landing .feature-link:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 4px; }
+.login-landing :is(.feature-card h3, .workflow-slide h3) { font-size: clamp(21px, 2.3vw, 30px); letter-spacing: -.025em; }
+.login-landing :is(.feature-card p, .workflow-slide p) { max-width: 43em; margin-top: 8px; color: var(--text-secondary); line-height: 1.7; }
+.login-landing .forecast-card { background: var(--landing-panel); }
+.login-landing .feature-plot { min-height: 120px; height: clamp(120px, 15vw, 190px); margin-top: auto; }
+.login-landing .feature-card .plot-caption { padding: 0; margin-top: -8px; }
+.login-landing .feature-link { width: fit-content; margin-top: auto; color: var(--landing-accent); font-weight: 700; }
+.login-landing .feature-link:hover { text-decoration: underline; text-underline-offset: 4px; }
+.login-landing .sector-map { display: grid; grid-auto-flow: dense; grid-template-columns: 2fr 1fr 1fr; grid-template-rows: repeat(2, 1fr); min-height: 123px; gap: 4px; }
+.login-landing .sector-map span {
+  display: grid;
+  place-items: center;
+  padding: 5px;
+  border-radius: 4px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--up) 24%, var(--bg-panel));
+  font-size: clamp(11px, 1.2vw, 14px);
+  transition: background .24s;
+}
+.login-landing .sector-map span:first-child { grid-row: span 2; background: color-mix(in srgb, var(--down) 29%, var(--bg-panel)); }
+.login-landing .sector-map span:nth-child(3) { background: color-mix(in srgb, var(--down) 16%, var(--bg-panel)); }
+.login-landing .sector-map span:nth-child(4) { background: color-mix(in srgb, var(--up) 13%, var(--bg-panel)); }
+.login-landing .sector-map:hover span:first-child { background: color-mix(in srgb, var(--down) 40%, var(--bg-panel)); }
+.login-landing .dataset-accordion { display: flex; flex: 1; gap: 5px; min-height: 150px; }
+.login-landing .dataset-slice {
+  display: flex;
+  flex: 0 0 44px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-panel-2);
+  transition: flex .36s ease, border-color .2s;
+}
+.login-landing .dataset-slice.is-active { flex: 1 1 0; border-color: var(--landing-rule); }
+.login-landing .dataset-slice button {
+  flex: 0 0 42px;
+  min-height: 42px;
+  writing-mode: vertical-rl;
+  letter-spacing: .13em;
+  font-weight: 720;
+}
+.login-landing .dataset-slice button:hover, .login-landing .dataset-slice.is-active button { background: var(--accent-soft); color: var(--landing-accent); }
+.login-landing .dataset-slice button:focus-visible { outline-offset: -3px; }
+.login-landing .dataset-content { align-self: center; padding: 12px; overflow-wrap: anywhere; min-width: 0; }
+.login-landing .dataset-content p { margin: 0 0 8px; color: var(--text); font-weight: 650; }
+.login-landing .dataset-content small { color: var(--text-secondary); line-height: 1.6; }
 
-.login-landing :is(.backtest-preview, .dataset-preview) {
-  margin-top: 8px;
-  border: 1px solid var(--landing-edge);
-  border-radius: 8px;
+.login-landing .workflow {
+  display: grid;
+  grid-template-columns: minmax(240px, .72fr) minmax(0, 1.38fr);
+  align-items: start;
+  gap: clamp(30px, 7.5vw, 100px);
+  padding-block: 0;
+  margin-block-end: var(--chapter-space);
+}
+.login-landing .workflow-heading { padding: 10px 0 22px; }
+.login-landing .workflow-heading p { max-width: 25em; }
+.login-landing .workflow-controls { gap: 12px; margin-top: 22px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.login-landing .workflow-controls button {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 18px;
+}
+.login-landing .workflow-controls button:hover { background: var(--accent-soft); color: var(--landing-accent); }
+.login-landing .workflow-gallery { display: grid; min-width: 0; gap: 12px; }
+.login-landing .workflow-slide {
+  min-width: 0;
+  padding: clamp(18px, 3vw, 37px);
+  border-top: 1px solid var(--landing-rule);
+  border-radius: 0 0 8px 8px;
   background: var(--bg-panel);
   overflow: hidden;
 }
-.login-landing :is(.report-head, .report-trade) { justify-content: space-between; gap: 6px; padding: 8px 10px; }
-.login-landing :is(.report-head small, .report-trade) { color: var(--text-secondary); font-size: 11px; }
-.login-landing .report-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 0 10px 6px; gap: 7px; }
-.login-landing .report-metrics dt { color: var(--text-secondary); font-size: 11px; }
-.login-landing .report-metrics dd { font-size: clamp(14px, 1.45vw, 21px); font-weight: 750; font-variant-numeric: tabular-nums; }
-.login-landing .report-up { color: var(--up); }
-.login-landing .report-down { color: var(--down); }
-.login-landing .backtest-preview .feature-media { padding: 0 8px; }
-.login-landing .report-trade { border-top: 1px solid var(--border); }
-.login-landing .dataset-preview { flex: 1; }
-.login-landing .dataset-options { display: flex; flex-wrap: wrap; gap: 5px; padding: 9px; border-bottom: 1px solid var(--border-strong); }
-.login-landing .dataset-options button { padding: 5px 12px; border-radius: 5px; color: var(--text-secondary); }
-.login-landing .dataset-options button:is(:hover, [aria-pressed='true']) { background: var(--accent-soft); color: var(--text); }
-.login-landing .dataset-preview table { width: 100%; border-collapse: collapse; text-align: left; font-variant-numeric: tabular-nums; }
-.login-landing .dataset-preview :is(th, td) { padding: clamp(8px, 1.5vw, 16px); border-bottom: 1px solid var(--border); }
-.login-landing .dataset-preview th { color: var(--text-secondary); font-weight: 500; }
+.login-landing .workflow-graphic { height: clamp(114px, 17vw, 208px); margin-top: 15px; }
 
-.login-landing .workflow { padding: 28px 0 42px; border-top: 1px solid var(--landing-edge); }
-.login-landing .workflow-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; list-style: none; margin-top: 19px; }
-.login-landing .workflow-step { border-top: 2px solid var(--accent); padding: 12px 0; }
-.login-landing .workflow-step p { margin-top: 5px; }
 .login-landing .landing-cta {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 22px;
-  margin-bottom: clamp(32px, 5vw, 62px);
-  padding: clamp(21px, 4vw, 49px);
-  border: 1px solid var(--landing-edge);
-  border-top-color: var(--accent);
-  border-radius: 12px;
-  background: linear-gradient(120deg, var(--landing-panel), var(--bg-panel));
-  box-shadow: inset 0 1px #ffffff22, 0 16px 40px #1a53a32c;
+  gap: 25px;
+  margin-bottom: clamp(45px, 7vw, 95px);
+  padding: clamp(24px, 4.4vw, 62px);
+  border: 1px solid var(--landing-rule);
+  border-radius: 10px;
+  background: linear-gradient(105deg, var(--landing-panel), var(--bg-panel));
 }
-.login-landing .landing-cta p { margin-top: 7px; }
+.login-landing .landing-cta h2 { font-size: clamp(26px, 3.45vw, 48px); }
+.login-landing .landing-cta .landing-button { min-height: 48px; }
 
-.landing-drawer-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 1501;
-  display: flex;
-  justify-content: flex-end;
-  background: #060d1ab3;
-}
-.landing-drawer-panel {
-  width: min(100%, 470px);
-  height: 100%;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: clamp(21px, 4vw, 42px);
-  border-left: 1px solid var(--border-strong);
-  background: var(--bg-panel);
-  color: var(--text);
-  box-shadow: -15px 0 65px #0006;
-}
-.landing-drawer-panel .drawer-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 22px; }
-.landing-drawer-panel .drawer-heading button { width: 40px; height: 40px; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 24px; }
-.landing-drawer-panel .drawer-heading button:hover { background: var(--bg-hover); }
-.landing-drawer-panel .drawer-heading button[aria-disabled='true'] { opacity: .5; cursor: wait; }
-.landing-drawer-panel .base-input__field { min-height: 42px; }
-.landing-drawer-enter-active, .landing-drawer-leave-active { transition: opacity .22s ease; }
-.landing-drawer-enter-active .landing-drawer-panel, .landing-drawer-leave-active .landing-drawer-panel { transition: transform .24s ease; }
-.landing-drawer-enter-from, .landing-drawer-leave-to { opacity: 0; }
-.landing-drawer-enter-from .landing-drawer-panel, .landing-drawer-leave-to .landing-drawer-panel { transform: translateX(100%); }
-
-@media (max-width: 850px) {
+@media (max-width: 900px) {
+  .login-landing .landing-hero { grid-template-columns: minmax(0, 1fr); gap: 23px; }
+  .login-landing .hero-title { font-size: clamp(33px, 7.6vw, 58px); }
+  .login-landing .hero-figure { display: none; }
+  .login-landing .landing-form { width: min(100%, 520px); }
   .login-landing .feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .login-landing .feature-card { grid-column: span 1; }
+  .login-landing .workflow { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .login-landing .workflow-heading h2 br { display: none; }
+  .login-landing .workflow-slide:not(.is-current) { display: none; }
 }
-@media (max-width: 620px) {
+@media (max-width: 590px) {
   .login-landing .nav-section { display: none; }
-  .login-landing .landing-hero { padding-bottom: 18px; }
-  .login-landing .hero-figure { width: 100%; }
-  .login-landing .hero-figure img { aspect-ratio: 625 / 321; }
-  .login-landing .coverage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 6px; }
-  .login-landing .coverage-grid > div { padding: 6px 0; border-left: 0; border-top: 1px solid var(--border-strong); }
-  .login-landing :is(.feature-grid, .workflow-steps) { grid-template-columns: minmax(0, 1fr); }
-  .login-landing .workflow-steps { gap: 9px; }
-}
-@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
-  .landing-drawer-panel {
-    width: 100%;
-    height: var(--screen-height);
-    border-left: 0;
-    padding: max(21px, var(--safe-top)) max(21px, var(--safe-right))
-      max(21px, var(--safe-bottom)) max(21px, var(--safe-left));
-  }
-  .landing-drawer-panel .drawer-heading button,
-  .landing-drawer-panel .base-input__field { min-height: var(--touch-target); }
-  .landing-drawer-panel .drawer-heading button { min-width: var(--touch-target); }
-}
-@media (max-width: 350px) {
-  .login-landing .nav-market { display: none; }
+  .login-landing .feature-grid { grid-template-columns: minmax(0, 1fr); }
+  .login-landing .strip-inner { gap: 10px; min-height: 51px; }
+  .login-landing .marquee-list { font-size: 12px; }
+  .login-landing .landing-cta { align-items: start; }
 }
 @media (prefers-reduced-motion: reduce) {
   .login-landing { scroll-behavior: auto; }
-  .login-landing *, .landing-drawer-mask, .landing-drawer-panel { transition: none !important; }
+  .login-landing *, .login-landing *::before, .login-landing *::after { animation: none !important; transition: none !important; }
+  .login-landing .marquee-track { width: 100%; }
+  .login-landing .marquee-list { min-width: 0; width: 100%; flex-wrap: wrap; gap: 6px 12px; padding-block: 7px; }
+  .login-landing :is(.marquee-control, .marquee-list[aria-hidden='true']) { display: none; }
 }
