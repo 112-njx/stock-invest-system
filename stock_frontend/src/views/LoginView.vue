@@ -11,7 +11,10 @@ const roadmap = ref<HTMLElement>()
 
 function onSuccess() {
   const redirect = route.query.redirect
-  router.push(typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/')
+  const destination = typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')
+    ? redirect
+    : { name: 'market-home' }
+  router.push(destination)
 }
 
 function jumpTo(section?: HTMLElement) {
@@ -29,7 +32,7 @@ const candles = closes.map((close, index) => ({
 const y = (price: number) => 165 - price * 1.45
 
 const capabilities = [
-  { number: '01', title: '行情与个股研究', description: '查看股票日 K、分时行情和常用技术指标。把关注的标的放进自选，持续跟踪价格变化。', tags: ['日 K / 分时', '技术指标', '自选股'], to: '/' },
+  { number: '01', title: '行情与个股研究', description: '查看股票日 K、分时行情和常用技术指标。把关注的标的放进自选，持续跟踪价格变化。', tags: ['日 K / 分时', '技术指标', '自选股'], to: { name: 'market-home' } },
   { number: '02', title: '行业与板块观察', description: '从大盘云图观察市场分布，用指数蓝图对比行业走势、成分股行情和阶段表现。', tags: ['大盘云图', '指数蓝图', '阶段表现'], to: '/stockdb' },
   { number: '03', title: 'AI 策略与回测', description: '用自然语言描述入场、止损和仓位条件，生成并保存策略，通过历史回测查看收益、回撤和交易记录。', tags: ['策略生成', '历史回测', '交易记录'], to: '/ai' },
 ]
@@ -46,7 +49,7 @@ const capabilities = [
         <nav class="login-nav" aria-label="产品导航">
           <a href="#features" @click.prevent="jumpTo(features)">功能概览</a>
           <a href="#roadmap" @click.prevent="jumpTo(roadmap)">产品路线</a>
-          <RouterLink class="browse-link" to="/">浏览行情 <span aria-hidden="true">↗</span></RouterLink>
+          <RouterLink class="browse-link" :to="{ name: 'market-home' }">浏览行情 <span aria-hidden="true">↗</span></RouterLink>
         </nav>
       </header>
 

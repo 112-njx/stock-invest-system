@@ -92,7 +92,7 @@ const visibleMarkers = computed(() =>
 watch(strategyId, () => void loadBacktestMarkers())
 
 function goBack() {
-  router.push('/')
+  router.push({ name: 'market-home' })
 }
 
 function onKeydown(e: KeyboardEvent) {

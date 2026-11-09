@@ -3,11 +3,10 @@
  *
  * 做法：用 esbuild 打包**真实的** `src/router/index.ts`（把所有 `.vue` 视图替换为空组件桩，
  * 把 `@/api/monitor` 换成内存桩以免拉入 axios/网络），在 jsdom 下断言：
- * - `/` `/market` `/market/detail` `/ai` `/login` `/terms`
- *   与 G33 三条找回密码路由的 name / meta.bare 符合方案 B 定义
- * - `/privacy` `/disclaimer` 已改为法律弹窗、不再有独立页面，旧链接重定向到 `/`
+ * - 登录首页、行情及账户相关路由的 name / meta.bare
+ * - 旧登录链接保留回跳参数，旧法律链接转到行情
  * - 未登录可浏览行情页与 AI 页（不再被强制跳登录页）
- * - 已登录访问 `/login` 会被守卫送回首页（deep link 登录页对已登录用户不展示）
+ * - 已登录访问根目录会进入行情
  *
  * 运行：npm run verify:routing
  */
@@ -85,14 +84,13 @@ await router.push('/')
 console.log('\n[1] 路由表（方案 B）')
 {
   const expect = [
-    ['/', 'market-home', false],
+    ['/', 'login', true],
+    ['/market', 'market-home', false],
     ['/market/detail', 'market-detail', false],
     ['/ai', 'ai', false],
-    ['/login', 'login', true],
     ['/forgot-password', 'forgot-password', true],
     ['/reset-password', 'reset-password', true],
     ['/verify-email', 'verify-email', true],
-    ['/terms', 'terms', true],
   ]
   for (const [path, name, bare] of expect) {
     const r = router.resolve(path)
@@ -102,21 +100,9 @@ console.log('\n[1] 路由表（方案 B）')
       `实际 name=${String(r.name)} bare=${String(r.meta.bare)}`
     )
   }
-  // /market 兼容旧链接 → 重定向到 /
-  const legacy = router.resolve('/market')
-  check(
-    '/market 重定向到 /',
-    legacy.matched.some((m) => m.redirect === '/'),
-    JSON.stringify(legacy.matched.map((m) => m.redirect))
-  )
-  // 免责声明 / 隐私政策改为弹窗，旧 URL 同样重定向到首页（不残留空白独立页）
-  for (const path of ['/privacy', '/disclaimer']) {
-    const r = router.resolve(path)
-    check(
-      `${path} 重定向到 /`,
-      r.matched.some((m) => m.redirect === '/'),
-      JSON.stringify(r.matched.map((m) => m.redirect))
-    )
+  for (const path of ['/terms', '/privacy', '/disclaimer']) {
+    await router.push(path)
+    check(`${path} 重定向到 /market`, router.currentRoute.value.path === '/market')
   }
 }
 
@@ -124,38 +110,32 @@ console.log('\n[1] 路由表（方案 B）')
 console.log('\n[2] 未登录可浏览（免登录不跳登录页）')
 {
   user.clearAuth()
-  for (const path of ['/', '/ai', '/market/detail']) {
+  for (const path of ['/market', '/ai', '/market/detail']) {
     await router.push(path)
     check(`未登录访问 ${path} 停留在本页`, router.currentRoute.value.fullPath === path, router.currentRoute.value.fullPath)
   }
-  await router.push('/login')
-  check('未登录访问 /login 正常展示登录页', router.currentRoute.value.name === 'login')
+  await router.push('/login?redirect=%2Fai#sign-in')
+  const legacy = router.currentRoute.value
+  check('旧登录链接跳转到根目录并保留回跳参数和锚点',
+    legacy.path === '/' && legacy.name === 'login' && legacy.query.redirect === '/ai' && legacy.hash === '#sign-in')
 }
 
 /* ------------------------------------------------------------------ */
-console.log('\n[3] 已登录访问 /login 被送回首页')
+console.log('\n[3] 已登录访问登录首页后进入行情')
 {
   user.setAuth('fake-token-for-guard-test', { id: 1, username: 'tester' })
-  // 注意：当前就在 /login，直接再 push('/login') 会被 vue-router 判为重复导航而短路，
-  // 守卫根本不会执行。必须先离开该路由再进入。
-  await router.push('/terms')
-  await router.push('/login')
-  check(
-    '已登录访问 /login → market-home',
-    router.currentRoute.value.name === 'market-home',
-    String(router.currentRoute.value.name)
-  )
+  for (const path of ['/', '/login']) {
+    await router.push('/ai')
+    await router.push(path)
+    check(`已登录访问 ${path} → /market`, router.currentRoute.value.path === '/market')
+  }
   // 已登录仍可正常访问业务页
   await router.push('/ai')
   check('已登录访问 /ai 正常', router.currentRoute.value.name === 'ai')
 
-  // 法律页对已登录用户同样可达（免登录页不设反向跳转）
-  await router.push('/terms')
-  check('已登录访问 /terms 正常', router.currentRoute.value.name === 'terms')
-
   user.clearAuth()
   await router.push('/')
-  check('登出后回到首页正常', router.currentRoute.value.name === 'market-home')
+  check('退出登录后访问根目录展示登录页', router.currentRoute.value.name === 'login')
 }
 
 /* ------------------------------------------------------------------ */

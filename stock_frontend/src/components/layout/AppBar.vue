@@ -32,7 +32,7 @@ onBeforeUnmount(() => clearTimeout(prepareTimer))
     </div>
 
     <nav class="appbar__nav">
-      <RouterLink to="/" class="appbar__link">行情</RouterLink>
+      <RouterLink :to="{ name: 'market-home' }" class="appbar__link">行情</RouterLink>
       <RouterLink to="/stocks" class="appbar__link">股票</RouterLink>
       <RouterLink to="/ai" class="appbar__link">AI 策略</RouterLink>
       <RouterLink to="/stockdb" class="appbar__link" @pointerenter="prepareBlueprint" @focus="prepareBlueprint">指数蓝图</RouterLink>

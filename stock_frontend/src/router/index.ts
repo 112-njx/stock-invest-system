@@ -18,14 +18,11 @@ const router = createRouter({
   routes: [
     { path: '/stocks', name: 'stocks', component: () => import('@/views/StocksView.vue') },
     { path: '/heatmap', name: 'heatmap', component: () => import('@/views/HeatmapView.vue') },
-    // G35（方案 B）：`/` 为行情首页，免登录即可浏览；原登录页独立保留在 `/login`
     {
-      path: '/',
+      path: '/market',
       name: 'market-home',
       component: () => import('@/views/MarketView.vue'),
     },
-    // 兼容既有链接与外部 deep link
-    { path: '/market', redirect: '/' },
     {
       path: '/market/detail',
       name: 'market-detail',
@@ -53,11 +50,12 @@ const router = createRouter({
     },
     // 独立页（不显示顶部导航/公告条）
     {
-      path: '/login',
+      path: '/',
       name: 'login',
       component: () => import('@/views/LoginView.vue'),
       meta: { bare: true },
     },
+    { path: '/login', redirect: { name: 'login' } },
     // G33：忘记密码 / 重置密码 / 邮箱验证
     {
       path: '/forgot-password',
@@ -78,17 +76,13 @@ const router = createRouter({
       meta: { bare: true },
     },
     // G03：法律文档统一使用全局弹窗；兼容旧链接并回到首页。
-    { path: '/terms', redirect: '/' },
-    { path: '/privacy', redirect: '/' },
-    { path: '/disclaimer', redirect: '/' },
+    { path: '/terms', redirect: { name: 'market-home' } },
+    { path: '/privacy', redirect: { name: 'market-home' } },
+    { path: '/disclaimer', redirect: { name: 'market-home' } },
   ],
 })
 
-/**
- * G35（方案 B）：免登录浏览，不再有「未登录强制跳登录页」的守卫。
- * 唯一的方向性跳转是已登录用户访问 `/login` 时回到首页；直接访问 `/login`（deep link）
- * 仍正常展示登录页，用于强制登录场景。
- */
+// 行情可免登录浏览，已登录用户访问登录首页时进入行情。
 router.beforeEach((to) => {
   const user = useUserStore()
   if (to.name === 'admin' && !(user.user?.username === 'root' && user.user.is_admin)) {

@@ -55,7 +55,7 @@ function goSettings(hash: string) {
     document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     return
   }
-  router.push({ path: '/', hash: `#${hash}` })
+  router.push({ name: 'market-home', hash: `#${hash}` })
 }
 
 function openNotifications() {
