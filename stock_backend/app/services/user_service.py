@@ -17,8 +17,8 @@ from app.utils import market_cache
 logger = logging.getLogger(__name__)
 
 
-def update_profile(db: Session, user: User, nickname: str | None = None, avatar_url: str | None = None) -> User:
-    user = user_repo.update_profile(db, user, nickname=nickname, avatar_url=avatar_url)
+def update_profile(db: Session, user: User, avatar_url: str | None = None) -> User:
+    user = user_repo.update_profile(db, user, avatar_url=avatar_url)
     db.commit()
     db.refresh(user)
     return user

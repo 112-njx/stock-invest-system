@@ -221,6 +221,7 @@ class TestExportZipContent:
 
                 user_json = json.loads(zf.read("user.json").decode("utf-8"))
                 assert user_json["username"] == uname
+                assert "nickname" not in user_json
                 assert user_json["email"] == f"{uname}@test.local"
                 # 会话 JSON 含消息数组
                 convs = json.loads(zf.read("conversations.json").decode("utf-8"))

@@ -67,7 +67,6 @@ def _collect_user(db: Session, user: User) -> dict:
         "username": user.username,
         "email": user.email,
         "email_verified": user.email_verified,
-        "nickname": user.nickname,
         "avatar_url": user.avatar_url,
         "is_admin": user.is_admin,
         "created_at": user.created_at,

@@ -12,7 +12,6 @@ export interface User {
   email?: string | null
   /** G23：邮箱是否已验证 */
   email_verified?: boolean
-  nickname?: string | null
   avatar_url?: string | null
   created_at?: string
 }

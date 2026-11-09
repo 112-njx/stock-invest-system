@@ -1,4 +1,4 @@
-"""用户 API：当前用户信息查询/更新（昵称、头像）+ 改密/改邮箱（G33）+ 数据导出（G17）。"""
+"""用户 API：当前用户信息查询/头像更新 + 改密/改邮箱（G33）+ 数据导出（G17）。"""
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -71,7 +71,7 @@ def update_me(
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    user = user_service.update_profile(db, current, nickname=payload.nickname, avatar_url=payload.avatar_url)
+    user = user_service.update_profile(db, current, avatar_url=payload.avatar_url)
     return ok(data=UserOut.from_user(user).model_dump(mode="json"))
 
 

@@ -54,7 +54,7 @@ def register(
     email = (payload.email or "").strip() or None
     if email is not None and user_repo.get_by_email(db, email):
         raise ApiError(status_code=400, code=40002, msg="该邮箱已被注册")
-    user = user_repo.create(db, username, hash_password(payload.password), email, payload.nickname)
+    user = user_repo.create(db, username, hash_password(payload.password), email)
     db.refresh(user)
     result = _build_auth_result(db, user, user_agent, ip_address)
     # G23: 注册后发送验证邮件（best-effort，不阻断注册）

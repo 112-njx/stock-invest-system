@@ -258,7 +258,7 @@ def test_add_llm_tokens_is_additive():
     uname = _uname()
     db = get_session()
     try:
-        u = user_repo.create(db, uname, "x", f"{uname}@t.local", None)
+        u = user_repo.create(db, uname, "x", f"{uname}@t.local")
         db.commit()
         uid = u.id
         user_repo.add_llm_tokens(db, uid, 10, 5)

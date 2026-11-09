@@ -7,11 +7,11 @@ export function loginApi(username: string, password: string) {
 }
 
 /** 注册：邮箱选填，注册成功即自动登录 */
-export function registerApi(username: string, password: string, email?: string, nickname?: string) {
+export function registerApi(username: string, password: string, email?: string) {
   return request<LoginResult>({
     url: '/auth/register',
     method: 'post',
-    data: { username, password, email, nickname },
+    data: { username, password, email },
   })
 }
 
@@ -77,7 +77,7 @@ export function fetchMe() {
   return request<User>({ url: '/users/me' })
 }
 
-/** 更新当前用户（昵称/头像） */
-export function updateMe(patch: Partial<Pick<User, 'nickname' | 'avatar_url'>>) {
+/** 更新当前用户头像 */
+export function updateMe(patch: Partial<Pick<User, 'avatar_url'>>) {
   return request<User>({ url: '/users/me', method: 'put', data: patch })
 }

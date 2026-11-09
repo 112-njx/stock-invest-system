@@ -19,7 +19,7 @@
 
 | 表 | 系统中的作用 | 关键说明 |
 |---|---|---|
-| **users** | 用户账号，登录/鉴权与用户信息（头像/昵称）基础 | 密码存哈希，JWT 鉴权 |
+| **users** | 用户账号，登录/鉴权与用户信息（用户名、头像）基础 | 密码存哈希，JWT 鉴权 |
 | **user_watchlist** | 重点关注股票，D/E 区关注列表数据源 | `UNIQUE(user_id, symbol_id)` 幂等 |
 | **user_memory_files** | Agent 本地记忆文件索引，登记每个用户的记忆文件 | `file_path` 指向本地文件，`content_type`=strategy/rule/preference；M 区「记忆文件」按钮打开本地文件夹依据 |
 

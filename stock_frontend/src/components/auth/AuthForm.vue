@@ -39,7 +39,6 @@ const tab = ref<'login' | 'register'>(props.initialTab)
 const username = ref('')
 const password = ref('')
 const confirm = ref('')
-const nickname = ref('')
 const email = ref('')
 const agreed = ref(false) // G03：注册协议勾选（默认不勾选）
 const errors = ref<Record<string, string>>({})
@@ -67,7 +66,6 @@ function validate(): boolean {
   if (tab.value === 'register') {
     const mail = email.value.trim()
     if (mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) e.email = '邮箱格式不正确'
-    if (!nickname.value.trim()) e.nickname = '请输入昵称'
     if (password.value !== confirm.value) e.confirm = '两次密码不一致'
     // G03：未勾选协议不能注册
     if (!agreed.value) e.agreed = '请先阅读并同意用户协议、隐私政策与免责声明'
@@ -93,12 +91,7 @@ async function submit() {
       await userStore.login(username.value.trim(), password.value)
     } else {
       // 注册成功即自动登录
-      await userStore.register(
-        username.value.trim(),
-        password.value,
-        email.value.trim() || undefined,
-        nickname.value.trim()
-      )
+      await userStore.register(username.value.trim(), password.value, email.value.trim() || undefined)
     }
     emit('success')
   } catch {
@@ -227,14 +220,6 @@ defineExpose({ restoreOpen })
           placeholder="请输入邮箱"
           :error="errors.email"
           autocomplete="email"
-        />
-        <BaseInput
-          v-model="nickname"
-          label="全名"
-          placeholder="请输入全名（展示用）"
-          :error="errors.nickname"
-          autocomplete="nickname"
-          :maxlength="64"
         />
         <!-- G03：注册协议勾选（默认不勾选，未勾选不能提交） -->
         <label class="agree">
