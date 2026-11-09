@@ -122,6 +122,8 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   await ensureDefaultSymbol()
   await resolveSymbolParam()
+  if (route.query.view === 'flows' && market.current?.type === 'stock' &&
+    market.current.code === route.query.symbol) chartView.value = 'flows'
   // G32：解析完标的后再拉买卖点，保证 btSymbolId 与 market.current 可比对
   await loadBacktestMarkers()
   // V0.2：初始化 WS 实时行情（直接刷新/直达详情页时保证连接）
