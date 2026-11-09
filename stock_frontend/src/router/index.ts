@@ -17,7 +17,6 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/stocks', name: 'stocks', component: () => import('@/views/StocksView.vue') },
-    { path: '/all-data', name: 'all-data', component: () => import('@/views/AllDataView.vue') },
     { path: '/heatmap', name: 'heatmap', component: () => import('@/views/HeatmapView.vue') },
     // G35（方案 B）：`/` 为行情首页，免登录即可浏览；原登录页独立保留在 `/login`
     {
