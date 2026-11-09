@@ -3,7 +3,6 @@ import { request } from './http'
 export interface ForecastEvidence {
   session: string
   feature: string
-  reason: string
   value: unknown
 }
 
@@ -38,6 +37,9 @@ export const getForecastHistory = (symbol: string) =>
 
 export const startForecast = (symbol: string) =>
   request<ForecastRun>({ url: '/forecast/runs', method: 'post', data: { symbol }, timeout: 60000, silent: true })
+
+export const retryForecast = (id: number) =>
+  request<ForecastRun>({ url: `/forecast/runs/${id}/retry`, method: 'post', silent: true })
 
 export const setForecastTracking = (symbol: string, enabled: boolean) =>
   request<{ tracking: boolean }>({ url: '/forecast/tracking', method: 'put', data: { symbol, enabled }, silent: true })

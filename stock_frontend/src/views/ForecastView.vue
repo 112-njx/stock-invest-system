@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { fetchKLine, type KLineBar } from '@/api/market'
-import { getForecastHistory, setForecastTracking, startForecast, type ForecastRun } from '@/api/forecast'
+import { getForecastHistory, retryForecast, setForecastTracking, startForecast, type ForecastRun } from '@/api/forecast'
 import StockSearch from '@/components/layout/StockSearch.vue'
 import ForecastEvidence from '@/components/trading/ForecastEvidence.vue'
 import { useAuthModalStore } from '@/stores/authModal'
@@ -25,7 +25,7 @@ const authModal = useAuthModalStore()
 const runs = ref<ForecastRun[]>([])
 const selected = ref<number | null>(null)
 const tracking = ref(false)
-const action = ref<'run' | 'track' | null>(null)
+const action = ref<'run' | 'retry' | 'track' | null>(null)
 const error = ref('')
 const historyError = ref(false)
 const historyLoading = ref(false)
@@ -91,7 +91,7 @@ onUnmounted(() => {
   requestId++
 })
 
-async function runAction(kind: 'run' | 'track') {
+async function runAction(kind: 'run' | 'retry' | 'track', runId?: number) {
   if (!user.token) {
     authModal.show()
     return
@@ -107,7 +107,7 @@ async function runAction(kind: 'run' | 'track') {
       const response = await setForecastTracking(symbol.value, !tracking.value)
       if (id === selection) tracking.value = response.tracking
     } else {
-      const result = await startForecast(symbol.value)
+      const result = runId === undefined ? await startForecast(symbol.value) : await retryForecast(runId)
       if (id !== selection) return
       runs.value = [result, ...runs.value.filter(run => run.id !== result.id)].sort((a, b) => b.id - a.id)
       selected.value = result.id === runs.value[0]?.id ? null : result.id
@@ -120,7 +120,7 @@ async function runAction(kind: 'run' | 'track') {
   } finally {
     if (id === selection) {
       action.value = null
-      if (!error.value) void refreshRuns()
+      void refreshRuns()
     }
   }
 }
@@ -155,7 +155,7 @@ async function loadHistory(code: string) {
       <p v-if="!user.token">登录后可运行分析、查看历史记录和开启自动跟踪。</p>
       <div class="forecast-actions">
         <button type="button" class="forecast-run" :disabled="Boolean(action) || hasActiveRun" @click="runAction('run')">
-          {{ action === 'run' ? '正在提交…' : chosen?.status === 'failed' ? '重新分析' : '分析走势' }}
+          {{ action === 'run' ? '正在提交…' : '分析走势' }}
         </button>
         <button v-if="user.token" type="button" class="forecast-retry" :aria-pressed="tracking"
           :disabled="Boolean(action) || historyLoading && !runs.length" @click="runAction('track')">
@@ -178,6 +178,10 @@ async function loadHistory(code: string) {
         <p role="status" class="forecast-status">{{ statuses[chosen.status] }}</p>
         <p>行情截至 {{ chosen.snapshot.latest_session || '暂无已确认日线' }} · {{ chosen.snapshot.bar_count }} 根日线</p>
         <p v-if="chosen.error" role="alert">{{ chosen.error }}</p>
+        <button v-if="chosen.status === 'failed'" type="button" class="forecast-retry"
+          :disabled="Boolean(action) || hasActiveRun" @click="runAction('retry', chosen.id)">
+          {{ action === 'retry' ? '正在提交…' : '重试此记录' }}
+        </button>
         <section v-if="chosen.diagnosis">
           <h3>当前行情 · {{ regimes[chosen.diagnosis.regime] }} · {{ biases[chosen.diagnosis.bias] }}</h3>
           <p>{{ chosen.diagnosis.summary }}</p>

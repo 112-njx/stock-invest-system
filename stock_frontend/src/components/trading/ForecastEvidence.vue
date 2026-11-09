@@ -36,7 +36,6 @@ function format(item: ForecastEvidence): string {
   <ul v-if="items.length" class="forecast-evidence">
     <li v-for="item in items" :key="`${item.session}:${item.feature}`">
       <strong>{{ item.session }} · {{ labels[item.feature] ?? item.feature }} {{ format(item) }}</strong>
-      <div>{{ item.reason }}</div>
     </li>
   </ul>
 </template>

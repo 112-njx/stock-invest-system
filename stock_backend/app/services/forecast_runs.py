@@ -3,9 +3,11 @@
 import asyncio
 import logging
 from datetime import UTC, date, datetime, timedelta
+from time import monotonic
 
-from sqlalchemy import String, func, literal, select, update
+from sqlalchemy import String, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import load_only
 
 from app.core.exceptions import ApiError
 from app.models.forecast import ForecastRun, ForecastTracking
@@ -19,6 +21,11 @@ logger = logging.getLogger(__name__)
 ACTIVE = ("queued", "diagnosing", "predicting")
 TRACK_LIMIT = 10
 SWEEP_LIMIT = 25
+DELIVERY_RETRY = timedelta(minutes=1)
+DELIVERY_LIFETIME = timedelta(hours=2)
+TRACK_INTERVAL = timedelta(minutes=5)
+TRACK_LEASE = timedelta(seconds=75)
+TRACK_START_BUDGET = 8  # Leave time for a 45-second SDK request within the sweep limit.
 
 
 def _lock_user(db, user_id):
@@ -72,6 +79,24 @@ def set_tracking(db, user_id, symbol, enabled):
     return enabled
 
 
+def _has_active_run(db, user_id):
+    return db.scalar(select(ForecastRun.id).where(
+        ForecastRun.user_id == user_id, ForecastRun.status.in_(ACTIVE),
+    ).limit(1)) is not None
+
+
+def _busy():
+    return ApiError(status_code=409, msg="已有一项走势分析在进行，请稍后再试")
+
+
+def _queue(run):
+    now = datetime.now(UTC)
+    run.status = "queued"
+    run.updated_at = run.next_delivery_at = now
+    run.diagnosis = run.prediction = run.error = None
+    run.models = {}
+
+
 def _enqueue(db, user_id, snapshot, *, trigger):
     """Caller holds the per-user transaction lock. Return (run, needs_delivery)."""
     symbol = snapshot["symbol"]["code"]
@@ -81,21 +106,16 @@ def _enqueue(db, user_id, snapshot, *, trigger):
     ))
     if run is not None and (run.status != "failed" or trigger != "manual"):
         return run, False
-    if snapshot["status"] == "ready" and db.scalar(select(ForecastRun.id).where(
-        ForecastRun.user_id == user_id, ForecastRun.status.in_(ACTIVE),
-    ).limit(1)) is not None:
+    ready = snapshot["status"] == "ready"
+    if ready and _has_active_run(db, user_id):
         return None, False
     if run is None:
         run = ForecastRun(user_id=user_id, symbol=symbol, data_version=version, snapshot=snapshot,
-                          trigger=trigger, status="queued", models={})
+                          trigger=trigger)
         db.add(run)
+    if ready:
+        _queue(run)
     else:
-        run.status = "queued"
-        run.trigger = trigger
-        run.diagnosis = run.prediction = run.error = None
-        run.models = {}
-        run.updated_at = datetime.now(UTC)
-    if snapshot["status"] != "ready":
         run.status = "completed"
         run.prediction = forecast_analysis.insufficient(snapshot)
     db.flush()
@@ -105,11 +125,37 @@ def _enqueue(db, user_id, snapshot, *, trigger):
 def _publish(run_id):
     from app.worker.tasks.forecast_tasks import run_forecast
 
-    try:
-        run_forecast.apply_async(args=(run_id,), retry=False)
-    except Exception:
-        # The committed queue entry is redelivered by the periodic sweep.
-        logger.warning("Could not deliver forecast run %s", run_id)
+    now = datetime.now(UTC)
+    with get_session() as db:
+        run = db.scalar(select(ForecastRun).where(
+            ForecastRun.id == run_id, _delivery_due(now),
+        ).options(load_only(ForecastRun.id, ForecastRun.next_delivery_at)).with_for_update(skip_locked=True))
+        if run is None:
+            return
+        expires = now + DELIVERY_LIFETIME
+        try:
+            run_forecast.apply_async(args=(run_id,), retry=False, expires=expires)
+        except Exception:
+            run.next_delivery_at = datetime.now(UTC) + DELIVERY_RETRY
+            logger.warning("Could not deliver forecast run %s", run_id, exc_info=True)
+        else:
+            # A successfully sent message remains the only delivery until it expires.
+            run.next_delivery_at = expires
+        db.commit()
+
+
+def _delivery_due(now):
+    return (ForecastRun.status == "queued") & or_(
+        ForecastRun.next_delivery_at <= now, ForecastRun.next_delivery_at.is_(None),
+    )
+
+
+def _commit_run(db, run, deliver):
+    response = as_response(run)
+    db.commit()
+    if deliver:
+        _publish(response["id"])
+    return response
 
 
 def start_manual(db, user_id, symbol):
@@ -117,47 +163,60 @@ def start_manual(db, user_id, symbol):
     _lock_user(db, user_id)
     run, deliver = _enqueue(db, user_id, snapshot, trigger="manual")
     if run is None:
-        raise ApiError(status_code=409, msg="已有一项走势分析在进行，请稍后再试")
-    response = as_response(run)
-    db.commit()
-    if deliver:
-        _publish(run.id)
-    return response
+        raise _busy()
+    return _commit_run(db, run, deliver)
 
 
-def _claim_due_tracking(now):
+def retry(db, user_id, run_id):
+    _lock_user(db, user_id)
+    run = db.scalar(select(ForecastRun).where(ForecastRun.id == run_id, ForecastRun.user_id == user_id)
+                    .with_for_update())
+    if run is None:
+        raise ApiError(status_code=404, msg="未找到该走势分析记录")
+    if run.status == "failed":
+        if _has_active_run(db, user_id):
+            raise _busy()
+        _queue(run)
+        return _commit_run(db, run, True)
+    return _commit_run(db, run, False)
+
+
+def _claim_due_tracking():
+    now = datetime.now(UTC)
     with get_session() as db:
-        due = db.scalars(select(ForecastTracking).join(User, User.id == ForecastTracking.user_id)
-                         .where(User.is_deleted.is_(False), ForecastTracking.next_check_at <= now)
-                         .order_by(ForecastTracking.next_check_at).limit(SWEEP_LIMIT)
-                         .with_for_update(of=ForecastTracking, skip_locked=True)).all()
-        keys = [(row.user_id, row.symbol, row.last_session) for row in due]
-        for row in due:
-            row.next_check_at = now + timedelta(minutes=5)
+        due = db.scalar(select(ForecastTracking).join(User, User.id == ForecastTracking.user_id)
+                        .where(User.is_deleted.is_(False), ForecastTracking.next_check_at <= now)
+                        .order_by(ForecastTracking.next_check_at, ForecastTracking.user_id, ForecastTracking.symbol)
+                        .limit(1).with_for_update(of=ForecastTracking, skip_locked=True))
+        if due is None:
+            return None
+        due.next_check_at = now + TRACK_LEASE
+        key = (due.user_id, due.symbol, due.last_session, due.next_check_at)
         db.commit()
-        return keys
+        return key
 
 
-def _track_one(user_id, symbol, previous, now, snapshots):
+def _track_one(user_id, symbol, previous, lease, now, snapshots):
     with get_session() as db:
         stock = forecast_snapshot.resolve_stock(db, symbol)
         latest = forecast_snapshot.latest_confirmed_session(db, stock.id, now)
-        if latest is None or (previous is not None and latest <= previous):
-            return
-        if symbol not in snapshots:
-            snapshots[symbol] = forecast_snapshot.build_snapshot(db, symbol, as_of=now)
-        snapshot = snapshots[symbol]
-        if snapshot["status"] != "ready":
-            return
-        session = date.fromisoformat(snapshot["latest_session"])
+        snapshot = None
+        if latest is not None and (previous is None or latest > previous):
+            if symbol not in snapshots:
+                snapshots[symbol] = forecast_snapshot.build_snapshot(db, symbol, as_of=now)
+            snapshot = snapshots[symbol]
         _lock_user(db, user_id)
-        tracked = db.get(ForecastTracking, (user_id, symbol))
-        if tracked is None or (tracked.last_session is not None and session <= tracked.last_session):
+        tracked = db.get(ForecastTracking, (user_id, symbol), with_for_update=True)
+        if tracked is None or tracked.next_check_at != lease:
             return
-        run, deliver = _enqueue(db, user_id, snapshot, trigger="auto")
-        if run is None:
-            return
-        tracked.last_session = session
+        deliver = False
+        session = date.fromisoformat(snapshot["latest_session"]) if snapshot and snapshot["latest_session"] else None
+        if session is not None and (tracked.last_session is None or session > tracked.last_session):
+            run, deliver = _enqueue(db, user_id, snapshot, trigger="auto")
+            if run is None:
+                return
+            tracked.last_session = session
+        tracked.next_check_at = datetime.now(UTC) + TRACK_INTERVAL
         db.commit()
         if deliver:
             _publish(run.id)
@@ -165,23 +224,26 @@ def _track_one(user_id, symbol, previous, now, snapshots):
 
 def sweep():
     now = datetime.now(UTC)
+    deadline = monotonic() + TRACK_START_BUDGET
     with get_session() as db:
         db.execute(update(ForecastRun).where(
             ForecastRun.status.in_(("diagnosing", "predicting")), ForecastRun.updated_at < now - timedelta(minutes=10),
         ).values(status="failed", error="分析任务中断，请重试。", updated_at=now))
-        queued = db.scalars(select(ForecastRun).where(
-            ForecastRun.status == "queued", ForecastRun.updated_at < now - timedelta(minutes=5),
-        ).order_by(ForecastRun.updated_at).limit(SWEEP_LIMIT).with_for_update(skip_locked=True)).all()
-        ids = [run.id for run in queued]
-        for run in queued:
-            run.updated_at = now
+        ids = db.scalars(select(ForecastRun.id).where(_delivery_due(now))
+                         .order_by(ForecastRun.next_delivery_at.nulls_first()).limit(SWEEP_LIMIT)).all()
         db.commit()
     for run_id in ids:
         _publish(run_id)
     snapshots = {}
-    for user_id, symbol, previous in _claim_due_tracking(now):
+    for _ in range(SWEEP_LIMIT):
+        if monotonic() >= deadline:
+            break
+        claim = _claim_due_tracking()
+        if claim is None:
+            break
+        user_id, symbol, previous, lease = claim
         try:
-            _track_one(user_id, symbol, previous, now, snapshots)
+            _track_one(user_id, symbol, previous, lease, now, snapshots)
         except Exception:
             logger.warning("Forecast tracking check failed for %s", symbol, exc_info=True)
 
@@ -202,7 +264,7 @@ def execute(run_id):
     with get_session() as db:
         run = db.execute(update(ForecastRun).where(
             ForecastRun.id == run_id, ForecastRun.status == "queued",
-        ).values(status="diagnosing", updated_at=lease).returning(
+        ).values(status="diagnosing", updated_at=lease, next_delivery_at=None).returning(
             ForecastRun.user_id, ForecastRun.snapshot,
         )).one_or_none()
         db.commit()

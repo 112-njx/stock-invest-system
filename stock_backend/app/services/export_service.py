@@ -8,6 +8,7 @@
 - backtest.json      回测任务与结果
 - conversations.json 会话与消息
 - agents.json        定制 Agent 配置 + 运行记录 + 节点步骤
+- forecast.json      走势分析记录及自动跟踪设置
 - memory/facts.json  记忆事实（PG）
 - memory/files/*.md  原始记忆文件（人类可读）
 
@@ -26,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.agent import AgentRun, AgentStep, MemoryChunk, UserAgent
 from app.models.export_task import ExportTask
+from app.models.forecast import ForecastRun, ForecastTracking
 from app.models.strategy import BacktestResult, BacktestTask, ChatMessage, Conversation, TradingStrategy
 from app.models.user import SupportResistance, User, UserWatchlist
 from app.repositories import export_repo
@@ -177,6 +179,18 @@ def _collect_memory_facts(db: Session, user_id: int) -> list[dict]:
     )
 
 
+def _collect_forecast(db: Session, user_id: int) -> dict:
+    runs = db.query(ForecastRun).filter_by(user_id=user_id).order_by(ForecastRun.id)
+    tracking = db.query(ForecastTracking).filter_by(user_id=user_id).order_by(ForecastTracking.symbol)
+    return {
+        "runs": _rows_to_dicts(runs, [
+            "id", "symbol", "trigger", "status", "snapshot", "data_version", "diagnosis", "prediction",
+            "models", "error", "created_at", "updated_at",
+        ]),
+        "tracking": _rows_to_dicts(tracking, ["symbol", "last_session"]),
+    }
+
+
 # ---------- 打包 ----------
 
 def build_export_zip(db: Session, task_id: int) -> Path:
@@ -233,6 +247,7 @@ def build_export_zip(db: Session, task_id: int) -> Path:
         db.commit()
 
         (tmp_dir / "agents.json").write_text(_dump(_collect_agents(db, user.id)), encoding="utf-8")
+        (tmp_dir / "forecast.json").write_text(_dump(_collect_forecast(db, user.id)), encoding="utf-8")
 
         # 3) 记忆：事实 JSON + 原始 md 文件
         (tmp_dir / "memory").mkdir(exist_ok=True)

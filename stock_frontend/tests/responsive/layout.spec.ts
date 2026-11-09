@@ -129,7 +129,7 @@ test('forecast shows both stages and can enable tracking', async ({ page }, info
   test.skip(!['desktop', 'phone-320', 'phone-landscape'].includes(info.project.name))
   await stubApi(page, () => true)
   const session = '2026-01-05'
-  const evidence = [{ session, feature: 'ema20', value: 1500, reason: '收盘在均线上方' }]
+  const evidence = [{ session, feature: 'ema20', value: 1500, reason: '旧记录的未核验说明' }]
   const run = {
     id: 42, symbol: stock.code, trigger: 'manual', status: 'predicting', created_at: `${session}T08:00:00Z`,
     snapshot: { latest_session: session, as_of: `${session}T16:00:00+08:00`, bar_count: 40,
@@ -140,12 +140,22 @@ test('forecast shows both stages and can enable tracking', async ({ page }, info
   let started = false
   let complete = false
   let tracking = false
+  let retried = false
+  const prior = {
+    ...run, id: 41, status: 'failed', diagnosis: null, error: '旧记录中断',
+    snapshot: { ...run.snapshot, latest_session: '2025-12-31' },
+  }
   await page.route('**/api/v1/stocks/search-directory', route => route.fulfill({ json: {
     code: 0, data: { version: 'forecast-analysis-fixture', source: 'stockdb', items: [
       { code: stock.code, name: stock.name, type: 'stock', market: stock.market, ordinal: 1, latest_date: session },
     ] },
   } }))
-  await page.route('**/api/v1/forecast/runs**', route => {
+  await page.route('**/api/v1/forecast/runs/41/retry', route => {
+    expect(route.request().method()).toBe('POST')
+    retried = true
+    return route.fulfill({ json: { code: 0, data: { ...prior, status: 'queued', error: null } } })
+  })
+  await page.route(/\/api\/v1\/forecast\/runs(?:\?|$)/, route => {
     if (route.request().method() === 'POST') {
       started = true
       return route.fulfill({ json: { code: 0, data: run } })
@@ -156,7 +166,8 @@ test('forecast shows both stages and can enable tracking', async ({ page }, info
         next_regime: { regime: 'undetermined', reason: '后续信号冲突', evidence: [] },
       },
     } : run
-    return route.fulfill({ json: { code: 0, data: { runs: started ? [result] : [], tracking } } })
+    const history = complete ? [result, retried ? { ...prior, status: 'queued', error: null } : prior] : [result]
+    return route.fulfill({ json: { code: 0, data: { runs: started ? history : [], tracking } } })
   })
   await page.route('**/api/v1/forecast/tracking', route => {
     tracking = route.request().postDataJSON().enabled
@@ -169,11 +180,16 @@ test('forecast shows both stages and can enable tracking', async ({ page }, info
   await page.getByRole('button', { name: '分析走势' }).click()
   await expect(page.getByText('第二阶段 · 正在推演走势')).toBeVisible()
   await expect(page.getByText('2026-01-05 · EMA20 1,500')).toBeVisible()
+  await expect(page.getByText('旧记录的未核验说明')).toHaveCount(0)
   complete = true
   await expect(page.getByRole('heading', { name: '下一根日 K 线 · 涨' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '下一阶段走势 · 无法判断' })).toBeVisible()
   await page.getByRole('button', { name: '开启自动跟踪' }).click()
   await expect(page.getByRole('button', { name: '关闭自动跟踪' })).toHaveAttribute('aria-pressed', 'true')
+  await page.getByLabel('分析记录').selectOption('41')
+  await page.getByRole('button', { name: '重试此记录' }).click()
+  await expect(page.getByText('行情截至 2025-12-31', { exact: false })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: '等待分析' })).toBeVisible()
   await expectNoPageOverflow(page)
 })
 

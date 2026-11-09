@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, String, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, ForeignKey, Index, String, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,6 +15,7 @@ class ForecastRun(Base):
         UniqueConstraint("user_id", "symbol", "data_version", name="uq_forecast_input"),
         Index("ix_forecast_history", "user_id", "symbol", "id"),
         Index("ix_forecast_delivery", "status", "updated_at"),
+        Index("ix_forecast_pending_delivery", "next_delivery_at", postgresql_where=text("status = 'queued'")),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -23,6 +24,7 @@ class ForecastRun(Base):
     data_version: Mapped[str] = mapped_column(String(64))
     trigger: Mapped[str] = mapped_column(String(8))
     status: Mapped[str] = mapped_column(String(16))
+    next_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     snapshot: Mapped[dict] = mapped_column(JSONB)
     diagnosis: Mapped[dict | None] = mapped_column(JSONB)
     prediction: Mapped[dict | None] = mapped_column(JSONB)

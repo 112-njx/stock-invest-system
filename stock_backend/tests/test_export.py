@@ -14,6 +14,7 @@ os.environ["EMBEDDING_MODEL"] = "hash"
 
 from app.core.config import get_settings  # noqa: E402
 from app.models.export_task import ExportTask  # noqa: E402
+from app.models.forecast import ForecastRun, ForecastTracking  # noqa: E402
 from app.models.strategy import Conversation, TradingStrategy  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.repositories import export_repo  # noqa: E402
@@ -180,7 +181,7 @@ class TestExportZipContent:
     """ZIP 内容完整性（服务层）。"""
 
     def test_zip_contains_all_domains(self, client: TestClient):
-        """ZIP 覆盖：用户/关注/支撑压力/策略(JSON+代码)/回测/会话/Agent/记忆。"""
+        """ZIP 覆盖用户数据，包括走势分析和自动跟踪。"""
         uname = _uname()
         try:
             _, uid = _register(client, uname)
@@ -193,6 +194,9 @@ class TestExportZipContent:
                     )
                 )
                 db.add(Conversation(user_id=uid, title="导出测试会话"))
+                db.add(ForecastRun(user_id=uid, symbol="600519", trigger="auto", status="completed",
+                                   data_version="test-data", snapshot={"rows": [{"close": 12.5}]}))
+                db.add(ForecastTracking(user_id=uid, symbol="600519"))
                 db.commit()
 
                 row = export_repo.create(db, uid)
@@ -213,6 +217,7 @@ class TestExportZipContent:
                     "backtest.json",
                     "conversations.json",
                     "agents.json",
+                    "forecast.json",
                     "memory/facts.json",
                 ]:
                     assert required in names, f"missing {required}"
@@ -228,6 +233,10 @@ class TestExportZipContent:
                 # 会话 JSON 含消息数组
                 convs = json.loads(zf.read("conversations.json").decode("utf-8"))
                 assert any(c["title"] == "导出测试会话" for c in convs)
+                forecast = json.loads(zf.read("forecast.json"))
+                assert forecast["runs"][0]["data_version"] == "test-data"
+                assert forecast["runs"][0]["snapshot"]["rows"] == [{"close": 12.5}]
+                assert forecast["tracking"] == [{"symbol": "600519", "last_session": None}]
         finally:
             _cleanup(uname)
 
