@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AuthForm from '@/components/auth/AuthForm.vue'
+import DatasetPreview from '@/components/login/DatasetPreview.vue'
 import IndustryPreview from '@/components/login/IndustryPreview.vue'
 import ResearchChart from '@/components/login/ResearchChart.vue'
 import './login-landing.css'
@@ -27,12 +28,6 @@ function jumpTo(section?: HTMLElement) {
   section?.scrollIntoView({ block: 'start' })
 }
 
-const datasets = [
-  { name: '行情', fields: '交易日期 · 开盘 · 最高 · 最低 · 收盘 · 成交量', detail: '用历史 K 线准备样本、计算指标和复现信号。' },
-  { name: '板块', fields: '行业分类 · 板块成分 · 指数走势', detail: '从板块走势切入，再沿成分股名单缩小研究范围。' },
-  { name: '复权', fields: '标的代码 · 生效日期 · 复权因子', detail: '统一历史价格口径，便于比较跨除权日的表现。' },
-]
-const dataIndex = ref(0)
 const dataTypes = ['股票日 K', '分时行情', '板块成分', '行业指数', '复权因子', '成交量与成交额']
 const marqueePaused = ref(false)
 
@@ -222,17 +217,7 @@ onBeforeUnmount(() => {
             <h3>免费拉取股票数据</h3>
             <p>项目本地库已有的全部数据均纳入免费获取范围，可用于自己的分析、策略和回测。</p>
           </div>
-          <div class="dataset-accordion" aria-label="数据字段示例">
-            <div v-for="(dataset, index) in datasets" :key="dataset.name" class="dataset-slice" :class="{ 'is-active': dataIndex === index }">
-              <button type="button" :aria-expanded="dataIndex === index" :aria-controls="'dataset-' + index" @click="dataIndex = index">
-                {{ dataset.name }}
-              </button>
-              <div :id="'dataset-' + index" v-show="dataIndex === index" class="dataset-content">
-                <p>{{ dataset.fields }}</p>
-                <small>{{ dataset.detail }}</small>
-              </div>
-            </div>
-          </div>
+          <DatasetPreview />
         </article>
       </div>
     </section>
