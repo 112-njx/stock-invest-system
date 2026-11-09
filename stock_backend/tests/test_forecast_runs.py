@@ -41,7 +41,7 @@ class Model:
         self.messages = []
 
     async def ainvoke(self, messages, temperature=None):
-        self.messages.append(messages)
+        self.messages.append(list(messages))
         return LLMResult(json.dumps(next(self.answers)), "test-model", model_revision="test-revision")
 
 
@@ -60,7 +60,16 @@ def test_model_rules_and_grounding():
 def test_invalid_evidence_is_rejected(session, feature):
     response = {**DIAGNOSIS, "evidence": [{"session": session, "feature": feature, "reason": "证据"}]}
     with pytest.raises(ValueError, match="evidence"):
-        asyncio.run(analysis.diagnose(Model(response), snapshot()))
+        asyncio.run(analysis.diagnose(Model(response, response), snapshot()))
+
+
+def test_model_can_repair_nonliteral_evidence_once():
+    invalid = {**DIAGNOSIS, "evidence": [{**EVIDENCE[0], "feature": "均线上方"}]}
+    model = Model(invalid, DIAGNOSIS)
+    result, _ = asyncio.run(analysis.diagnose(model, snapshot()))
+    assert len(model.messages) == 2
+    assert model.messages[-1][-1]["role"] == "user"
+    assert result["evidence"][0]["feature"] == "ema20"
 
 
 @pytest.fixture
