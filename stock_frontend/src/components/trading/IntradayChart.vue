@@ -8,7 +8,7 @@ const props=defineProps<{code:string}>()
 interface Row {date:number;price:number;volume:number|null;average:number|null}
 interface History {rows:Row[];latest:number|null;start:string|null;end:string|null;previous:number|null;baseline_date:number|null}
 const theme=useThemeStore(), host=ref<HTMLElement>(), data=ref<History|null>(null)
-const start=ref(''),end=ref(''),busy=ref(false),error=ref(''),hover=ref('')
+const busy=ref(false),error=ref(''),hover=ref('')
 let chart:IChartApi|undefined, observer:ResizeObserver|undefined,sequence=0
 function time(row:Row):UTCTimestamp {
   const s=String(row.date)
@@ -24,7 +24,32 @@ async function render(){
   const prices=rows.flatMap(r=>r.average==null?[r.price]:[r.price,r.average])
   const min=Math.min(...prices,baseline??Infinity),max=Math.max(...prices,baseline??-Infinity),padding=Math.max((max-min)*.06,.01)
   const autoscaleInfoProvider=()=>({priceRange:{minValue:min-padding,maxValue:max+padding}})
-  chart=createChart(host.value,{width:host.value.clientWidth,height:host.value.clientHeight,layout:{background:{type:ColorType.Solid,color:light?'#ffffff':'#111827'},textColor:text,panes:{separatorColor:grid,separatorHoverColor:'#3b82f6'}},grid:{vertLines:{color:grid},horzLines:{color:grid}},leftPriceScale:{visible:true},rightPriceScale:{visible:!!baseline},timeScale:{minBarSpacing:0.05,timeVisible:true,secondsVisible:false,borderColor:grid,tickMarkFormatter:(t:Time)=>label(t)},localization:{timeFormatter:label},crosshair:{mode:0}})
+  chart = createChart(host.value, {
+    width: host.value.clientWidth,
+    height: host.value.clientHeight,
+    layout: {
+      background: { type: ColorType.Solid, color: light ? '#ffffff' : '#111827' },
+      textColor: text,
+      fontFamily: getComputedStyle(host.value).fontFamily,
+      fontSize: 11,
+      attributionLogo: false,
+      panes: { separatorColor: grid, separatorHoverColor: '#3b82f6' },
+    },
+    grid: { vertLines: { color: grid }, horzLines: { color: grid } },
+    leftPriceScale: { visible: true, borderColor: grid },
+    rightPriceScale: { visible: !!baseline, borderColor: grid },
+    timeScale: {
+      fixLeftEdge: true,
+      fixRightEdge: true,
+      minBarSpacing: 0.05,
+      timeVisible: true,
+      secondsVisible: false,
+      borderColor: grid,
+      tickMarkFormatter: label,
+    },
+    localization: { timeFormatter: label },
+    crosshair: { mode: 0 },
+  })
   const price=chart.addSeries(LineSeries,{color:light?'#394150':'#e5e7eb',lineWidth:1,priceScaleId:'left',priceLineVisible:false,autoscaleInfoProvider})
   price.setData(rows.map(r=>({time:time(r),value:r.price})))
   for (const segment of averageSegments(rows)) {
@@ -44,32 +69,42 @@ async function render(){
   chart.subscribeCrosshairMove(p=>{const r=lookup.get(p.time as UTCTimestamp);hover.value=r?`${label(time(r))}  价格 ${r.price.toFixed(2)}  均价 ${r.average?.toFixed(2)??'暂无数据'}  成交量 ${r.volume?.toLocaleString()??'暂无数据'} 股`:''})
   observer=new ResizeObserver(()=>{if(host.value)chart?.resize(host.value.clientWidth,host.value.clientHeight)});observer.observe(host.value)
 }
-async function load(defaultRange=false){
+async function load(){
   const id=++sequence;busy.value=true;error.value='';hover.value=''
   dispose();data.value=null
   try{
-    if(!defaultRange&&(!start.value||!end.value||start.value>end.value))throw new Error('请选择有效的起止日期')
-    const query=defaultRange?'':`?${new URLSearchParams({start:start.value,end:end.value})}`
-    const result=await fetchStockDb<History>(`/stocks/${props.code}/minutes/history${query}`)
+    const result=await fetchStockDb<History>(`/stocks/${props.code}/minutes/history`)
     if(id!==sequence)return
-    data.value=result;start.value=result.start??'';end.value=result.end??''
+    data.value=result
     busy.value=false;await render()
   }catch(e){if(id===sequence)error.value=e instanceof Error?e.message:'读取分时数据失败'}
   finally{if(id===sequence)busy.value=false}
 }
-watch(()=>props.code,()=>load(true),{immediate:true})
+watch(()=>props.code,load,{immediate:true})
 watch(()=>theme.mode,render)
 onBeforeUnmount(()=>{sequence++;dispose()})
 </script>
 <template>
 <section class="intraday-main">
-  <form @submit.prevent="load()"><strong>分时图</strong><input v-model="start" type="date" aria-label="分时开始日期"/><span>至</span><input v-model="end" type="date" aria-label="分时结束日期"/><button :disabled="busy">查询</button><button type="button" :disabled="busy" @click="load(true)">最近交易日</button><button type="button" @click="chart?.timeScale().fitContent()">适应全图</button></form>
-  <div class="legend">价格线 · 黄色为每日成交均价 · 下方成交量（股）<span v-if="data?.previous"> · 涨跌幅基准 {{ data.previous.toFixed(2) }}（{{ data.baseline_date }} 昨收）</span></div>
-  <div class="hover-info">{{ hover || '滚轮缩放，拖动查看历史；移动鼠标查看数据。每次查询最多45天。' }}</div>
-  <p v-if="busy">正在读取分时数据…</p><p v-else-if="error" role="alert">{{ error }}</p><p v-else-if="!data?.rows.length">所选日期暂无分时数据</p>
+  <header class="chart-toolbar">
+    <strong>分时图</strong>
+    <button type="button" :disabled="!data?.rows.length" @click="chart?.timeScale().fitContent()">适应全图</button>
+    <span v-if="hover" class="chart-info">{{ hover }}</span>
+    <span v-else class="chart-info">
+      价格线 · 黄色为每日成交均价 · 下方成交量（股）<template v-if="data?.previous"> · 涨跌幅基准 {{ data.previous.toFixed(2) }}（{{ data.baseline_date }} 昨收）</template>
+    </span>
+  </header>
+  <p v-if="busy">正在读取分时数据…</p><p v-else-if="error" role="alert">{{ error }}</p><p v-else-if="!data?.rows.length">近一个月暂无分时数据</p>
   <div v-show="!busy&&!error&&data?.rows.length" ref="host" class="chart-host" aria-label="多日分时价格、每日均价及成交量" />
 </section>
 </template>
 <style scoped>
-.intraday-main{flex:1;min-height:0;min-width:0;display:flex;flex-direction:column;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;overflow:hidden}form{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:8px;font-size:12px}input,button{font:inherit;color:var(--text);background:var(--bg-panel);border:1px solid var(--border-strong);border-radius:3px;padding:4px}button{cursor:pointer}button:disabled{opacity:.5}.legend,.hover-info{font-size:11px;color:var(--text-secondary);padding:2px 8px}.hover-info{min-height:24px}.chart-host{flex:1;min-height:180px;min-width:0}p{margin:auto;color:var(--text-secondary);font-size:13px}
+.intraday-main { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.chart-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 12px; min-width: 0; }
+.chart-toolbar strong, .chart-toolbar button { flex: none; }
+.chart-toolbar button { font: inherit; color: var(--text); background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px; cursor: pointer; }
+.chart-toolbar button:disabled { opacity: .5; }
+.chart-info { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 11px; }
+.chart-host { flex: 1; min-height: 180px; min-width: 0; }
+p { margin: auto; color: var(--text-secondary); font-size: 13px; }
 </style>
