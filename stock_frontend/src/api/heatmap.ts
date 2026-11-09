@@ -13,6 +13,12 @@ export interface Heatmap {
 }
 export interface Rect { x: number; y: number; w: number; h: number }
 
+export function heatColor(change: number) {
+  const magnitude = Math.abs(change)
+  return change === 0 ? '#525a64'
+    : `hsl(${change > 0 ? 356 : 141} ${Math.min(85, 42 + magnitude * 7)}% ${Math.min(49, 28 + magnitude * 3)}%)`
+}
+
 /** Balanced weighted binary treemap; zero changes deliberately receive no area. */
 export function tiles<T extends { value: number }>(items: T[], box: Rect): { item: T; box: Rect }[] {
   const sorted = items.filter(x => x.value > 0).sort((a, b) => b.value - a.value)

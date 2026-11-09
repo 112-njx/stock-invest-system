@@ -212,21 +212,6 @@
 .login-landing .feature-card .plot-caption { padding: 0; margin-top: -8px; }
 .login-landing .feature-link { width: fit-content; margin-top: auto; color: var(--landing-accent); font-weight: 700; }
 .login-landing .feature-link:hover { text-decoration: underline; text-underline-offset: 4px; }
-.login-landing .sector-map { display: grid; grid-auto-flow: dense; grid-template-columns: 2fr 1fr 1fr; grid-template-rows: repeat(2, 1fr); min-height: 123px; gap: 4px; }
-.login-landing .sector-map span {
-  display: grid;
-  place-items: center;
-  padding: 5px;
-  border-radius: 4px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--up) 24%, var(--bg-panel));
-  font-size: clamp(11px, 1.2vw, 14px);
-  transition: background .24s;
-}
-.login-landing .sector-map span:first-child { grid-row: span 2; background: color-mix(in srgb, var(--down) 29%, var(--bg-panel)); }
-.login-landing .sector-map span:nth-child(3) { background: color-mix(in srgb, var(--down) 16%, var(--bg-panel)); }
-.login-landing .sector-map span:nth-child(4) { background: color-mix(in srgb, var(--up) 13%, var(--bg-panel)); }
-.login-landing .sector-map:hover span:first-child { background: color-mix(in srgb, var(--down) 40%, var(--bg-panel)); }
 .login-landing .dataset-accordion { display: flex; flex: 1; gap: 5px; min-height: 150px; }
 .login-landing .dataset-slice {
   display: flex;

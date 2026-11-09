@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AuthForm from '@/components/auth/AuthForm.vue'
+import IndustryPreview from '@/components/login/IndustryPreview.vue'
 import ResearchChart from '@/components/login/ResearchChart.vue'
 import './login-landing.css'
 
@@ -203,9 +204,7 @@ onBeforeUnmount(() => {
             <h3>行情与行业观察</h3>
             <p>从大盘云图和指数蓝图看板块分化，沿行业走势找到成分股，再回到个股 K 线。</p>
           </div>
-          <div class="sector-map" aria-label="板块分布示例">
-            <span>电子</span><span>银行</span><span>医药生物</span><span>汽车</span><span>有色金属</span>
-          </div>
+          <IndustryPreview />
           <RouterLink class="feature-link" :to="{ name: 'stockdb' }">查看指数蓝图 <span aria-hidden="true">↗</span></RouterLink>
         </article>
 
