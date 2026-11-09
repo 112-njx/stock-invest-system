@@ -54,13 +54,21 @@ def _industry_sdk(client, code, frequency, end):
     return history
 
 
+def configure_sdk_reader():
+    import stock_sdk
+    if os.environ.get('STOCKDB_READER') == 'managed':
+        from market_data_sdk import install
+        install(stock_sdk)
+    return stock_sdk
+
+
 def _sdk_worker(connection, sdk_dir, code, frequency, start, end):
     timings = {}
     phase = 'sdk_init_ms'
     begun = monotonic()
     try:
         sys.path.insert(0, sdk_dir)
-        import stock_sdk
+        stock_sdk = configure_sdk_reader()
         client = None if code.endswith('.SL') else stock_sdk.StockDBClient()
         timings['sdk_init_ms'] = (monotonic() - begun) * 1000
         phase = 'sdk_compute_ms'
@@ -300,6 +308,8 @@ def _composite_data_worker(connection, sdk_dir, jobs, frequency, start, end):
     """Fetch and aggregate each member using the official SDK, in its own process."""
     try:
         sys.path.insert(0, sdk_dir)
+        if os.environ.get('STOCKDB_READER') == 'managed':
+            configure_sdk_reader()
         from zhibiao import _load_rows
         for index, code in jobs:
             if frequency in {'1m', '5m', '15m', '30m', '60m'}:

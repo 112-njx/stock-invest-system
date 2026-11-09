@@ -68,3 +68,26 @@ SDK 桥第一阶段采用独立缓存锁与 SDK 执行锁，同参数并发请�
 行情详情支持个股 1m、5m、15m、30m、60m。新增的 1m/5m/30m/60m 通过 7900 SDK 桥读取前复权记录：1m 读取原始分钟数据，5m/30m/60m 使用 SDK 按交易时段聚合。SDK 先查询完整交易日，再按请求时间裁剪，避免分页边界产生半根 K 线。
 
 新增周期仅开放给 stock；ETF 和指数沿用原周期选项。历史记录按周期独立保存、缓存和计算指标，需应用迁移 0033。分钟线左滑窗口为七天，低于接口 5000 根上限；空白初次加载仍可回溯已停牌标的的历史。所有数据目录挂载保持不变。
+
+### 阶段 1：项目行情读取器
+
+`deploy/docker-compose.market-data.yml` 将原 Compose 服务 `stockdb-local` 切换为独立镜像
+`stock-invest-market-data-local:phase1`。两个模式使用相同的服务名、数据挂载和控制目录，
+Compose 切换时会替换原容器。开发环境启动候选模式：
+
+```powershell
+docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml -f deploy/docker-compose.market-data.yml up -d --build --no-deps stockdb-local
+```
+
+恢复发行版模式时，运行同一命令并移除 `-f deploy/docker-compose.market-data.yml`。
+生产环境使用基础文件 `deploy/docker-compose.yml`，并按需叠加同一覆盖文件。
+
+项目读取器通过固定版本的 LevelDB 和 MessagePack 读取原 `data` 与 `data1`。
+LevelDB 打开与 WAL 恢复需要的文件位于容器临时目录，原 SST 文件按路径只读引用，
+后台压缩在此镜像中禁用。原始文件更新继续通过现有控制器先停止读取进程，
+更新后再重新打开快照。7900 保留原有 SDK 的聚合、复权和指标实现，
+行情输入走项目读取器。此阶段继续使用原始数据更新器和原生指标库。
+
+在同一版数据上，切换前运行 `scripts/verify_market_data_takeover.py` 取得基准 JSON，
+切换后用 `--baseline` 传入该 JSON 对比。脚本在 Compose 内网使用 7899 和 7900，
+也可以通过 `--rd`、`--sdk` 指定地址。常规 K 线对比保留行顺序，跨证券区间按标的和日期对照。

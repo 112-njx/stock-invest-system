@@ -7,12 +7,14 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from urllib.request import urlopen
 from stockdb_files import read_json, write_json
 from update_control import Controller
 
 children = []
 stopping = False
+reader_scratch = None
 
 
 def stop(signum, frame):
@@ -21,6 +23,7 @@ def stop(signum, frame):
 
 
 def stop_readers():
+    global reader_scratch
     for child in reversed(children):
         if child.poll() is None:
             try:
@@ -30,12 +33,23 @@ def stop_readers():
                 os.killpg(child.pid, signal.SIGKILL)
                 child.wait()
     children.clear()
+    if reader_scratch is not None:
+        reader_scratch.cleanup()
+        reader_scratch = None
 
 
 def start_readers():
+    global reader_scratch
     if stopping:
         raise RuntimeError('container is stopping')
-    children.append(subprocess.Popen(['/opt/stockdb/stockdb', '/opt/stockdb/stockdb.conf'], start_new_session=True))
+    env = None
+    if os.environ.get('STOCKDB_READER') == 'managed':
+        reader_scratch = TemporaryDirectory(prefix='market-reader-')
+        env = {**os.environ, 'TMPDIR': reader_scratch.name}
+        command = ['python', '/opt/market_data_reader.py']
+    else:
+        command = ['/opt/stockdb/stockdb', '/opt/stockdb/stockdb.conf']
+    children.append(subprocess.Popen(command, env=env, start_new_session=True))
     deadline = time.monotonic() + 60
     while True:
         if stopping or children[0].poll() is not None:
