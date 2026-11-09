@@ -9,11 +9,44 @@ from pathlib import Path
 import re
 from shutil import copyfile
 from tempfile import TemporaryDirectory
+from threading import BoundedSemaphore
 from urllib.parse import parse_qs, urlsplit
 
 import msgpack
 
 logger = logging.getLogger(__name__)
+MAX_BATCH_QUERY_ROWS = 50_000
+MAX_BATCH_ROWS = 100_000
+MAX_BATCH_BYTES = 32 * 1024 * 1024
+
+
+def encode_json(value):
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode()
+
+
+def json_array(items):
+    return b'[' + b','.join(items) + b']'
+
+
+class BatchLimitExceeded(ValueError):
+    pass
+
+
+class BatchBudget:
+    def __init__(self, query_count):
+        self.rows_left = MAX_BATCH_ROWS
+        # Reserve brackets and separators for the batch and all sub-results.
+        self.bytes_left = MAX_BATCH_BYTES - 2 - 3 * query_count
+
+    def record(self, row):
+        if self.rows_left <= 0:
+            raise BatchLimitExceeded('Batch result exceeds the total row limit')
+        item = encode_json(row)
+        self.rows_left -= 1
+        self.bytes_left -= len(item) + 1
+        if self.bytes_left < 0:
+            raise BatchLimitExceeded('Batch response exceeds the byte limit')
+        return item
 
 
 def bind_library():
@@ -195,7 +228,7 @@ class MarketData:
             for it in iterators:
                 it.close()
 
-    def query(self, cmd='get', t='', k1='', k2='', ap='', num=0, order=''):
+    def query(self, cmd='get', t='', k1='', k2='', ap='', num=0, order='', *, budget=None):
         table = t.removesuffix('*')
         if table not in self.tables or cmd not in {'get', 'keys', 'vals'}:
             raise ValueError('Unsupported table or command')
@@ -210,11 +243,15 @@ class MarketData:
             key = prefix if bare else prefix + b':' + k1[4:].encode() + b':' + k2[4:].encode()
             value = self.get(key)
             if value is None:
-                return []
+                return b'[]' if budget else []
             if cmd == 'keys':
-                return [key[1:].decode()]
-            value = self.project(decode(key, value), fields)
-            return value if cmd == 'get' else [value]
+                row = key[1:].decode()
+            else:
+                row = self.project(decode(key, value), fields)
+            if budget:
+                item = budget.record(row)
+                return item if cmd == 'get' else json_array([item])
+            return row if cmd == 'get' else [row]
         descending = order == 'desc' or (not order and k2.startswith('fwd:'))
         reverse = descending ^ (num < 0)
         if k1.startswith('key:'):
@@ -233,15 +270,21 @@ class MarketData:
         rows = []
         try:
             for key, value in islice(iterator, abs(num) or None):
+                if budget and len(rows) >= MAX_BATCH_QUERY_ROWS:
+                    raise BatchLimitExceeded('Batch subquery exceeds the row limit')
                 logical = key[1:].decode()
                 if cmd == 'keys':
-                    rows.append(logical)
+                    row = logical
                 else:
                     row = self.project(decode(key, value), fields)
-                    rows.append([logical, row] if cmd == 'get' else row)
+                    if cmd == 'get':
+                        row = [logical, row]
+                rows.append(budget.record(row) if budget else row)
         finally:
             iterator.close()
-        return rows[::-1] if num < 0 else rows
+        if num < 0:
+            rows.reverse()
+        return json_array(rows) if budget else rows
 
     @staticmethod
     def project(value, fields):
@@ -275,10 +318,13 @@ class MarketData:
 
 def serve():
     reader = MarketData(Path('/opt/stockdb'))
+    batch_slots = BoundedSemaphore(2)
 
     class Handler(BaseHTTPRequestHandler):
         def respond(self, status, result):
-            body = json.dumps(result, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode()
+            self.send_json(status, encode_json(result))
+
+        def send_json(self, status, body):
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(body)))
@@ -289,6 +335,8 @@ def serve():
             request = urlsplit(self.path)
             try:
                 args = {k: v[-1] for k, v in parse_qs(request.query).items() if k != 'json'}
+                if 'budget' in args:
+                    raise ValueError('Invalid query parameter')
                 if request.path == '/':
                     self.respond(200, reader.query(**args))
                 elif request.path == '/health':
@@ -304,18 +352,29 @@ def serve():
             if self.path != '/batch':
                 self.respond(404, {'error': 'unknown path'})
                 return
+            if not batch_slots.acquire(blocking=False):
+                self.respond(503, {'error': 'Batch reader busy; retry later'})
+                return
             try:
                 size = int(self.headers.get('Content-Length', '0'))
                 if not 0 < size <= 1024 * 1024:
                     raise ValueError('Invalid batch size')
+                self.connection.settimeout(10)
                 queries = json.loads(self.rfile.read(size))
                 if not isinstance(queries, list) or not 1 <= len(queries) <= 2048:
                     raise ValueError('Invalid query count')
-                self.respond(200, [reader.query(**q) for q in queries])
+                budget = BatchBudget(len(queries))
+                # Keep only encoded, budgeted results between scans.
+                body = json_array(reader.query(**q, budget=budget) for q in queries)
+                self.send_json(200, body)
+            except BatchLimitExceeded as exc:
+                self.respond(413, {'error': str(exc)})
             except (ValueError, TypeError) as exc:
                 self.respond(400, {'error': str(exc)})
             except OSError as exc:
                 self.respond(503, {'error': str(exc)})
+            finally:
+                batch_slots.release()
 
         def log_message(self, *_args):
             pass

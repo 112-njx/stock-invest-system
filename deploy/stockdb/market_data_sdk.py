@@ -57,11 +57,15 @@ class Batch:
         self.queries.append(Query('get', table, keys).args)
 
     def do(self):
-        if not self.queries:
-            return []
-        request = Request(ENDPOINT + '/batch', data=json.dumps(self.queries).encode(),
-                          headers={'Content-Type': 'application/json'})
-        return read(request)
+        results = []
+        # Industry history loads hundreds of members in one SDK pipeline.
+        # Bound each transport request while preserving member order.
+        for offset in range(0, len(self.queries), 64):
+            queries = self.queries[offset:offset + 64]
+            request = Request(ENDPOINT + '/batch', data=json.dumps(queries).encode(),
+                              headers={'Content-Type': 'application/json'})
+            results.extend(read(request))
+        return results
 
 
 class Reader:
