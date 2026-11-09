@@ -36,13 +36,17 @@ def _register(client: TestClient, username: str, password: str = "pass123456", e
 def test_register_success(client: TestClient):
     uname = _uname()
     try:
-        resp = _register(client, uname)
+        resp = client.post(
+            "/api/v1/auth/register",
+            json={"username": uname, "password": "pass123456", "nickname": "旧版全名"},
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["code"] == 0
         data = body["data"]
         assert data["token"]
         assert data["user"]["username"] == uname
+        assert "nickname" not in data["user"]
         assert "password_hash" not in data["user"]
     finally:
         _cleanup_users(uname)
@@ -98,9 +102,13 @@ def test_update_me(client: TestClient):
     try:
         token = _register(client, uname).json()["data"]["token"]
         resp = client.put(
-            "/api/v1/users/me", json={"nickname": "昵称测试"}, headers={"Authorization": f"Bearer {token}"}
+            "/api/v1/users/me",
+            json={"avatar_url": "/static/avatar.png", "nickname": "旧版全名"},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200
-        assert resp.json()["data"]["nickname"] == "昵称测试"
+        assert resp.json()["data"]["avatar_url"] == "/static/avatar.png"
+        assert resp.json()["data"]["username"] == uname
+        assert "nickname" not in resp.json()["data"]
     finally:
         _cleanup_users(uname)

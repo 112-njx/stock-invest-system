@@ -8,6 +8,7 @@
  * - 指标选择弹窗（showIndicators），默认开启成交量+MACD，持久化 localStorage
  * - 双击 emit，由父级决定是否进入详情页
  */
+import { visibleCandleExtrema } from '@/utils/visibleCandleExtrema'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useChartIndicators } from '@/composables/useChartIndicators'
 import { useDetailChartSettings, type MaLine } from '@/composables/useDetailChartSettings'
@@ -133,7 +134,14 @@ const qualityWarning = computed(() => {
 const catalog = useIndicatorCatalog(() => !!props.customizeIndicators)
 const catalogOverlays = computed(() => catalog.definitions.value.filter(d => d.placement === 'main' && d.key !== 'ma'))
 const catalogPanels = computed(() => catalog.definitions.value.filter(d => d.placement === 'panel'))
-const pickerIndicators = computed(() => props.customizeIndicators ? catalogPanels.value.map(d => ({...d,icon:INDICATORS.find(i=>i.key===d.key)?.icon || ''})) : INDICATORS)
+const preferredPanelOrder = ['volume', 'amount', 'macd', 'kdj']
+const pickerIndicators = computed(() => {
+  if (!props.customizeIndicators) return INDICATORS
+  return [
+    ...preferredPanelOrder.flatMap(key => catalogPanels.value.filter(definition => definition.key === key)),
+    ...catalogPanels.value.filter(definition => !preferredPanelOrder.includes(definition.key)),
+  ]
+})
 const detailSettings = useDetailChartSettings(() => !!props.customizeIndicators, () => catalogPanels.value.map(d=>d.key), () => catalogOverlays.value.map(d=>d.key))
 const FIELD_LABELS:Record<string,string>={close:'收盘价',open:'开盘价',high:'最高价',low:'最低价',volume:'成交量',amount:'成交额'}
 function displayDefinition(definition:IndicatorDefinition):IndicatorDefinition {
@@ -291,17 +299,23 @@ function onIndicatorDrag(event: MouseEvent) {
   if (event.buttons) scheduleIndicatorTops()
 }
 
-const PERIODS: { label: string; value: Period }[] = [
+const PERIODS = computed<{ label: string; value: Period }[]>(() => [
   { label: '日K', value: '1d' },
   { label: '周K', value: '1w' },
   { label: '月K', value: '1mon' },
   { label: '15min', value: '15m' },
-]
+  ...(props.symbol?.type === 'stock' ? [
+    { label: '1min', value: '1m' as Period },
+    { label: '5min', value: '5m' as Period },
+    { label: '30min', value: '30m' as Period },
+    { label: '60min', value: '60m' as Period },
+  ] : []),
+])
 
 const symbolTitle = computed(() =>
   props.symbol ? `${props.symbol.name} ${props.symbol.code}` : '未选择标的'
 )
-const watermarkPeriod = computed(() => PERIODS.find((p) => p.value === market.period)?.label ?? market.period)
+const watermarkPeriod = computed(() => PERIODS.value.find((p) => p.value === market.period)?.label ?? market.period)
 
 /* ---------- 指标显隐（持久化） ---------- */
 const STORAGE_KEY = 'indicator_visibility'
@@ -402,7 +416,7 @@ function chartDateParts(time: Time) {
       ? new Date(`${time}T00:00:00Z`)
       : new Date(Date.UTC(time.year, time.month - 1, time.day))
 
-  if (market.period === '15m') {
+  if (['1m', '5m', '15m', '30m', '60m'].includes(market.period)) {
     const parts = Object.fromEntries(shanghaiDateTime.formatToParts(date).map((part) => [part.type, part.value]))
     return { year: parts.year, month: parts.month, day: parts.day, hour: parts.hour, minute: parts.minute }
   }
@@ -422,7 +436,7 @@ function formatAxisMonth(time: Time): string {
 function formatCrosshairDate(time: Time): string {
   const { year, month, day, hour, minute } = chartDateParts(time)
   const weekday = weekdays[new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay()]
-  return `${weekday} ${year}-${month}-${day}${market.period === '15m' ? ` ${hour}:${minute}` : ''}`
+  return `${weekday} ${year}-${month}-${day}${['1m', '5m', '15m', '30m', '60m'].includes(market.period) ? ` ${hour}:${minute}` : ''}`
 }
 
 /* ---------- 图表初始化 ---------- */
@@ -468,6 +482,8 @@ function initChart() {
     wickDownColor: c.down,
     priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
   })
+
+  candleSeries.attachPrimitive(visibleCandleExtrema(chart, candleSeries))
 
   priceMaSeries.clear()
   for (const ma of priceMas.value) {
@@ -919,7 +935,7 @@ async function loadOlder() {
   const earliest = new Date(historyCursor || loadedBars[0].ts)
   const end = period === '1w' || period === '1mon'
     ? beforePeriod(earliest.toISOString(), period) : new Date(earliest.getTime() - 1)
-  const start = threeMonthsBefore(end.toISOString())
+  const start = period.endsWith('m') ? new Date(end.getTime() - 7 * 86400000) : threeMonthsBefore(end.toISOString())
   historyBusy = true
   historyState.value = 'loading'
   try {
@@ -978,7 +994,7 @@ async function loadInitialMissing(version: number, symbolId: number, period: Per
     return
   }
   const end = new Date()
-  const start = threeMonthsBefore(end.toISOString(), period === '1w' ? 15 : 3)
+  const start = period.endsWith('m') ? new Date(end.getTime() - 7 * 86400000) : threeMonthsBefore(end.toISOString(), period === '1w' ? 15 : 3)
   historyWidth.value = container.value?.clientWidth ?? 0
   historyState.value = 'loading'
   try {
@@ -1103,6 +1119,10 @@ function setIndicatorData() {
 }
 
 async function loadKline() {
+  if (props.symbol?.type !== 'stock' && ['1m', '5m', '30m', '60m'].includes(market.period)) {
+    market.setPeriod('1d')
+    return
+  }
   if (!props.symbol) return
   const version = ++loadVersion
   const symbolId = props.symbol.id
@@ -1641,28 +1661,52 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
             <button class="modal__close" @click="closeIndicatorPicker">×</button>
           </header>
           <div class="modal__body">
-            <div v-if="customizeIndicators">
-              <p>主图叠加（不占副图名额）</p>
-              <button v-for="definition in catalogOverlays" :key="definition.key" class="overlay-item" :class="{active:detailSettings.settings.value.overlays?.includes(definition.key)}" :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="toggleOverlay(definition.key)">{{ definition.label }} {{ detailSettings.settings.value.overlays?.includes(definition.key) ? '✓' : '' }}</button>
-              <div v-for="definition in selectedOverlays" :key="`params-${definition.key}`" class="indicator-control-row"><button :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="editParameters(definition.key)">{{ definition.label }} 参数</button><button :disabled="!detailSettings.ready.value || detailSettings.saving.value" :aria-label="`恢复 ${definition.label} 默认`" @click="resetIndicator(definition.key,'main')">恢复默认</button></div>
+            <div v-if="customizeIndicators" class="picker-heading">
+              <strong>主图叠加</strong>
+              <span>不占副图名额</span>
             </div>
-            <p v-if="customizeIndicators">已开启 {{ enabledIndicators.size }}/3</p>
-            <div class="picker-grid">
+            <div v-if="customizeIndicators" class="picker-grid" role="group" aria-label="主图叠加">
+              <button
+                v-for="definition in catalogOverlays"
+                :key="definition.key"
+                class="overlay-item"
+                :class="{ active: detailSettings.settings.value.overlays?.includes(definition.key) }"
+                :aria-pressed="!!detailSettings.settings.value.overlays?.includes(definition.key)"
+                :disabled="!detailSettings.ready.value || detailSettings.saving.value"
+                :title="definition.label"
+                @click="toggleOverlay(definition.key)"
+              >
+                <span class="picker-item__check" aria-hidden="true">{{ detailSettings.settings.value.overlays?.includes(definition.key) ? '✓' : '' }}</span>
+                <span class="picker-item__label">{{ definition.label }}</span>
+              </button>
+            </div>
+            <div v-if="customizeIndicators" class="picker-heading picker-heading--panel">
+              <strong>副图指标</strong>
+              <span>已开启 {{ enabledIndicators.size }}/3</span>
+            </div>
+            <div class="picker-grid" role="group" aria-label="副图指标">
               <button
                 v-for="ind in pickerIndicators"
                 :key="ind.key"
                 class="picker-item"
                 :class="{ active: enabledIndicators.has(ind.key) }"
+                :aria-pressed="enabledIndicators.has(ind.key)"
                 :disabled="customizeIndicators && (!detailSettings.ready.value || detailSettings.saving.value || (!enabledIndicators.has(ind.key) && enabledIndicators.size >= 3))"
-                :title="customizeIndicators && !enabledIndicators.has(ind.key) && enabledIndicators.size >= 3 ? '最多开启三个副图，请先关闭一个' : ''"
+                :title="customizeIndicators && !enabledIndicators.has(ind.key) && enabledIndicators.size >= 3 ? '最多开启三个副图，请先关闭一个' : ind.label"
                 @click="toggleIndicator(ind.key as IndicatorKey)"
               >
-                <span class="picker-item__icon" v-html="ind.icon" />
+                <span v-if="!customizeIndicators && 'icon' in ind" class="picker-item__icon" v-html="ind.icon" />
+                <span v-if="customizeIndicators" class="picker-item__check" aria-hidden="true">{{ enabledIndicators.has(ind.key) ? '✓' : '' }}</span>
                 <span class="picker-item__label">{{ ind.label }}</span>
-                <span class="picker-item__check">{{ enabledIndicators.has(ind.key) ? '✓' : '' }}</span>
+                <span v-if="!customizeIndicators" class="picker-item__check" aria-hidden="true">{{ enabledIndicators.has(ind.key) ? '✓' : '' }}</span>
               </button>
             </div>
             <div v-if="customizeIndicators">
+              <p v-if="selectedOverlays.length">主图参数</p>
+              <div v-for="definition in selectedOverlays" :key="`params-${definition.key}`" class="indicator-control-row">
+                <button :disabled="!detailSettings.ready.value || detailSettings.saving.value" @click="editParameters(definition.key)">{{ definition.label }} 参数</button>
+                <button :disabled="!detailSettings.ready.value || detailSettings.saving.value" :aria-label="`恢复 ${definition.label} 默认`" @click="resetIndicator(definition.key,'main')">恢复默认</button>
+              </div>
               <p>副图排列（从上到下）</p>
               <div v-for="(definition,index) in selectedPanelDefinitions" :key="definition.key" class="indicator-control-row">
                 <span>{{ definition.label }}</span>
@@ -1945,7 +1989,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   flex-direction: column;
   gap: 10px;
 }
-.modal--indicator-detail { display:flex; flex-direction:column; max-height:calc(100dvh - 32px); }
+.modal--indicator-detail { width: 460px; display:flex; flex-direction:column; max-height:calc(100dvh - 32px); }
 .modal--indicator-detail .modal__header { flex-shrink:0; }
 .modal--indicator-detail .modal__body { min-height:0; overflow-y:auto; }
 .indicator-control-row { display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:6px 0; }
@@ -2028,8 +2072,6 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   transition: all 0.15s;
   position: relative;
 }
-.overlay-item { padding:6px; margin:3px; border:1px solid var(--border); background:var(--bg-panel); color:var(--text); cursor:pointer; }
-.overlay-item.active { border-color:var(--accent); color:var(--accent); }
 .overlay-legend { display:flex; flex-wrap:wrap; gap:4px 8px; }
 .picker-item:disabled { opacity: .5; cursor: default; }
 .picker-item:hover { border-color: var(--accent); }
@@ -2056,10 +2098,76 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
   color: var(--accent);
   font-weight: 700;
 }
+.picker-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.picker-heading span { color: var(--text-secondary); font-size: 12px; }
+.picker-heading--panel { border-top: 1px solid var(--border); padding-top: 10px; }
+.modal--indicator-detail .picker-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+}
+.modal--indicator-detail :is(.picker-item, .overlay-item) {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-panel-2);
+  cursor: pointer;
+  text-align: left;
+}
+.modal--indicator-detail :is(.picker-item, .overlay-item):enabled:hover,
+.modal--indicator-detail :is(.picker-item, .overlay-item):focus-visible,
+.modal--indicator-detail :is(.picker-item, .overlay-item).active {
+  border-color: var(--accent);
+}
+.modal--indicator-detail :is(.picker-item, .overlay-item).active { background: var(--bg-active); }
+.modal--indicator-detail :is(.picker-item, .overlay-item):disabled { opacity: .5; cursor: default; }
+.modal--indicator-detail .picker-item__check {
+  position: static;
+  display: grid;
+  place-items: center;
+  flex: 0 0 14px;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  line-height: 1;
+}
+.modal--indicator-detail .active .picker-item__check { border-color: var(--accent); }
+.modal--indicator-detail .picker-item__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+@media (max-width: 420px) {
+  .modal--indicator-detail .picker-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .picker-hint {
   margin-top: 10px;
   font-size: 11px;
   color: var(--text-muted);
   text-align: center;
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .kline-chart__header { flex-wrap: wrap; padding: 4px 8px; }
+  .kline-chart__header-left { flex-basis: 100%; gap: 4px 8px; }
+  .kline-chart__header-right { flex: 1 1 100%; min-width: 0; flex-wrap: wrap; gap: 4px; }
+  .kline-chart__hover-data, .kline-chart__symbol { white-space: normal; overflow-wrap: anywhere; }
+  .kline-chart__tabs { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+  .period-tab, .gear-btn, .sr-btn { min-height: 40px; }
+  .gear-btn { min-width: var(--touch-target); justify-content: center; }
+  .modal { max-height: calc(var(--screen-height) - 24px); overflow-y: auto; }
+  .modal--indicator-detail :is(.picker-item, .overlay-item) { min-height: var(--touch-target); }
 }
 </style>

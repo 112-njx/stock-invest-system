@@ -23,7 +23,7 @@ def get_indicator_catalog() -> dict:
 @router.get("/indicators")
 def get_indicators(
     symbol: str = Query(..., description="标的代码（或 symbol_id）"),
-    period: str = Query("1d", pattern="^(15m|1d|1w|1mon)$"),
+    period: str = Query("1d", pattern="^(1m|5m|15m|30m|60m|1d|1w|1mon)$"),
     names: str = Query("macd,kdj,volume,amount", description="逗号分隔的指标名"),
     start: datetime | None = Query(None, description="开始时间（UTC）"),
     end: datetime | None = Query(None, description="结束时间（UTC）"),

@@ -58,7 +58,7 @@ onMounted(async () => {
       </div>
 
       <div class="footer">
-        <BaseButton block @click="router.push({ name: 'login' })">前往登录</BaseButton>
+        <BaseButton block @click="router.push({ name: 'login', hash: '#sign-in' })">前往登录</BaseButton>
       </div>
     </div>
   </div>

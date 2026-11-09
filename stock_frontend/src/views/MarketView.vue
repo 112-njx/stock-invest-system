@@ -22,6 +22,7 @@ import IndexListPanel from '@/components/trading/IndexListPanel.vue'
 import SettingsPanel from '@/components/trading/SettingsPanel.vue'
 
 const router = useRouter()
+const mobilePanel = ref<'watchlist' | 'market' | 'industry'>('watchlist')
 const market = useMarketStore()
 const ws = useWsStore()
 const authModal = useAuthModalStore()
@@ -151,7 +152,15 @@ onUnmounted(() => {
 
 <template>
   <div class="market">
-    <div class="market-grid">
+    <div class="market-grid" :class="`market-grid--${mobilePanel}`">
+      <div class="market-mobile-actions mobile-only">
+        <RouterLink :to="{ name: 'market-detail' }">查看行情详情 →</RouterLink>
+      </div>
+      <div class="market-mobile-panels mobile-only" role="group" aria-label="行情列表">
+        <button type="button" :aria-pressed="mobilePanel === 'watchlist'" @click="mobilePanel = 'watchlist'">自选</button>
+        <button type="button" :aria-pressed="mobilePanel === 'market'" @click="mobilePanel = 'market'">大盘指数</button>
+        <button type="button" :aria-pressed="mobilePanel === 'industry'" @click="mobilePanel = 'industry'">行业指数</button>
+      </div>
       <div class="grid-e">
         <!-- G35：未登录时面板内展示引导卡片，点击登录入口打开全局登录弹窗 -->
         <WatchlistPanel readonly @dblclick="goDetail" @loaded="onWatchlistLoaded" @require-login="authModal.show('login')" />
@@ -217,5 +226,27 @@ onUnmounted(() => {
   grid-column: 3;
   grid-row: 2;
   min-height: 0;
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  .market-grid { grid-template-columns: minmax(220px, 28%) minmax(0, 1fr) minmax(210px, 25%); }
+}
+
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .market-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; height: auto; }
+  .market-grid > * { grid-area: auto; min-width: 0; }
+  .market-mobile-actions { order: -3; }
+  .market-mobile-actions a {
+    display: flex; align-items: center; min-height: var(--touch-target); padding-inline: 10px;
+    color: var(--accent); background: var(--bg-panel); border-radius: 6px;
+  }
+  .grid-f { order: -2; height: var(--mobile-chart-height); }
+  .market-mobile-panels { display: flex; order: -1; gap: 4px; }
+  .market-mobile-panels button { flex: 1; min-height: var(--touch-target); border: 1px solid var(--border); border-radius: 4px; }
+  .market-mobile-panels button[aria-pressed='true'] { color: var(--accent); background: var(--bg-active); }
+  .market-grid:not(.market-grid--watchlist) .grid-e,
+  .market-grid:not(.market-grid--market) .grid-g,
+  .market-grid:not(.market-grid--industry) .grid-h { display: none; }
+  .grid-e, .grid-g, .grid-h { height: 260px; }
+  .grid-i :deep(.settings-panel) { height: auto; }
 }
 </style>

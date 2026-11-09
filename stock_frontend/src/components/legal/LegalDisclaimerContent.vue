@@ -82,5 +82,8 @@
       如本声明与《用户协议》存在冲突，以本声明中关于投资风险与责任限制的约定为准。
       您使用本产品即视为已阅读、理解并接受本声明的全部内容。
     </p>
+    <p>TradingView Lightweight Charts™ · Copyright © 2025 TradingView, Inc.
+      <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a>
+    </p>
   </div>
 </template>

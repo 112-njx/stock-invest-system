@@ -1,4 +1,4 @@
-"""用户 API：当前用户信息查询/更新（昵称、头像）+ 改密/改邮箱（G33）+ 数据导出（G17）。"""
+"""用户 API：当前用户信息查询/头像更新 + 改密/改邮箱（G33）+ 数据导出（G17）。"""
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,10 +14,11 @@ from app.api.deps import get_current_user, get_db
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.core.response import ok
+from app.models.export_task import ExportTask
 from app.models.user import User
 from app.repositories import export_repo, user_repo
 from app.schemas.user import ApiKeyIn, ApiKeyOut, ChangeEmailIn, ChangePasswordIn, UserOut, UserUpdateIn
-from app.services import export_token, user_service
+from app.services import export_service, export_token, user_service
 from app.services.llm.user_key import ApiKeyFormatError, validate_api_key
 
 _settings = get_settings()
@@ -71,7 +72,7 @@ def update_me(
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    user = user_service.update_profile(db, current, nickname=payload.nickname, avatar_url=payload.avatar_url)
+    user = user_service.update_profile(db, current, avatar_url=payload.avatar_url)
     return ok(data=UserOut.from_user(user).model_dump(mode="json"))
 
 
@@ -183,8 +184,20 @@ def get_export_status(
     row = export_repo.get_owned(db, current.id, task_id)
     if row is None:
         raise ApiError(status_code=404, code=40420, msg="导出任务不存在")
-    token = export_token.create_download_token(current.id, row.id) if row.status == "success" else None
+    token = None
+    if row.status == "success" and row.file_path and not _expire_legacy_export(db, row):
+        token = export_token.create_download_token(current.id, row.id)
     return ok(data=_export_out(row, token))
+
+
+def _expire_legacy_export(db: Session, row: ExportTask) -> bool:
+    try:
+        expired = export_service.expire_legacy_export(db, row)
+    except export_service.InvalidExportArchive:
+        raise ApiError(status_code=400, code=40030, msg="导出文件不可用，请重新导出") from None
+    if expired:
+        db.commit()
+    return expired
 
 
 @router.get("/me/export/{task_id}/download")
@@ -206,6 +219,9 @@ def download_export(
         raise ApiError(status_code=404, code=40420, msg="导出任务不存在")
     if row.status != "success" or not row.file_path:
         raise ApiError(status_code=400, code=40030, msg="导出文件不可用（未完成或已过期）")
+
+    if _expire_legacy_export(db, row):
+        raise ApiError(status_code=400, code=40030, msg="旧导出文件已失效，请重新导出")
 
     path = Path(row.file_path)
     if not path.exists():

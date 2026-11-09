@@ -7,7 +7,7 @@
 import type { ChatMessage } from '@/api/ai'
 import { renderMarkdown } from '@/utils/markdown'
 
-defineProps<{ message: ChatMessage }>()
+defineProps<{ message: ChatMessage; stopped?: boolean }>()
 
 /** 降级模式内容检测：后端降级文案统一以「AI服务暂时不可用」开头 */
 function isDegradedContent(text?: string): boolean {
@@ -27,6 +27,7 @@ function isDegradedContent(text?: string): boolean {
       </div>
       <div v-if="message.role === 'assistant'" class="md-body" v-html="renderMarkdown(message.content)" />
       <div v-else class="chat-msg__user">{{ message.content }}</div>
+      <p v-if="stopped" class="chat-msg__disclaimer">已停止生成</p>
       <!-- G03：AI 回复免责声明（前端 UI 元素，不注入消息文本，避免污染落库内容与重复追加） -->
       <p v-if="message.role === 'assistant' && message.content" class="chat-msg__disclaimer">
         以上分析由 AI 生成，仅供研究参考，不构成投资建议。投资有风险，决策需谨慎。
@@ -104,5 +105,9 @@ function isDegradedContent(text?: string): boolean {
   color: #93c5fd;
   background: rgba(59, 130, 246, 0.12);
   border-left: 2px solid var(--accent);
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .chat-msg__body { max-width: calc(100% - 36px); overflow-wrap: anywhere; }
+  .chat-msg__body :deep(pre) { max-width: 100%; overflow-x: auto; }
 }
 </style>

@@ -129,7 +129,7 @@ function num(v?: number | null): string {
       向上滚动加载更早的消息
     </div>
 
-    <MessageBubble v-for="m in ai.messages" :key="m.id" :message="m" />
+    <MessageBubble v-for="m in ai.messages" :key="m.id" :message="m" :stopped="m.stopped" />
 
     <!-- 深度分析时间线（6.1/6.2）：流式时在气泡上方，完成后保留在消息下方供回看 -->
     <AgentTimeline v-if="showTimeline" :nodes="ai.timeline" :running="ai.streaming" />

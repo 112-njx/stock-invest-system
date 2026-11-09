@@ -7,7 +7,7 @@
  * - G35（方案 B）：未登录不发关注接口（避免 401 报错），改为「登录后同步您的关注股票」
  *   引导卡片；登录成功后自动加载关注列表
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   addWatchlist,
   fetchWatchlist,
@@ -21,6 +21,7 @@ import { useWsStore } from '@/stores/wsStore'
 import { formatPct, formatPrice, trendClass } from '@/utils/color'
 import { toast } from '@/utils/toast'
 import ListRow from '@/components/base/ListRow.vue'
+import { useRouter } from 'vue-router'
 
 withDefaults(defineProps<{ readonly?: boolean }>(), { readonly: false })
 
@@ -31,6 +32,7 @@ const emit = defineEmits<{
   (e: 'require-login'): void
 }>()
 
+const router = useRouter()
 const market = useMarketStore()
 const ws = useWsStore()
 const user = useUserStore()
@@ -95,7 +97,10 @@ function requireLogin(): boolean {
 }
 
 // G35：登录/登出后重新加载关注列表（登出时清空为引导卡片）
-watch(() => user.token, () => void load())
+watch(() => user.token, () => {
+  closeMenu()
+  void load()
+})
 
 function onSelect(item: WatchlistItem) {
   market.setCurrent({
@@ -111,7 +116,55 @@ function onDblClick(item: WatchlistItem) {
   emit('dblclick', item)
 }
 
+const menu = ref<{ item: WatchlistItem; x: number; y: number } | null>(null)
+const menuElement = ref<HTMLElement | null>(null)
+let menuRow: HTMLElement | null = null
+
+function closeMenu() {
+  menu.value = null
+  menuRow = null
+}
+
+async function openMenu(event: MouseEvent | KeyboardEvent, item: WatchlistItem) {
+  const row = event.currentTarget as HTMLElement
+  const bounds = row.getBoundingClientRect()
+  const point = event instanceof MouseEvent
+    ? { x: event.clientX, y: event.clientY }
+    : { x: bounds.left, y: bounds.bottom }
+  menuRow = row
+  menu.value = { item, ...point }
+  const current = menu.value
+  await nextTick()
+  if (menu.value !== current || !menuElement.value) return
+  const size = menuElement.value.getBoundingClientRect()
+  current.x = Math.max(4, Math.min(point.x, window.innerWidth - size.width - 4))
+  current.y = Math.max(4, Math.min(point.y, window.innerHeight - size.height - 4))
+  menuElement.value.querySelector('button')?.focus()
+}
+
+function dismissOutside(event: PointerEvent) {
+  if (menu.value && !menuElement.value?.contains(event.target as Node)) closeMenu()
+}
+
+function handleMenuKey(event: KeyboardEvent) {
+  if (!menu.value || event.key !== 'Escape') return
+  const row = menuRow
+  closeMenu()
+  row?.focus()
+}
+
+function openDetail(item: WatchlistItem, view?: 'flows') {
+  closeMenu()
+  onSelect(item)
+  void router.push({
+    name: 'market-detail',
+    query: { symbol: item.code, asset_type: item.type, view },
+  })
+}
+
 async function onDelete(item: WatchlistItem) {
+  closeMenu()
+  if (requireLogin()) return
   try {
     await removeWatchlist(item.id)
     market.removeWatchlistItem(item.id)
@@ -123,6 +176,9 @@ async function onDelete(item: WatchlistItem) {
 }
 
 onMounted(() => {
+  document.addEventListener('pointerdown', dismissOutside)
+  window.addEventListener('keydown', handleMenuKey)
+  window.addEventListener('resize', closeMenu)
   void load()
   syncTimer = setInterval(async () => {
     if (isGuest.value || !market.watchlist.some((item) => item.sync_status === 'pending' || item.sync_status === 'syncing')) return
@@ -130,6 +186,9 @@ onMounted(() => {
   }, 10000)
 })
 onUnmounted(() => {
+  document.removeEventListener('pointerdown', dismissOutside)
+  window.removeEventListener('keydown', handleMenuKey)
+  window.removeEventListener('resize', closeMenu)
   if (syncTimer) clearInterval(syncTimer)
 })
 </script>
@@ -141,7 +200,7 @@ onUnmounted(() => {
       <span class="watchlist-panel__count">{{ market.watchlist.length }}</span>
     </header>
 
-    <div class="watchlist-panel__list">
+    <div class="watchlist-panel__list" @scroll="closeMenu">
       <!-- G35：未登录引导卡片（D/E 区） -->
       <div v-if="isGuest" class="watchlist-panel__guest">
         <p class="wl-guest__title">登录后同步您的关注股票</p>
@@ -161,6 +220,10 @@ onUnmounted(() => {
           v-for="item in displayList"
           :key="item.id"
           clickable
+          tabindex="0"
+          aria-haspopup="menu"
+          @contextmenu.prevent="openMenu($event, item)"
+          @keydown.shift.f10.prevent="openMenu($event, item)"
           :active="item.symbol_id === currentId"
           @click="onSelect(item)"
           @dblclick="onDblClick(item)"
@@ -185,16 +248,54 @@ onUnmounted(() => {
           <span class="wl-pct" :class="trendClass(item.change_pct)">
             {{ formatPct(item.change_pct) }}
           </span>
+          <button type="button" class="wl-more mobile-only" :aria-label="`${item.name}的更多操作`" @click.stop="openMenu($event, item)">⋯</button>
           <button v-if="!readonly" class="wl-del" title="删除" @click.stop="onDelete(item)">×</button>
         </ListRow>
       </template>
     </div>
 
-
+    <Teleport to="body">
+      <div
+        v-if="menu"
+        ref="menuElement"
+        class="wl-context"
+        role="menu"
+        :aria-label="`${menu.item.name}的关注操作`"
+        :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
+      >
+        <button type="button" role="menuitem" @click="onDelete(menu.item)">取消重点关注</button>
+        <button type="button" role="menuitem" @click="openDetail(menu.item)">查看详细数据</button>
+        <button v-if="menu.item.type === 'stock'" type="button" role="menuitem" @click="openDetail(menu.item, 'flows')">查看资金流向</button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
+.wl-context {
+  position: fixed;
+  z-index: 1000;
+  width: 190px;
+  max-width: calc(100vw - 8px);
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 5px 18px #0004;
+}
+.wl-context button {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--text);
+  font-size: 14px;
+}
+.wl-context button:hover,
+.wl-context button:focus-visible {
+  background: var(--bg-hover);
+}
+
 .watchlist-panel {
   display: flex;
   flex-direction: column;
@@ -361,5 +462,9 @@ onUnmounted(() => {
   text-align: center;
   font-size: 12px;
   color: var(--text-muted);
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .wl-more { min-height: var(--touch-target); min-width: 32px; color: var(--text-secondary); }
+  .wl-context button { min-height: var(--touch-target); }
 }
 </style>

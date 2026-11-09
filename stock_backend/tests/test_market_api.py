@@ -92,7 +92,7 @@ def test_kline_returns_bars(client: TestClient, _kline_test_data):
 
 
 def test_kline_invalid_period(client: TestClient):
-    resp = client.get("/api/v1/kline", params={"symbol": "600519", "period": "5m"})
+    resp = client.get("/api/v1/kline", params={"symbol": "600519", "period": "7m"})
     assert resp.status_code == 422
 
 

@@ -25,12 +25,17 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.agent import AgentRun, AgentStep, MemoryChunk, UserAgent
+from app.models.export_task import ExportTask
 from app.models.strategy import BacktestResult, BacktestTask, ChatMessage, Conversation, TradingStrategy
 from app.models.user import SupportResistance, User, UserWatchlist
 from app.repositories import export_repo
 
 logger = logging.getLogger(__name__)
 _settings = get_settings()
+
+
+class InvalidExportArchive(Exception):
+    """The archive could not be checked for legacy profile data."""
 
 
 def export_dir() -> Path:
@@ -67,7 +72,6 @@ def _collect_user(db: Session, user: User) -> dict:
         "username": user.username,
         "email": user.email,
         "email_verified": user.email_verified,
-        "nickname": user.nickname,
         "avatar_url": user.avatar_url,
         "is_admin": user.is_admin,
         "created_at": user.created_at,
@@ -275,13 +279,51 @@ def delete_export_file(file_path: str | None) -> bool:
     return False
 
 
+def _expire_export(db: Session, row: ExportTask) -> None:
+    if row.file_path:
+        try:
+            Path(row.file_path).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not delete expired export task %s", row.id, exc_info=True)
+        else:
+            row.file_path = None
+    if row.status != "expired":
+        export_repo.update_status(db, row, "expired")
+
+
+def expire_legacy_export(db: Session, row: ExportTask) -> bool:
+    """Invalidate a pre-migration export that still contains the removed profile field."""
+    if not row.file_path:
+        return False
+    try:
+        with zipfile.ZipFile(row.file_path) as archive:
+            profile = json.loads(archive.read("user.json"))
+    except FileNotFoundError:
+        return False
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
+        raise InvalidExportArchive from exc
+    if not isinstance(profile, dict):
+        raise InvalidExportArchive
+    if "nickname" not in profile:
+        return False
+
+    row.expires_at = datetime.now(UTC)
+    _expire_export(db, row)
+    return True
+
+
 def cleanup_expired_exports(db: Session) -> int:
-    """清理过期导出：删文件 + 置 expired。返回处理条数。"""
+    """清理到期导出及仍包含旧全名字段的导出。"""
     rows = export_repo.list_expired(db)
     for row in rows:
-        delete_export_file(row.file_path)
-        export_repo.update_status(db, row, "expired")
-        row.file_path = None  # 文件已删除，清空路径避免误导
-    if rows:
+        _expire_export(db, row)
+    count = len(rows)
+    for row in export_repo.list_successful(db):
+        try:
+            if expire_legacy_export(db, row):
+                count += 1
+        except InvalidExportArchive:
+            logger.warning("Could not inspect export task %s", row.id, exc_info=True)
+    if count:
         db.commit()
-    return len(rows)
+    return count

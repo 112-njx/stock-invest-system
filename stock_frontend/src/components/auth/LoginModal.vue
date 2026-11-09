@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * G35（方案 B）· 登录/注册弹窗：
- * 与独立登录页（LoginView）共用 AuthForm，机制增量（G33 邮箱必填 / G03 协议勾选 /
+ * 与独立登录页（LoginView）共用 AuthForm，机制增量（邮箱选填 / G03 协议勾选 /
  * G18 账户恢复）随组件一并复用。
  *
  * 登录成功后**关闭弹窗、不跳转**，当前页用户态自动刷新：
@@ -9,9 +9,10 @@
  * - E/D 区关注列表 watch 了 user.token，会自动重新拉取
  * - AI 页 watch 了 user.token，会自动重新拉取会话/策略/Agent 列表
  */
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import AuthForm from '@/components/auth/AuthForm.vue'
 import { useAuthModalStore } from '@/stores/authModal'
+import { useDialogFocus } from '@/composables/useDialogFocus'
 import { useLegalModalStore } from '@/stores/legalModal'
 import { toast } from '@/utils/toast'
 
@@ -30,13 +31,15 @@ function onKeydown(e: KeyboardEvent) {
 
 onMounted(() => document.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
+const dialog = ref<HTMLElement>()
+useDialogFocus(dialog, () => modal.open)
 </script>
 
 <template>
   <Teleport to="body">
-    <div v-if="modal.open" class="login-mask" @click.self="modal.hide()">
-      <div class="login-modal" role="dialog" aria-modal="true" aria-label="登录或注册">
-        <button class="login-modal__close" title="关闭" @click="modal.hide()">×</button>
+    <div v-if="modal.open" class="login-mask safe-overlay" @click.self="modal.hide()">
+      <div ref="dialog" class="login-modal viewport-dialog" role="dialog" aria-modal="true" aria-label="登录或注册">
+        <button class="login-modal__close" title="关闭" aria-label="关闭" data-dialog-focus @click="modal.hide()">×</button>
         <!-- v-if 保证每次打开都重新挂载，初始 Tab 生效且表单状态干净 -->
         <AuthForm :initial-tab="modal.tab" @success="onSuccess" />
       </div>
@@ -81,5 +84,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 .login-modal__close:hover {
   background: var(--bg-hover);
   color: var(--text);
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .login-mask { padding: max(12px, var(--safe-top)) max(12px, var(--safe-right)) max(12px, var(--safe-bottom)) max(12px, var(--safe-left)); }
+  .login-modal { max-height: calc(var(--screen-height) - max(12px, var(--safe-top)) - max(12px, var(--safe-bottom))); }
+  .login-modal__close { min-height: var(--touch-target); min-width: var(--touch-target); }
+  .login-modal { padding: 48px 16px 18px; }
+  .login-modal :deep(input:not([type='checkbox'], [type='radio'])) { font-size: 16px; }
 }
 </style>

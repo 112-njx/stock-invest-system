@@ -302,7 +302,7 @@ def _composite_data_worker(connection, sdk_dir, jobs, frequency, start, end):
         sys.path.insert(0, sdk_dir)
         from zhibiao import _load_rows
         for index, code in jobs:
-            if frequency == '15m':
+            if frequency in {'1m', '5m', '15m', '30m', '60m'}:
                 # SDK aggregation is per trading day. Day-aligned windows keep
                 # every bar intact while avoiding millions of raw minute dicts
                 # in memory at once. Qfq still uses the SDK client's same full
@@ -435,14 +435,14 @@ def calculate_composite_rows(rows, chosen, period, loader=None, sdk_dir=None):
     import math
     from zoneinfo import ZoneInfo
     from zhibiao import ZHISHU, _load_rows
-    if period not in ('1d', '1w', '1mon', '15m'):
+    if period not in ('1d', '1w', '1mon', '1m', '5m', '15m', '30m', '60m'):
         raise ValueError('invalid composite period')
     chosen = indicator_registry().validate_composite(chosen)
     members = [m for m in chosen['members'] if chosen['weighting'] == 'equal' or m['weight'] > 0]
     codes = [m['code'] for m in members]
     end = max(datetime.fromisoformat(r['ts']).replace(tzinfo=UTC) if datetime.fromisoformat(r['ts']).tzinfo is None
               else datetime.fromisoformat(r['ts']).astimezone(UTC) for r in rows)
-    end_stamp = end.astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d%H%M%S') if period == '15m' else end.strftime('%Y%m%d')
+    end_stamp = end.astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d%H%M%S') if period in {'1m', '5m', '15m', '30m', '60m'} else end.strftime('%Y%m%d')
     if chosen['start'].replace('-', '') > end_stamp[:8]:
         return [{**row, 'zhishu_close': None, 'zhishu_count': None} for row in rows]
     control = os.environ.get('STOCKDB_CONTROL_DIR')
@@ -490,7 +490,7 @@ def calculate_indicator_rows(sdk_dir, payload):
     sys.path.insert(0, sdk_dir)
     from zhibiao import zb
     rows, names, params = payload['rows'], payload['names'], payload.get('params') or {}
-    if not isinstance(rows, list) or not 1 <= len(rows) <= 100000:
+    if not isinstance(rows, list) or not 1 <= len(rows) <= indicator_registry().MAX_HISTORY_ROWS:
         raise ValueError('invalid history length')
     registry = indicator_registry()
     if not isinstance(names, list) or not names or any(n not in registry.REGISTRY for n in names):
@@ -583,21 +583,6 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
-            if self.path in ('/online/query', '/online/policy', '/online/catalog'):
-                from stockdb_online import query, policy, catalog, OnlineError
-                try:
-                    size = int(self.headers.get('Content-Length', '0'))
-                    if not 0 < size <= 8192:
-                        raise OnlineError('Invalid request size')
-                    payload = json.loads(self.rfile.read(size))
-                    result = catalog() if self.path.endswith('/catalog') else query(sdk_dir, payload) if self.path.endswith('/query') else policy(payload.get('interval_seconds'))
-                    self.respond(json.dumps(result, ensure_ascii=False).encode(), 200)
-                except OnlineError as exc:
-                    self.respond(json.dumps({'detail': str(exc), 'retry_after': exc.retry_after}, ensure_ascii=False).encode(), exc.status)
-                except Exception:
-                    logger.exception('Online query failed')
-                    self.respond(b'{"detail":"Online query or local storage failed"}', 502)
-                return
             if self.path == '/refresh':
                 service.refresh()
                 self.respond(b'{"status":"cleared"}', 200)
@@ -607,7 +592,7 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
                 return
             try:
                 size = int(self.headers.get('Content-Length', '0'))
-                if not 0 < size <= 32 * 1024 * 1024:
+                if not 0 < size <= indicator_registry().MAX_REQUEST_BYTES:
                     raise ValueError('invalid request size')
                 self.connection.settimeout(10)
                 payload = json.loads(self.rfile.read(size))
@@ -667,7 +652,7 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
                         code = query['code']
                         frequency = query.get('frequency', '1d')
                         start, end = query.get('start', '20000101'), query.get('end', 'N')
-                    if not re.fullmatch(r'\d{6}(?:\.SL)?', code) or frequency not in {'1d', '15m', '1w', '1M'}:
+                    if not re.fullmatch(r'\d{6}(?:\.SL)?', code) or frequency not in {'1m', '5m', '15m', '30m', '60m', '1d', '1w', '1M'}:
                         raise ValueError('invalid code/frequency')
                     if not re.fullmatch(r'\d{8}(?:\d{6})?', start) or not re.fullmatch(r'N|\d{8}(?:\d{6})?', end):
                         raise ValueError('invalid date')

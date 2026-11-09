@@ -90,7 +90,7 @@ async function submit() {
       <div class="footer">
         <button class="link" @click="router.push({ name: 'forgot-password' })">重新申请重置邮件</button>
         <span class="divider">·</span>
-        <button class="link" @click="router.push({ name: 'login' })">返回登录</button>
+        <button class="link" @click="router.push({ name: 'login', hash: '#sign-in' })">返回登录</button>
       </div>
     </div>
   </div>

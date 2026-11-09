@@ -9,6 +9,8 @@ import { useWsStore } from '@/stores/wsStore'
 import { useAuthModalStore } from '@/stores/authModal'
 import { toast } from '@/utils/toast'
 
+const props = defineProps<{ browse?: boolean }>()
+const emit = defineEmits<{ select: [code: string] }>()
 const market = useMarketStore()
 const user = useUserStore()
 const ws = useWsStore()
@@ -113,6 +115,10 @@ function onKey(event: KeyboardEvent) {
   }
 }
 async function pick(stock: IndexedStock) {
+  if (props.browse) {
+    emit('select', stock.code)
+    return
+  }
   if (adding.value || watched.value.has(stock.code)) return
   if (!user.token) { authModal.show(); open.value = false; return }
   adding.value = stock.code
@@ -153,7 +159,7 @@ onUnmounted(() => { alive = false; document.removeEventListener('pointerdown', c
       </div>
       <div v-if="!stocks.length && loading" class="stock-search__message" role="status">正在加载本地股票目录…</div>
       <div v-else-if="stocks.length && !results.length" class="stock-search__message" role="status">未找到匹配股票</div>
-      <div class="stock-search__heading" aria-hidden="true"><span>序号</span><span>代码</span><span>股票名称</span><span>市场</span><span>关注</span></div>
+      <div class="stock-search__heading" aria-hidden="true"><span>序号</span><span>代码</span><span>股票名称</span><span>市场</span><span>{{ browse ? '详情' : '关注' }}</span></div>
       <div
         id="stock-search-options" ref="list" class="stock-search__list" role="listbox" aria-label="本地股票"
         :style="{ height: `${Math.min(results.length * ROW_HEIGHT, VIEW_HEIGHT)}px` }"
@@ -163,7 +169,7 @@ onUnmounted(() => { alive = false; document.removeEventListener('pointerdown', c
           <button
             v-for="(stock, offset) in visible" :id="`stock-option-${stock.code}`" :key="stock.code"
             class="stock-search__row" :class="{ 'is-active': active === start + offset }" type="button"
-            role="option" :aria-selected="active === start + offset" :aria-disabled="watched.has(stock.code) || Boolean(adding)"
+            role="option" :aria-selected="active === start + offset" :aria-disabled="!browse && (watched.has(stock.code) || Boolean(adding))"
             tabindex="-1" :style="{ top: `${(start + offset) * ROW_HEIGHT}px` }"
             :title="`${stock.name} · 本地日 K 截至 ${stock.latest_date}`"
             @pointermove="active = start + offset" @mousedown.prevent @click="pick(stock)"
@@ -171,7 +177,7 @@ onUnmounted(() => { alive = false; document.removeEventListener('pointerdown', c
             <span class="stock-search__muted">{{ stock.ordinal }}</span>
             <span>{{ stock.code }}</span><span class="stock-search__name">{{ stock.name }}</span>
             <span class="stock-search__muted">{{ markets[stock.market] }}</span>
-            <span class="stock-search__action">{{ watched.has(stock.code) ? '已关注' : adding === stock.code ? '添加中' : '＋关注' }}</span>
+            <span class="stock-search__action">{{ browse ? '查看' : watched.has(stock.code) ? '已关注' : adding === stock.code ? '添加中' : '＋关注' }}</span>
           </button>
         </div>
       </div>

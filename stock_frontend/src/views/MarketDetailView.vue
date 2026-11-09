@@ -8,7 +8,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { searchSymbols, fetchSymbols } from '@/api/market'
+import { searchSymbols, fetchSymbols, type SymbolInfo } from '@/api/market'
 import {
   fetchBacktestResultDetail,
   fetchBacktestResults,
@@ -22,6 +22,7 @@ import { useLatestQuotes } from '@/composables/useLatestQuotes'
 import StockFlowPanel from '@/components/trading/StockFlowPanel.vue'
 import KLineChart from '@/components/trading/KLineChart.vue'
 import BasicInfoPanel from '@/components/trading/BasicInfoPanel.vue'
+import IntradayChart from '@/components/trading/IntradayChart.vue'
 import StockMinutePanel from '@/components/trading/StockMinutePanel.vue'
 import StrategyMetricsPanel from '@/components/trading/StrategyMetricsPanel.vue'
 
@@ -29,7 +30,7 @@ const router = useRouter()
 const route = useRoute()
 const market = useMarketStore()
 const ws = useWsStore()
-const chartView = ref<'quotes'|'flows'>('quotes')
+const chartView = ref<'quotes'|'minutes'|'flows'>('quotes')
 
 /** 回测显示跳转：带 strategy_id 时 D 区替换为策略指标面板（4.5） */
 const strategyId = computed(() => (route.query.strategy_id ? Number(route.query.strategy_id) : null))
@@ -88,47 +89,82 @@ const visibleMarkers = computed(() =>
   btSymbolId.value != null && market.current?.id === btSymbolId.value ? btTrades.value : []
 )
 
-watch(strategyId, () => void loadBacktestMarkers())
+watch(strategyId, () => void loadBacktestMarkers(), { immediate: true })
 
 function goBack() {
-  router.push('/')
+  router.push({ name: 'market-home' })
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') goBack()
+  if (e.key === 'Escape' && !e.defaultPrevented &&
+      !document.querySelector('[aria-modal="true"], dialog[open]')) goBack()
 }
 
 /**
  * 双向标的联动：AI 页「回测显示」跳转时携带 ?symbol=code，
  * 若与当前标的不同则解析并切换，保证 K 线区展示的策略回测标的一致。
  */
+const requestedSymbol = computed(() => String(route.query.symbol ?? '').trim())
+const requestedType = computed(() => route.query.asset_type)
+const resolutionFailed = ref(false)
+let symbolRequest = 0
+
+function matchesRequest(symbol: SymbolInfo, code: string, type: typeof requestedType.value) {
+  if (typeof type === 'string') return symbol.type === type && symbol.code === code
+  return symbol.code === code || String(symbol.id) === code
+}
+
+const detailSymbol = computed(() => {
+  const current = market.current
+  if (!requestedSymbol.value || !current) return current
+  return matchesRequest(current, requestedSymbol.value, requestedType.value) ? current : null
+})
+
 async function resolveSymbolParam() {
-  const q = route.query.symbol
-  if (q == null) return
-  const kw = String(q)
-  const stockOnly = route.query.asset_type === 'stock'
-  if (market.current && (!stockOnly || market.current.type === 'stock') && (String(market.current.code) === kw || String(market.current.id) === kw)) return
+  const request = ++symbolRequest
+  const code = requestedSymbol.value
+  const type = requestedType.value
+  resolutionFailed.value = false
+  if (!code) {
+    await ensureDefaultSymbol()
+    return
+  }
+  if (detailSymbol.value) return
   try {
-    const list = stockOnly ? await fetchSymbols({ search: kw }) : await searchSymbols(kw)
-    const found = list.find((s) => (!stockOnly || s.type === 'stock') && (s.code === kw || String(s.id) === kw))
+    const list = type === 'stock'
+      ? await fetchSymbols({ search: code, type: 'stock' })
+      : await searchSymbols(code)
+    if (request !== symbolRequest) return
+    // An exact code takes precedence when it also matches another symbol's numeric ID.
+    const found = list.find(symbol => symbol.code === code && matchesRequest(symbol, code, type)) ??
+      list.find(symbol => matchesRequest(symbol, code, type))
     if (found) market.setCurrent(found)
+    else resolutionFailed.value = true
   } catch {
-    /* 解析失败保持当前标的，不阻塞页面 */
+    if (request === symbolRequest) resolutionFailed.value = true
   }
 }
 
-onMounted(async () => {
+watch(() => market.current?.id, () => ws.syncSubscriptions())
+
+watch([requestedSymbol, requestedType], () => {
+  if (route.name === 'market-detail') void resolveSymbolParam()
+}, { immediate: true })
+
+watch([requestedSymbol, () => route.query.view, detailSymbol], () => {
+  chartView.value = route.query.view === 'flows' && detailSymbol.value?.type === 'stock' &&
+    detailSymbol.value.code === requestedSymbol.value ? 'flows' : 'quotes'
+}, { immediate: true })
+
+onMounted(() => {
   window.addEventListener('keydown', onKeydown)
-  await ensureDefaultSymbol()
-  await resolveSymbolParam()
-  // G32：解析完标的后再拉买卖点，保证 btSymbolId 与 market.current 可比对
-  await loadBacktestMarkers()
   // V0.2：初始化 WS 实时行情（直接刷新/直达详情页时保证连接）
   ws.init()
   ws.syncSubscriptions()
   start()
 })
 onBeforeUnmount(() => {
+  symbolRequest++
   window.removeEventListener('keydown', onKeydown)
 })
 </script>
@@ -138,15 +174,23 @@ onBeforeUnmount(() => {
     <div class="detail-topbar">
       <button class="detail-back" @click="goBack">← 返回</button>
       <span class="detail-hint">按 Esc 返回行情页</span>
-      <div class="chart-tabs" role="group" aria-label="详情图表视图"><button :aria-pressed="chartView==='quotes'" @click="chartView='quotes'">行情图</button><button :aria-pressed="chartView==='flows'" :disabled="market.current?.type!=='stock'" @click="chartView='flows'">资金流向</button></div>
+      <div class="chart-tabs" role="group" aria-label="详情图表视图"><button :aria-pressed="chartView==='quotes'" @click="chartView='quotes'">K线图</button><button :aria-pressed="chartView==='minutes'" :disabled="detailSymbol?.type!=='stock'" @click="chartView='minutes'">分时图</button><button :aria-pressed="chartView==='flows'" :disabled="detailSymbol?.type!=='stock'" @click="chartView='flows'">资金流向</button></div>
     </div>
 
-    <div class="detail-body">
+    <div v-if="requestedSymbol && !detailSymbol" class="detail-symbol-state">
+      <template v-if="resolutionFailed">
+        <p role="alert">无法加载标的 {{ requestedSymbol }} 的行情。</p>
+        <button type="button" @click="resolveSymbolParam">重试</button>
+      </template>
+      <p v-else role="status">正在加载标的 {{ requestedSymbol }}…</p>
+    </div>
+    <div v-else class="detail-body">
+      <p v-if="detailSymbol" class="detail-summary mobile-only">{{ detailSymbol.name }} · {{ detailSymbol.code }}</p>
       <div class="col-left">
         <div v-show="chartView==='quotes'" class="chart-content">
         <!-- A+B 合并：K 线 + 技术指标多 pane，共享时间轴；G32：叠加回测买卖点 -->
         <KLineChart
-          :symbol="market.current"
+          :symbol="detailSymbol"
           :recent-months="4"
           :show-sr-button="true"
           :show-indicators="true"
@@ -154,7 +198,8 @@ onBeforeUnmount(() => {
           :markers="visibleMarkers"
         />
         </div>
-        <StockFlowPanel v-if="chartView==='flows' && market.current?.type==='stock'" :code="market.current.code" :name="market.current.name" />
+        <IntradayChart v-if="chartView==='minutes' && detailSymbol?.type==='stock'" :code="detailSymbol.code" />
+        <StockFlowPanel v-if="chartView==='flows' && detailSymbol?.type==='stock'" :code="detailSymbol.code" :name="detailSymbol.name" />
         <p v-else-if="chartView==='flows'">当前标的暂无个股资金流数据</p>
         <div v-if="strategyId && chartView==='quotes'" class="bt-marker-bar">
           <template v-if="visibleMarkers.length">
@@ -169,7 +214,7 @@ onBeforeUnmount(() => {
       <div class="col-right">
         <BasicInfoPanel />
         <StrategyMetricsPanel v-if="strategyId" :strategy-id="strategyId" />
-        <StockMinutePanel v-if="market.current?.type==='stock'" :code="market.current.code" />
+        <StockMinutePanel v-if="detailSymbol?.type==='stock'" :code="detailSymbol.code" />
       </div>
     </div>
   </div>
@@ -184,6 +229,14 @@ onBeforeUnmount(() => {
   background: var(--bg);
   padding: 8px;
   gap: 8px;
+}
+.detail-symbol-state { padding: 16px; overflow-wrap: anywhere; }
+.detail-symbol-state button {
+  margin-top: 8px;
+  min-height: var(--touch-target);
+  padding-inline: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
 }
 .detail-topbar {
   flex: none;
@@ -214,7 +267,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(360px, 32vw, 480px);
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 28vw, 400px);
   gap: 8px;
 }
 .col-left {
@@ -230,7 +283,7 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 .chart-content{display:flex;flex-direction:column}.chart-content>*{flex:1;min-height:0}.chart-tabs{display:flex;gap:5px;flex:none}.chart-tabs button{padding:5px 12px;border:1px solid var(--border);color:var(--text-secondary);border-radius:4px}.chart-tabs button[aria-pressed='true']{color:var(--accent);background:var(--bg-active)}.chart-tabs button:disabled{opacity:.4}
-@media(max-width: 800px){.detail-body{grid-template-columns:minmax(0,1fr) 340px}}
+@media (min-width: 768px) and (max-width: 1023px) { .detail-body { grid-template-columns: minmax(0, 1fr) minmax(240px, 30%); } }
 /* G32：买卖点图例/空态条 */
 .bt-marker-bar {
   flex: none;
@@ -258,5 +311,16 @@ onBeforeUnmount(() => {
   grid-template-rows: minmax(0, 1.7fr) minmax(220px, 1fr);
   overflow-y: auto;
   gap: 8px;
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .detail { height: auto; }
+  .detail-topbar, .chart-tabs { flex-wrap: wrap; }
+  .detail-hint { display: none; }
+  .detail-back, .chart-tabs button { min-height: var(--touch-target); }
+  .detail-body { grid-template-columns: minmax(0, 1fr); }
+  .detail-summary { margin: 0; padding: 0 4px; font-weight: 600; }
+  .col-left { min-height: var(--mobile-chart-height); }
+  .chart-content { min-height: var(--mobile-chart-height); }
+  .col-right { grid-template-rows: auto; grid-auto-rows: minmax(170px, auto); overflow: visible; }
 }
 </style>

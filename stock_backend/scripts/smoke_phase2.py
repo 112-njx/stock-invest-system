@@ -27,7 +27,7 @@ def _check(step: str, resp: httpx.Response):
 
 def main() -> None:
     with httpx.Client(base_url=BASE, timeout=10) as c:
-        r = c.post("/api/v1/auth/register", json={"username": UNAME, "password": "pass123456", "nickname": "冒烟"})
+        r = c.post("/api/v1/auth/register", json={"username": UNAME, "password": "pass123456"})
         _check("注册", r)
         token = r.json()["data"]["token"]
         headers = {"Authorization": f"Bearer {token}"}
@@ -39,9 +39,9 @@ def main() -> None:
         _check("users/me", r)
         assert r.json()["data"]["username"] == UNAME
 
-        r = c.put("/api/v1/users/me", headers=headers, json={"nickname": "改名了"})
+        r = c.put("/api/v1/users/me", headers=headers, json={"avatar_url": "/static/avatar.png"})
         _check("users/me 更新", r)
-        assert r.json()["data"]["nickname"] == "改名了"
+        assert r.json()["data"]["avatar_url"] == "/static/avatar.png"
 
         r = c.post("/api/v1/watchlist", headers=headers, json={"symbol": "600519"})
         _check("watchlist 添加", r)

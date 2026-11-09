@@ -60,7 +60,7 @@ def test_kline_init_fetches_all_source_periods():
     assert db.query(Kline1d).filter_by(symbol_id=sym.id).count() == 2
     assert db.query(Kline1mon).filter_by(symbol_id=sym.id).count() == 1
     assert result["600519"]["1d"] == 2
-    assert {call.args[1] for call in provider.fetch_kline.call_args_list} == {"1d", "15m", "1w", "1mon"}
+    assert {call.args[1] for call in provider.fetch_kline.call_args_list} == {"1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mon"}
     db.close()
 
 
@@ -76,4 +76,30 @@ def test_kline_init_backfills_industry_code():
     db = get_session()
     updated = db.get(Symbol, sym.id)
     assert updated.code == "BK0447"
+    db.close()
+
+
+@pytest.mark.parametrize('partial', [False, True])
+def test_local_minute_failure_preserves_history_and_commits_fallback(monkeypatch, partial):
+    from app.repositories import kline_repo
+    sym = _make_symbol()
+    provider = _mock_provider()
+    baseline = provider.fetch_kline.return_value
+    from dataclasses import replace
+    fallback = [replace(bar, source='akshare') for bar in baseline]
+    monkeypatch.setattr('app.services.market_policy.history_storage_enabled', lambda: True)
+    db = get_session()
+    for period in ('1m', '5m', '30m', '60m'):
+        kline_repo.upsert_bars(db, period, sym.id, baseline)
+    db.commit()
+    provider.fetch_kline.side_effect = lambda code, period, *args: (
+        fallback if period in sync_service.ALL_PERIODS else baseline[-1:] if partial else [])
+    # Use real upserts and real coverage checks, including existing minute history.
+    result = sync_service._sync_symbol_klines(db, provider, sym, baseline[0].ts, baseline[-1].ts, False)
+    db.commit()
+    assert set(result) == set(sync_service.ALL_PERIODS)
+    assert len(kline_repo.latest_bars(db, '1d', sym.id)) == 2
+    assert all(bar.source == 'akshare' for bar in kline_repo.latest_bars(db, '1d', sym.id))
+    for period in ('1m', '5m', '30m', '60m'):
+        assert len(kline_repo.latest_bars(db, period, sym.id)) == 2
     db.close()

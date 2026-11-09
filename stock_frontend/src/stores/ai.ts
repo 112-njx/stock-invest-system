@@ -32,6 +32,7 @@ export type QuickCardType = 'create' | 'diagnose' | 'plan' | 'radar'
 export type AiPanelMode = 'chat' | 'strategy' | 'run'
 /** 流式连接状态：idle / streaming（正常接收）/ reconnecting（断线自动重连）/ manual（需点击继续） */
 export type StreamStatus = 'idle' | 'streaming' | 'reconnecting' | 'manual'
+type ConversationMessage = ChatMessage & { stopped?: boolean }
 
 /** 流式对话载荷（AIView.send 与重试共用） */
 export interface StreamChatPayload {
@@ -95,7 +96,7 @@ export const useAiStore = defineStore('ai', {
     conversationsPage: 1,
     activeConversationId: null as number | null,
     /** 当前会话历史消息（不含流式增量） */
-    messages: [] as ChatMessage[],
+    messages: [] as ConversationMessage[],
     /** G09：当前会话是否还有更早的消息（游标分页 has_more） */
     messagesHasMore: false,
     /** G09：更早一页的游标（message_id），null 表示已到最早 */
@@ -413,7 +414,9 @@ export const useAiStore = defineStore('ai', {
       await streamChat(
         payload,
         {
-          onEvent: (ev) => this._handleSSEEvent(ev),
+          onEvent: (ev) => {
+            if (token === streamToken) this._handleSSEEvent(ev)
+          },
           onDone: async () => {
             if (token !== streamToken) return
             await this._finalizeStream()
@@ -554,6 +557,7 @@ export const useAiStore = defineStore('ai', {
         this.lastSeq,
         {
           onEvent: (ev) => {
+            if (token !== streamToken) return
             if (ev.type === 'resync') {
               resyncSeen = true
               return
@@ -646,6 +650,28 @@ export const useAiStore = defineStore('ai', {
       this.timeline = []
     },
 
+    /** 用户主动停止时，把已经收到的正文保留在当前对话中。 */
+    stopStream() {
+      if (!this.streaming) return
+      this.appendStreamReply(this.streamConversationId ?? this.activeConversationId, true)
+      this.abortStream()
+      this.streamingContent = ''
+      this.streamingSteps = []
+      if (!this.strategyReady) this.clearStrategyOutput()
+    },
+
+    appendStreamReply(conversationId: number | null, stopped = false) {
+      if (!this.streamingContent) return
+      this.messages.push({
+        id: Date.now(),
+        conversation_id: conversationId ?? 0,
+        role: 'assistant',
+        content: this.streamingContent,
+        created_at: new Date().toISOString(),
+        stopped,
+      })
+    },
+
     /** 流结束收尾：把流式增量落为正式消息；降级模式拉取后端已入库内容 */
     async _finalizeStream() {
       const convId = this.streamConversationId ?? this.activeConversationId
@@ -665,15 +691,7 @@ export const useAiStore = defineStore('ai', {
         this.endStreaming()
         return
       }
-      if (this.streamingContent) {
-        this.messages.push({
-          id: Date.now(),
-          conversation_id: convId ?? 0,
-          role: 'assistant',
-          content: this.streamingContent,
-          created_at: new Date().toISOString(),
-        })
-      }
+      this.appendStreamReply(convId)
       this.endStreaming()
       void this.loadConversations()
     },

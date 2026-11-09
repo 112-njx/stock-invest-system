@@ -17,11 +17,13 @@
     "verify:routing": "node scripts/verify-g35-routing.mjs",
     "verify:default-symbol": "node scripts/verify-default-symbol.mjs",
     "verify:indicators": "node scripts/verify-detail-chart-settings.mjs && node scripts/verify-indicator-isolation.mjs",
-    "test:indicators": "playwright test -c playwright.indicators.config.ts"
+    "test:indicators": "playwright test -c playwright.indicators.config.ts",
+    "test:responsive": "playwright test -c playwright.responsive.config.ts"
   },
   "dependencies": {
     "axios": "^1.19.0",
     "dompurify": "^3.4.15",
+    "gsap": "3.15.1",
     "lightweight-charts": "^5.2.0",
     "pinia": "^4.0.2",
     "pinyin-pro": "^3.29.5",

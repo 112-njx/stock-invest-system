@@ -1,7 +1,7 @@
 import { request } from './http'
 
 export type SymbolType = 'stock' | 'etf' | 'index'
-export type Period = '15m' | '1d' | '1w' | '1mon'
+export type Period = '1m' | '5m' | '15m' | '30m' | '60m' | '1d' | '1w' | '1mon'
 
 export interface SymbolInfo {
   id: number

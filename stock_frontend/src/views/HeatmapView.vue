@@ -7,6 +7,7 @@ const data = ref<Heatmap>(), error = ref(''), loading = ref(false), selected = r
 const theme = useThemeStore()
 const hasTiles = ref(false)
 const host = ref<HTMLElement>(), canvas = ref<HTMLCanvasElement>()
+const picked = ref<{ stock: HeatStock; board: HeatBoard }>()
 const hover = ref<{ stock: HeatStock; board: HeatBoard; x: number; y: number }>()
 let hits: { stock: HeatStock; board: HeatBoard; box: Rect }[] = []
 let observer: ResizeObserver | undefined, timer: ReturnType<typeof setInterval> | undefined
@@ -63,14 +64,30 @@ function draw() {
   }
   hasTiles.value = hits.length > 0
 }
-function move(event: PointerEvent) {
-  const rect = canvas.value!.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top
+function hitAt(event: MouseEvent) {
+  const rect = canvas.value!.getBoundingClientRect()
+  const x = event.clientX - rect.left
+  const y = event.clientY - rect.top
   const hit = hits.find(h => x >= h.box.x && x <= h.box.x + h.box.w && y >= h.box.y && y <= h.box.y + h.box.h)
+  return { rect, x, y, hit }
+}
+function pick(event: MouseEvent) {
+  const { hit } = hitAt(event)
+  if (('pointerType' in event && event.pointerType !== 'mouse') || matchMedia('(pointer: coarse)').matches) {
+    picked.value = hit
+  } else if (hit) {
+    selected.value = hit.board.code
+  }
+}
+function move(event: PointerEvent) {
+  if (event.pointerType !== 'mouse') return
+  const { rect, x, y, hit } = hitAt(event)
   hover.value = hit ? { ...hit, x: Math.max(4, Math.min(x + 14, rect.width - 258)), y: Math.max(4, Math.min(y + 14, rect.height - 206)) } : undefined
 }
 function escapeIndustry(event: KeyboardEvent) {
-  if (event.key === 'Escape') { selected.value = ''; hover.value = undefined }
+  if (event.key === 'Escape') { selected.value = ''; hover.value = undefined; picked.value = undefined }
 }
+watch([selected, data], () => { picked.value = undefined })
 watch([selected, () => theme.mode], draw, { flush: 'post' })
 onMounted(() => {
   window.addEventListener('keydown', escapeIndustry)
@@ -83,7 +100,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', escapeIndustry); o
 <template>
   <main class="heatmap-page">
     <div class="toolbar">
-      <div class="heading"><h1>大盘云图</h1><div class="meta"><span>申万一级 · 收盘 {{ date || '—' }} · {{ data?.count ?? 0 }} 只股票</span><span class="legend">面积＝市值增减额绝对值 · <i class="red" />上涨 <i class="green" />下跌 <i class="gray" />平盘 · 颜色深浅表示涨跌幅，悬浮查看详情</span></div></div>
+      <div class="heading"><h1>大盘云图</h1><div class="meta"><span>申万一级 · 收盘 {{ date || '—' }} · {{ data?.count ?? 0 }} 只股票</span><span class="legend">面积＝市值增减额绝对值 · <i class="red" />上涨 <i class="green" />下跌 <i class="gray" />平盘 · 颜色深浅表示涨跌幅，点按或悬浮查看详情</span></div></div>
       <div class="controls">
         <select v-model="selected" aria-label="选择行业"><option value="">全部行业</option><option v-for="b in data?.boards" :key="b.code" :value="b.code">{{ b.name }}</option></select>
         <button :disabled="loading" @click="refresh">{{ loading ? '更新中…' : '刷新' }}</button>
@@ -91,7 +108,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', escapeIndustry); o
     </div>
     <p v-if="error || data?.warning" class="notice" role="status">{{ error || data?.warning }}</p>
     <div ref="host" class="map">
-      <canvas ref="canvas" aria-label="行业及成分股市值变化矩形树图，可通过行业筛选查看局部" @pointermove="move" @pointerleave="hover = undefined" @click="hover && (selected = hover.board.code)" />
+      <canvas ref="canvas" aria-label="行业及成分股市值变化矩形树图，可通过行业筛选查看局部" @pointermove="move" @pointerleave="hover = undefined" @click="pick" />
       <div v-if="!data" class="empty" role="status">{{ loading ? '正在读取本地收盘行情…' : error || '暂无可用数据' }}</div>
       <div v-else-if="!hasTiles" class="empty">暂无非零市值变化数据</div>
       <div v-if="hover" class="tooltip" :style="{ left: `${hover.x}px`, top: `${hover.y}px` }">
@@ -104,6 +121,15 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', escapeIndustry); o
         <small>点击放大行业，按 Esc 返回全部行业</small>
       </div>
     </div>
+    <section v-if="picked" class="tile-details" aria-label="云图股票详情">
+      <header>
+        <strong>{{ picked.stock.name }} · {{ picked.stock.code }}</strong>
+        <button type="button" aria-label="关闭云图详情" @click="picked = undefined">关闭</button>
+      </header>
+      <p>{{ picked.board.name }} · {{ date }} · 收盘 {{ picked.stock.close.toFixed(2) }} · {{ pct(picked.stock.change) }}</p>
+      <p>总市值 {{ money(picked.stock.totalMv) }} · 市值增减 {{ money(picked.stock.deltaMv) }}</p>
+      <button v-if="selected !== picked.board.code" type="button" @click="selected = picked.board.code">放大该行业</button>
+    </section>
   </main>
 </template>
 
@@ -112,4 +138,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', escapeIndustry); o
 .toolbar,.controls{display:flex;align-items:center;gap:12px}.toolbar{justify-content:space-between;flex:none}.heading{min-width:0}h1{font-size:20px;margin:0 0 4px}.meta{display:flex;align-items:center;flex-wrap:wrap;gap:2px 14px;font-size:12px;color:var(--text-secondary);line-height:1.8}.controls{flex:none;align-self:flex-end}
 select,button{background:var(--bg-panel);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:7px 10px}button{cursor:pointer}button:disabled{opacity:.5}.legend i{display:inline-block;width:10px;height:10px;margin:0 4px 0 10px}.red{background:#e54652}.green{background:#15b65e}.gray{background:#525a64}
 .map{position:relative;width:100%;flex:1;min-height:0;background:var(--bg-panel);border:1px solid var(--border);overflow:hidden}canvas{position:absolute;inset:0;display:block;width:100%;height:100%;cursor:crosshair}.empty{position:absolute;inset:0;display:grid;place-items:center;padding:20px;text-align:center;color:var(--text-secondary);background:var(--bg-panel);pointer-events:none}.tooltip{position:absolute;width:240px;padding:12px;background:var(--bg-panel);color:var(--text);box-shadow:0 4px 20px #0003;border:1px solid var(--border);border-radius:6px;pointer-events:none;font-size:12px;line-height:1.9}.tooltip strong{font-size:16px}.tooltip div{display:flex;justify-content:space-between}.tooltip small{color:var(--text-secondary)}.notice{padding:8px 12px;background:var(--bg-panel);border:1px solid var(--border);color:var(--text);font-size:13px;margin:0;flex:none}@media(max-width:700px){.heatmap-page{padding:8px 8px 0}.toolbar{align-items:flex-start;flex-wrap:wrap;gap:6px}.controls{margin-left:auto}.meta{font-size:11px}.legend{line-height:1.6}}
+.tile-details { padding: 8px 12px; border: 1px solid var(--border); background: var(--bg-panel); }
+.tile-details header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .map { flex: none; height: var(--mobile-chart-height); }
+  .controls { max-width: 100%; flex-wrap: wrap; }
+  .controls select, .controls button, .tile-details button { min-height: var(--touch-target); }
+}
 </style>

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import type { LatestQuote, SymbolInfo, SyncStatus, WatchlistItem } from '@/api/market'
 import { quoteTime } from '@/utils/homeIndexCache'
 
-export type Period = '15m' | '1d' | '1w' | '1mon'
+export type Period = '1m' | '5m' | '15m' | '30m' | '60m' | '1d' | '1w' | '1mon'
 
 //前端状态管理，当前对话的临时状态，存储在浏览器缓存。
 /** 行情状态：当前选中标的 + 最新行情缓存 + 关注列表（D/E 区共用同一数据源）+ 固定指数列表（G/H 区） */

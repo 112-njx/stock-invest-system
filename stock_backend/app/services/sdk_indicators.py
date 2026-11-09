@@ -3,10 +3,13 @@ import json
 from urllib.request import Request, urlopen
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
+from app.services.indicator_registry import MAX_REQUEST_BYTES
 
 
 def calculate(rows, names, params, *, period=None):
     body = json.dumps(dict(rows=rows, names=names, params=params or {}, period=period), allow_nan=False).encode()
+    if len(body) > MAX_REQUEST_BYTES:
+        raise ValueError("指标请求超过本地 SDK 容量上限，不能截断预热序列")
     request = Request(get_settings().STOCKDB_SDK_URL.rstrip('/') + '/indicators/calculate', data=body,
                       headers={'Content-Type': 'application/json'}, method='POST')
     try:

@@ -6,7 +6,8 @@
  * - M 交易策略 + 记忆文件 + 我的 Agent + 运行记录
  * - N 交易策略显示区（点击 M/J 策略后替换 K+L）
  */
-import { onMounted, onUnmounted, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { useMobileLayout } from '@/composables/useMobileLayout'
 import { useAiStore, type QuickCardType } from '@/stores/ai'
 import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore } from '@/stores/market'
@@ -139,6 +140,14 @@ function loadUserData() {
   void ai.loadAgents()
 }
 
+const mobile = useMobileLayout()
+const sessionDrawer = ref<HTMLDialogElement>()
+function requestLoginFromSidebar() {
+  sessionDrawer.value?.close()
+  authModal.show('login')
+}
+watch([mobile, () => ai.activeConversationId, () => ai.mode], () => sessionDrawer.value?.close())
+
 onMounted(() => {
   loadUserData()
   // 双向标的联动：从行情页进入 AI 页时，若 AI 页尚未选择标的则默认带出当前行情页标的
@@ -165,12 +174,22 @@ onUnmounted(() => {
 <template>
   <div class="ai-shell">
     <!-- 左侧固定侧边栏：J（tabs+菜单）+ M（列表区），优化5 合并到 SessionSidebar -->
-    <aside class="ai-side">
-      <SessionSidebar />
-    </aside>
+    <button class="session-toggle mobile-only" type="button" aria-haspopup="dialog" @click="sessionDrawer?.showModal()">会话与策略</button>
+    <dialog ref="sessionDrawer" class="session-drawer viewport-dialog" aria-label="会话与策略">
+      <header>
+        <strong>会话与策略</strong>
+        <button type="button" aria-label="关闭会话与策略" autofocus @click="sessionDrawer?.close()">关闭</button>
+      </header>
+      <div id="mobile-sessions" class="session-drawer__body" />
+    </dialog>
+    <Teleport defer to="#mobile-sessions" :disabled="!mobile">
+      <aside class="ai-side">
+        <SessionSidebar @require-login="requestLoginFromSidebar" />
+      </aside>
+    </Teleport>
 
     <!-- 右侧主区：K+L（默认）与 N 区/运行详情互斥切换 -->
-    <main class="ai-main">
+    <section class="ai-main" aria-label="AI 策略工作区">
       <StrategyDetailPanel v-if="ai.mode === 'strategy'" @back="ai.closeStrategy()" />
       <AgentRunDetailPanel v-else-if="ai.mode === 'run'" @back="ai.closeRunDetail()" />
       <div v-else class="ai-main__chat">
@@ -180,7 +199,7 @@ onUnmounted(() => {
         <QuickCards v-if="!ai.messages.length && !ai.streaming" @select="onCardClick" />
         <ChatInput @send="send" />
       </div>
-    </main>
+    </section>
   </div>
 </template>
 
@@ -216,5 +235,27 @@ onUnmounted(() => {
 .ai-main__scroll {
   flex: 1;
   min-height: 0;
+}
+.session-drawer { display: none; }
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .ai-shell { flex-direction: column; min-width: 0; }
+  .ai-main { overflow-y: auto; }
+  .ai-main__chat { flex: 1 0 auto; }
+  .ai-main__scroll { min-height: 90px; max-height: 48dvh; }
+  .session-toggle { min-height: var(--touch-target); align-self: flex-start; padding-inline: 12px; color: var(--accent); }
+  .session-drawer[open] {
+    display: flex; flex-direction: column; position: fixed; inset: auto var(--safe-right) var(--safe-bottom) var(--safe-left);
+    width: auto; max-height: min(85dvh, var(--screen-height)); margin: 0; padding: 0;
+    border: 1px solid var(--border); border-radius: 12px 12px 0 0;
+    background: var(--bg-panel); color: var(--text);
+  }
+  .session-drawer::backdrop { background: #0008; }
+  .session-drawer header {
+    display: flex; justify-content: space-between; align-items: center; padding-inline: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .session-drawer header button { min-height: var(--touch-target); }
+  .session-drawer__body { min-height: 0; overflow: auto; }
+  .ai-side { width: 100%; border: 0; }
 }
 </style>

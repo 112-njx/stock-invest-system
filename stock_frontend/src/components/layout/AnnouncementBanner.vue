@@ -81,4 +81,10 @@ function onClose() {
   background: var(--bg-hover);
   color: var(--text);
 }
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .ann-banner { flex-wrap: wrap; }
+  .ann-banner__title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .ann-banner__content { flex: 0 0 100%; order: 1; white-space: normal; overflow-wrap: anywhere; }
+  .ann-banner__close { width: var(--touch-target); height: var(--touch-target); }
+}
 </style>

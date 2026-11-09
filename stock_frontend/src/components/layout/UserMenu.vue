@@ -2,7 +2,7 @@
 /**
  * G35（方案 B）· 顶部导航栏头像区：
  * - 未登录：默认头像 + 「登录」文字 → 打开登录/注册弹窗（Modal，不跳转页面）
- * - 已登录：头像 + 昵称 → 下拉菜单（个人设置 / 我的数据 / 通知中心 / 退出登录）
+ * - 已登录：头像 + 用户名 → 下拉菜单（个人设置 / 我的数据 / 通知中心 / 退出登录）
  *
  * 与 G16 铃铛并存：本组件仅作为 AppBar 右侧区块的新增项，不改动既有布局结构。
  * 「个人设置」「我的数据」指向首页 I 区（SettingsPanel）的对应区块；
@@ -55,7 +55,7 @@ function goSettings(hash: string) {
     document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     return
   }
-  router.push({ path: '/', hash: `#${hash}` })
+  router.push({ name: 'market-home', hash: `#${hash}` })
 }
 
 function openNotifications() {
@@ -77,7 +77,7 @@ const menuStyle = computed(() => ({
 
 <template>
   <div ref="rootRef" class="um">
-    <button class="um__btn" :title="user.token ? '账户菜单' : '登录 / 注册'" @click="toggle">
+    <button class="um__btn" :aria-label="user.token ? '账户菜单' : '登录 / 注册'" :title="user.token ? '账户菜单' : '登录 / 注册'" @click="toggle">
       <span class="um__avatar" :class="{ 'um__avatar--guest': !user.token }">
         {{ user.token ? user.avatarText : '👤' }}
       </span>
@@ -246,5 +246,10 @@ const menuStyle = computed(() => ({
   height: 1px;
   margin: 4px 6px;
   background: var(--border);
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .um__btn { justify-content: center; }
+  .um-menu { max-width: calc(100vw - 24px); }
+  .um-menu__item { min-height: var(--touch-target); }
 }
 </style>

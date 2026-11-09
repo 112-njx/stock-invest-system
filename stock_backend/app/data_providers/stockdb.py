@@ -45,6 +45,8 @@ class StockDBProvider(BaseDataProvider):
                 raise ProviderError(str(exc)) from exc
 
     def can_fetch_kline(self, asset_type: str, period: str) -> bool:
+        if period in {"1m", "5m", "30m", "60m"}:
+            return asset_type == "stock"
         # Bare index codes collide with stock codes in the local dataset.
         if asset_type == 'sw_index' and period == '15m':
             return False
@@ -67,7 +69,7 @@ class StockDBProvider(BaseDataProvider):
             raise ProviderError(f'Free-StockDB SDK 服务不可用: {exc}') from exc
 
     def fetch_kline(self, symbol, period, start, end, asset_type="stock") -> list[KlineBar]:
-        if self.can_fetch_kline(asset_type, period) and (period in {"1w", "1mon"} or asset_type == "sw_index"):
+        if self.can_fetch_kline(asset_type, period) and (period in {"1m", "5m", "30m", "60m", "1w", "1mon"} or asset_type == "sw_index"):
             return self._sdk_kline(symbol, period, start, end)
         if not self.can_fetch_kline(asset_type, period) or not re.fullmatch(r"\d{6}", symbol):
             return []
@@ -128,7 +130,7 @@ class StockDBProvider(BaseDataProvider):
         settings = get_settings()
         frequency = "1M" if period == "1mon" else period
         # Ask the SDK for complete containing periods, then filter by returned labels.
-        first = start.astimezone(UTC).date()
+        first = start.astimezone(settings.tz if period.endswith("m") else UTC).date()
         if period == "1w":
             first -= timedelta(days=first.weekday())
         elif period == "1mon":

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _DEFAULT_BACK_DAYS = 7300  # 默认回看窗口：约 20 年，等价"按 limit 取最近 N 根"（与 get_kline 默认区间对齐），避免历史指标缺失
-from app.services.indicator_registry import REGISTRY
+from app.services.indicator_registry import REGISTRY, MAX_HISTORY_ROWS
 INDICATOR_NAMES = set(REGISTRY)
 
 
@@ -57,6 +57,11 @@ def compute_indicators(
     symbol_id = market_service.resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
+    if period in {'1m', '5m', '30m', '60m'}:
+        from app.models.symbol import Symbol
+        sym = db.get(Symbol, symbol_id)
+        if sym is None or sym.type != 'stock':
+            raise ValueError('新增分钟周期仅支持个股')
     explicit_range = start is not None or end is not None
     if end is None:
         end = datetime.now(UTC)
@@ -65,7 +70,9 @@ def compute_indicators(
 
     # Keep the bounded warmup window anchored to the newest bar for latest-N queries.
     bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end,
-                               limit=100000, source_window=(start, end), latest=not explicit_range)
+                               limit=MAX_HISTORY_ROWS + 1, source_window=(start, end), latest=not explicit_range)
+    if len(bars) > MAX_HISTORY_ROWS:
+        raise ValueError(f"指标计算历史超过 {MAX_HISTORY_ROWS} 根上限，不能截断预热序列")
     if not bars:
         return []
 
@@ -73,7 +80,7 @@ def compute_indicators(
     policy = indicator_policy.read()
     latest_ts = bars[-1].ts
     key = _cache_key(symbol_id, period, names, params, latest_ts, explicit_range, start, end, limit,
-                     source=bars[-1].source, engine=("pandas" if policy["pandas_enabled"] else "sdk") + ":v1:" + str(policy["revision"]))
+                     source=bars[-1].source, engine=("pandas" if policy["pandas_enabled"] else "sdk") + ":v2:" + str(policy["revision"]))
     if "ma" in names:
         # The active candle can change without changing its timestamp.
         closes = [(b.ts.isoformat(), str(b.close)) for b in bars]

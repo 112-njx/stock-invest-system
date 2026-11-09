@@ -130,6 +130,11 @@ def get_kline(
     symbol_id = resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
+    if period in {'1m', '5m', '30m', '60m'}:
+        from app.models.symbol import Symbol
+        sym = db.get(Symbol, symbol_id)
+        if sym is None or sym.type != 'stock':
+            raise ValueError('新增分钟周期仅支持个股')
     use_cache = start is None and end is None and offset == 0
     if use_cache:
         cached = market_cache.get_kline_cache(symbol_id, period, limit)

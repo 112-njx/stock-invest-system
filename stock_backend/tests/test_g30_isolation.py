@@ -233,28 +233,6 @@ def test_strategy_and_watchlist_isolated(client: TestClient):
 # ==================== 输入校验（G30）====================
 
 
-def test_nickname_rejects_control_chars(client: TestClient):
-    """昵称含控制字符 → 422。"""
-    ua = _uname()
-    try:
-        ta = _register(client, ua)
-        resp = client.put("/api/v1/users/me", json={"nickname": "正常\x00注入"}, headers=_auth(ta))
-        assert resp.status_code == 422
-        # 制表/换行放行（多行文本合法）
-        assert client.put("/api/v1/users/me", json={"nickname": "正常\n昵称"}, headers=_auth(ta)).status_code == 200
-    finally:
-        _cleanup(ua)
-
-
-def test_nickname_length_capped(client: TestClient):
-    ua = _uname()
-    try:
-        ta = _register(client, ua)
-        assert client.put("/api/v1/users/me", json={"nickname": "x" * 65}, headers=_auth(ta)).status_code == 422
-    finally:
-        _cleanup(ua)
-
-
 def test_avatar_url_rejects_javascript_scheme(client: TestClient):
     """头像地址禁 javascript:/data: 等可执行协议 → 422。"""
     ua = _uname()

@@ -5,6 +5,10 @@ import re
 from datetime import date
 from pathlib import Path
 
+# Transport and history limits shared by the API and the SDK bridge.
+MAX_HISTORY_ROWS = 1_000_000
+MAX_REQUEST_BYTES = 256 * 1024 * 1024
+
 DEFINITIONS = json.loads(Path(__file__).with_name('indicator_catalog.json').read_text(encoding='utf-8'))
 REGISTRY = {item['key']: item for item in DEFINITIONS}
 

@@ -37,7 +37,7 @@ class KlineBackfillRequest(BaseModel):
 @router.post("/kline/backfill")
 def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(get_read_db)) -> dict:
     """只接受单个历史窗口；重复请求复用同一 Celery 任务。"""
-    if payload.period not in ("15m", "1d", "1w", "1mon") or payload.start.tzinfo is None or payload.end.tzinfo is None:
+    if payload.period not in ("1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mon") or payload.start.tzinfo is None or payload.end.tzinfo is None:
         raise ApiError(status_code=400, msg="无效的周期或时区")
     max_days = 500 if payload.period == "1w" else 100
     if not timedelta(0) < payload.end - payload.start <= timedelta(days=max_days) or payload.end > datetime.now(payload.end.tzinfo):
@@ -130,7 +130,7 @@ def home_indices(db: Session = Depends(get_read_db)) -> dict:
 @router.get("/kline")
 def get_kline(
     symbol: str = Query(..., description="标的代码（或 symbol_id）"),
-    period: str = Query("1d", pattern="^(15m|1d|1w|1mon)$"),
+    period: str = Query("1d", pattern="^(1m|5m|15m|30m|60m|1d|1w|1mon)$"),
     start: datetime | None = Query(None, description="开始时间（UTC）"),
     end: datetime | None = Query(None, description="结束时间（UTC）"),
     limit: int = Query(1000, ge=1, le=5000),
@@ -148,7 +148,7 @@ def get_kline(
 @router.get("/kline/quality")
 def get_kline_quality(
     symbol: str = Query(...),
-    period: str = Query("1d", pattern="^(15m|1d|1w|1mon)$"),
+    period: str = Query("1d", pattern="^(1m|5m|15m|30m|60m|1d|1w|1mon)$"),
     db: Session = Depends(get_read_db),
 ) -> dict:
     from app.services import kline_quality_service

@@ -30,16 +30,14 @@ def get_by_id(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
 
 
-def create(db: Session, username: str, password_hash: str, email: str | None, nickname: str | None) -> User:
-    user = User(username=username, password_hash=password_hash, email=email, nickname=nickname)
+def create(db: Session, username: str, password_hash: str, email: str | None) -> User:
+    user = User(username=username, password_hash=password_hash, email=email)
     db.add(user)
     db.flush()
     return user
 
 
-def update_profile(db: Session, user: User, nickname: str | None = None, avatar_url: str | None = None) -> User:
-    if nickname is not None:
-        user.nickname = nickname
+def update_profile(db: Session, user: User, avatar_url: str | None = None) -> User:
     if avatar_url is not None:
         user.avatar_url = avatar_url
     db.flush()

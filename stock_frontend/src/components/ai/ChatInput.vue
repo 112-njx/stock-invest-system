@@ -32,7 +32,7 @@ function closeStrategyModule() {
 <template>
   <div class="chat-input">
     <!-- ① 标的选择行 -->
-    <div class="ci-row">
+    <div class="ci-row ci-row--symbol">
       <span class="ci-row__label">选择要分析的标的</span>
       <SymbolPicker v-model="ai.selectedSymbol" />
     </div>
@@ -111,7 +111,9 @@ function closeStrategyModule() {
     <!-- ⑤ 底部操作栏 -->
     <div class="ci-bottom">
       <span class="ci-risk">风险提示：AI 输出仅用于研究参考，不构成投资建议。决策前请自行核对数据、风险和仓位。</span>
+      <button v-if="ai.streaming" type="button" class="ci-send" @click="ai.stopStream()">停止</button>
       <button
+        v-else
         class="ci-send"
         :class="{ 'is-disabled': !ai.inputText.trim() || ai.streaming || ai.retryCountdown > 0 }"
         :disabled="!ai.inputText.trim() || ai.streaming || ai.retryCountdown > 0"
@@ -358,5 +360,13 @@ function closeStrategyModule() {
   color: var(--ind-dea);
   background: rgba(245, 158, 11, 0.1);
   border-left: 2px solid var(--ind-dea);
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .chat-input { padding-inline: 10px; }
+  .ci-row, .sm__top { flex-wrap: wrap; }
+  .ci-row--symbol { align-items: stretch; flex-direction: column; gap: 4px; }
+  .ci-select { min-width: 0; max-width: 100%; }
+  .ci-select, .ci-textarea { font-size: 16px; }
+  .ci-send, .ci-deep, .ci-select, .sm__rule, .sm__close, .sm__template { min-height: var(--touch-target); }
 }
 </style>

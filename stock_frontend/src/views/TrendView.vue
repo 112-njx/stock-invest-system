@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useMobileLayout } from '@/composables/useMobileLayout'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { cachedStockDb, fetchStockDb, peekCache, putCache, readCache, StockDbHttpError } from '@/api/stockdbCache'
 import type { Bar } from '@/api/stockdb'
@@ -131,9 +132,11 @@ function clearHover() {
   hoverId++
   hover.value = null
 }
-function preview(stock: TrendColumn, cell: TrendCell | null, date: number, event: PointerEvent) {
+const mobile = useMobileLayout()
+
+function preview(stock: TrendColumn, cell: TrendCell | null, date: number, event: MouseEvent, tapped = false) {
   clearHover()
-  if (!cell || event.pointerType === 'touch') return
+  if (!cell || (!tapped && 'pointerType' in event && event.pointerType !== 'mouse')) return
   const ticket = hoverId
   const x = Math.max(8, Math.min(innerWidth - 428, event.clientX - 210))
   const y = Math.max(8, Math.min(innerHeight - 278, event.clientY + 14))
@@ -247,7 +250,8 @@ onBeforeUnmount(() => {
                 <td v-for="stock in visible" :key="stock.code" class="day-cell"
                   :style="column(stock.code).cells[i] ? tileStyle(column(stock.code).cells[i]!) : {}"
                   @pointerenter="preview(column(stock.code), column(stock.code).cells[i] ?? null, date, $event)"
-                  @pointerleave="clearHover">
+                  @pointerleave="$event.pointerType === 'mouse' && clearHover()"
+                  @click="mobile && preview(column(stock.code), column(stock.code).cells[i] ?? null, date, $event, true)">
                   <template v-if="column(stock.code).cells[i]">
                     <span class="wave" :class="column(stock.code).cells[i]!.change >= 0 ? 'day-up' : 'day-down'">{{ column(stock.code).cells[i]!.wave }}</span>
                     <span class="daily-change">{{ number(column(stock.code).cells[i]!.change) }}</span>
@@ -301,7 +305,10 @@ onBeforeUnmount(() => {
       </template>
     </section>
     <div v-if="hover" class="trend-popup" :style="{ left: hover.x + 'px', top: hover.y + 'px' }">
-      <strong>{{ formatDate(hover.date) }} · {{ hover.name }} · {{ hover.code }}</strong>
+      <header>
+        <strong>{{ formatDate(hover.date) }} · {{ hover.name }} · {{ hover.code }}</strong>
+        <button class="mobile-only" type="button" @click="clearHover">关闭</button>
+      </header>
       <StockDbChart :bars="hover.bars" :label="hover.name + '分时'" minute :baseline="hover.baseline" />
     </div>
   </div>
@@ -358,5 +365,19 @@ thead .date-col, thead .breadth-col { z-index: 3; }
 .trend-popup { position: fixed; z-index: 50; width: 420px; max-width: calc(100vw - 16px); height: 260px; padding: 9px; display: flex; flex-direction: column; gap: 6px; background: var(--bg-panel); color: var(--text); border: 1px solid var(--border-strong); box-shadow: var(--shadow); border-radius: 6px; pointer-events: none; font-size: 12px; }
 @media (max-width: 800px) {
   .industry-nav { width: 115px; }.trend-head { flex-wrap: wrap; }.trend-head > span { display: none; }
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .trend-page { flex-direction: column; }
+  .industry-nav { width: auto; }
+  .industry-list { display: flex; overflow-x: auto; }
+  .industry-list button { width: auto; white-space: nowrap; min-height: var(--touch-target); }
+  .trend-main { overflow: visible; }
+  .matrix-scroll { max-width: 100%; }
+  .trend-popup {
+    inset: auto var(--safe-right) var(--safe-bottom) var(--safe-left) !important;
+    width: auto; max-width: none; pointer-events: auto;
+  }
+  .trend-popup header { display: flex; justify-content: space-between; align-items: center; }
+  .trend-popup button { min-height: var(--touch-target); }
 }
 </style>

@@ -16,10 +16,56 @@ def reset_directory_cache(monkeypatch):
     monkeypatch.setattr(search, "_expires", 0)
     monkeypatch.setattr(search, "_stale", False)
     monkeypatch.setattr(search, "_refreshing", False)
+    monkeypatch.setattr(search, "_initial_worker", None)
 
 
 def bar(code, name="测试股票", day=20261105):
     return dict(code=code, name=name, date=day, open=10, high=12, low=9, close=11)
+
+
+def test_nonblocking_cold_directory_read_schedules_only_one_refresh(monkeypatch):
+    thread = Mock()
+    monkeypatch.setattr(search, "Thread", thread)
+    for _ in range(2):
+        with pytest.raises(ApiError) as failure:
+            search.get_directory(wait_for_initial=False)
+        assert failure.value.status_code == 503
+    thread.assert_called_once()
+    thread.return_value.start.assert_called_once()
+
+
+def test_first_search_shares_homepage_cold_refresh(monkeypatch):
+    started, release, joining = Event(), Event(), Event()
+    results = []
+
+    class DirectoryWorker(Thread):
+        def join(self, timeout=None):
+            joining.set()
+            return super().join(timeout)
+
+    def slow_build(_provider):
+        started.set()
+        assert release.wait(3)
+        return {"version": "new", "items": [bar("000001")]}
+
+    build = Mock(side_effect=slow_build)
+    monkeypatch.setattr(search, "build_directory", build)
+    monkeypatch.setattr(search, "Thread", DirectoryWorker)
+    with pytest.raises(ApiError):
+        search.get_directory(wait_for_initial=False)
+    directory_worker = search._initial_worker
+    assert directory_worker is not None
+    search_worker = Thread(target=lambda: results.append(search.get_directory()))
+    search_worker.start()
+    try:
+        assert started.wait(1)
+        assert joining.wait(1)
+    finally:
+        release.set()
+        search_worker.join(3)
+        directory_worker.join(3)
+    assert results == [{"version": "new", "items": [bar("000001")], "stale": False}]
+    assert build.call_count == 1
 
 
 def test_stock_identity_retirement_and_suspended_history():

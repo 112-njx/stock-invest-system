@@ -15,8 +15,8 @@ export const useUserStore = defineStore('user', {
   }),
   getters: {
     isLoggedIn: (state) => !!state.token,
-    displayName: (state) => state.user?.nickname || state.user?.username || '',
-    avatarText: (state) => (state.user?.nickname || state.user?.username || 'U').charAt(0).toUpperCase(),
+    displayName: (state) => state.user?.username || '',
+    avatarText: (state) => (state.user?.username || 'U').charAt(0).toUpperCase(),
   },
   actions: {
     async restoreSession() {
@@ -32,9 +32,9 @@ export const useUserStore = defineStore('user', {
       const data = await loginApi(username, password)
       this.setAuth(data.token, data.user)
     },
-    /** 注册成功自动登录（后端注册即签发双 token；G23：email 必填） */
-    async register(username: string, password: string, email: string, nickname?: string) {
-      const data = await registerApi(username, password, email, nickname)
+    /** 注册成功自动登录（后端注册即签发双 token） */
+    async register(username: string, password: string, email?: string) {
+      const data = await registerApi(username, password, email)
       this.setAuth(data.token, data.user)
     },
     setAuth(token: string, user: User) {
@@ -45,7 +45,7 @@ export const useUserStore = defineStore('user', {
       this.user = await fetchMe()
       return this.user
     },
-    async updateProfile(patch: Partial<Pick<User, 'nickname' | 'avatar_url'>>) {
+    async updateProfile(patch: Partial<Pick<User, 'avatar_url'>>) {
       this.user = await updateMe(patch)
     },
     /** G19：调后端登出 + 清本地状态 */

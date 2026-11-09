@@ -11,8 +11,7 @@ from app.schemas.validators import HttpUrlTextOptional, SafeTextOptional
 class RegisterIn(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_]+$", description="用户名")
     password: str = Field(min_length=6, max_length=128, description="密码（明文，服务端 bcrypt 哈希）")
-    email: str = Field(max_length=128, description="邮箱（必填，用于账号验证和密码重置）")
-    nickname: SafeTextOptional = Field(None, max_length=64)
+    email: str | None = Field(None, max_length=128, description="邮箱（选填，用于账号验证和密码重置）")
 
 
 class LoginIn(BaseModel):
@@ -52,7 +51,6 @@ class UserOut(BaseModel):
     is_admin: bool = False
     email: str | None = None
     email_verified: bool = False
-    nickname: str | None = None
     avatar_url: str | None = None
     created_at: datetime
     # G14（P0-2）：只暴露「是否已配置自填 Key」，**绝不下发 Key 本身**
@@ -70,7 +68,6 @@ class UserOut(BaseModel):
             is_admin=bool(user.is_admin),
             email=user.email,
             email_verified=bool(user.email_verified),
-            nickname=user.nickname,
             avatar_url=user.avatar_url,
             created_at=user.created_at,
             has_api_key=bool(user.api_key_encrypted),
@@ -86,7 +83,6 @@ class TokenOut(BaseModel):
 
 
 class UserUpdateIn(BaseModel):
-    nickname: SafeTextOptional = Field(None, max_length=64)
     # G30：头像地址仅允许 http/https/站内路径，拒绝 javascript:/data: 等可执行协议
     avatar_url: HttpUrlTextOptional = Field(None, max_length=255)
 

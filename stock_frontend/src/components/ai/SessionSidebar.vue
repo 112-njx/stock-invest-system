@@ -9,7 +9,6 @@
 import { ref } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import { useAiStore } from '@/stores/ai'
-import { useAuthModalStore } from '@/stores/authModal'
 import { useUserStore } from '@/stores/user'
 import { deleteConversation } from '@/api/ai'
 import { useInfiniteList } from '@/composables/useInfiniteList'
@@ -24,7 +23,7 @@ const ITEM_SIZE = 34
 
 const ai = useAiStore()
 const user = useUserStore()
-const authModal = useAuthModalStore()
+const emit = defineEmits<{ 'require-login': [] }>()
 const tab = ref<JTab>('chat')
 
 const showMemory = ref(false)
@@ -61,7 +60,7 @@ function switchTab(newTab: JTab) {
 function onNewOrBack() {
   // G35：未登录不发鉴权请求（会话/记忆/Agent 均为账号维度数据），统一弹登录框
   if (!user.token) {
-    authModal.show('login')
+    emit('require-login')
     return
   }
   if (tab.value === 'chat') {
@@ -74,7 +73,7 @@ function onNewOrBack() {
 /** G35：记忆文件 / 我的 Agent / 运行记录入口（均需登录） */
 function openUserDialog(target: 'memory' | 'agents' | 'runs') {
   if (!user.token) {
-    authModal.show('login')
+    emit('require-login')
     return
   }
   if (target === 'memory') showMemory.value = true

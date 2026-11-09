@@ -286,7 +286,6 @@ K线数据 → 指标服务(服务端计算 MACD/KDJ/成交量/成交额)
 | username | VARCHAR(64) UNIQUE | 用户名 |
 | password_hash | VARCHAR(255) | 密码哈希 |
 | email | VARCHAR(128) | 邮箱 |
-| nickname | VARCHAR(64) | 昵称 |
 | avatar_url | VARCHAR(255) | 头像(登录头像) |
 | created_at / updated_at | TIMESTAMP | 时间 |
 

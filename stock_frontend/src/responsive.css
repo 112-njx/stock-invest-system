@@ -1,0 +1,40 @@
+:root {
+  --screen-height: 100vh;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --mobile-chart-height: clamp(320px, 58vh, 520px);
+  --touch-target: 44px;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --screen-height: 100dvh;
+    --mobile-chart-height: clamp(320px, 58dvh, 520px);
+  }
+}
+
+.mobile-only { display: none; }
+.scroll-x { min-inline-size: 0; max-inline-size: 100%; overflow-x: auto; }
+.viewport-dialog {
+  max-inline-size: 100%;
+  max-block-size: var(--screen-height);
+  overscroll-behavior: contain;
+}
+.safe-overlay {
+  padding: max(12px, var(--safe-top)) max(12px, var(--safe-right))
+    max(12px, var(--safe-bottom)) max(12px, var(--safe-left));
+}
+
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .mobile-only { display: revert; }
+  .app-shell .login-landing .landing-nav { top: var(--safe-top); }
+  .viewport-dialog {
+    max-block-size: calc(var(--screen-height) - max(12px, var(--safe-top)) - max(12px, var(--safe-bottom)));
+  }
+  input:not([type='checkbox'], [type='radio'], [type='range']), select, textarea { font-size: 16px; }
+  .auth-page { min-width: 0; padding: 12px; }
+  .auth-page .auth-card { max-inline-size: 100%; min-width: 0; }
+  .auth-page .auth-card input { min-height: var(--touch-target); font-size: 16px; }
+}

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useMobileLayout } from '@/composables/useMobileLayout'
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { request } from '@/api/http'
@@ -33,7 +34,15 @@ const flowColumns:Col[]=[
  ...(['jumbo_net','big_net','mid_net','small_net'] as const).map((key,i)=>({key,label:['超大单净流入','大单净流入','中单净流入','小单净流入'][i]!,width:145,kind:'large',signed:true})),
  ...[5,10,20].map(n=>({key:`main_${n}`,label:`${n}日主力净流入`,width:165,kind:'large',signed:true,hint:'截至该行资金流日期的交易日累计值；窗口缺失时显示 —'})),
  {key:'flow_date',label:'资金流日期',width:135},{key:'industry',label:'申万一级',width:120}]
-const columns=computed(()=>view.value==='flows'?flowColumns:quoteColumns)
+const mobile = useMobileLayout()
+const fullTable = ref(false)
+const compact = computed(() => mobile.value && !fullTable.value)
+const columns = computed(() => {
+  const all = view.value === 'flows' ? flowColumns : quoteColumns
+  if (!compact.value) return all
+  const keys = view.value === 'flows' ? ['name', 'main_net', 'change_pct'] : ['name', 'close', 'change_pct']
+  return keys.map(key => all.find(column => column.key === key)!)
+})
 const router=useRouter(),market=useMarketStore(),user=useUserStore(),ws=useWsStore(),auth=useAuthModalStore()
 const rows=ref<Row[]>([]),indexed=ref<IndexedStock[]>([]),industries=ref<string[]>([]),query=ref(''),exchanges=ref<string[]>([]),industry=ref('')
 const op=ref('gt'),value=ref(''),upper=ref(''),sortKey=ref('code'),asc=ref(true),date=ref(''),error=ref(''),loading=ref(false),refreshing=ref(false)
@@ -51,11 +60,12 @@ const filtered=computed(()=>{
   return op.value==='gt'?v>n:op.value==='gte'?v>=n:op.value==='lt'?v<n:op.value==='lte'?v<=n:v>=n&&v<=Number(upper.value)
  }).sort((a,b)=>{const x=a[sortKey.value],y=b[sortKey.value];if(x==null)return y==null?a.code.localeCompare(b.code):1;if(y==null)return -1;return (typeof x==='number'&&typeof y==='number'?x-y:String(x).localeCompare(String(y),'zh-CN'))*(asc.value?1:-1)||a.code.localeCompare(b.code)})
 })
-const rowHeight=34
-const start=computed(()=>Math.max(0,Math.min(Math.floor(top.value/rowHeight)-5,filtered.value.length-1)))
-const visible=computed(()=>filtered.value.slice(start.value,start.value+Math.ceil(height.value/rowHeight)+12))
+const rowHeight = computed(() => mobile.value ? 48 : 34)
+const start=computed(()=>Math.max(0,Math.min(Math.floor(top.value/rowHeight.value)-5,filtered.value.length-1)))
+const visible=computed(()=>filtered.value.slice(start.value,start.value+Math.ceil(height.value/rowHeight.value)+12))
 const width=computed(()=>columns.value.reduce((n,c)=>n+c.width,48))
 function resetScroll(){top.value=0;if(viewport.value)viewport.value.scrollTop=0;menu.value=undefined}
+watch([mobile, fullTable], () => { resetScroll(); if (viewport.value) viewport.value.scrollLeft = 0 })
 function reset(){query.value='';exchanges.value=[];industry.value='';value.value='';upper.value='';resetScroll()}
 function sort(key:string){if(sortKey.value===key)asc.value=!asc.value;else{sortKey.value=key;asc.value=key==='code'||key==='name'}resetScroll()}
 function format(r:Row,c:Col){const v=r[c.key];if(v==null)return '—';if(typeof v!=='number')return v;if(c.kind==='large')return (c.signed&&v>0?'+':'')+(Math.abs(v)>=1e8?(v/1e8).toFixed(2)+'亿':Math.abs(v)>=1e4?(v/1e4).toFixed(2)+'万':v.toLocaleString('zh-CN'));return (c.signed&&v>0?'+':'')+v.toFixed(2)+(c.kind==='pct'?'%':'')}
@@ -80,14 +90,15 @@ onBeforeUnmount(()=>{alive=false;clearTimeout(timer);observer?.disconnect();docu
  <select v-model="industry" aria-label="申万一级行业" @change="resetScroll"><option value="">全部行业</option><option v-for="s in industries" :key="s">{{ s }}</option></select>
  <label class="condition">涨跌幅 <select v-model="op" aria-label="涨跌幅条件" @change="resetScroll"><option value="gt">大于</option><option value="gte">大于等于</option><option value="lt">小于</option><option value="lte">小于等于</option><option value="range">区间</option></select><input v-model="value" type="number" step="any" aria-label="涨跌幅数值" placeholder="不限" @input="resetScroll"/>%<template v-if="op==='range'"> 至 <input v-model="upper" type="number" step="any" aria-label="涨跌幅上限" @input="resetScroll"/>%</template></label>
  <button @click="reset">重置</button><span class="hint">右键股票行：加入关注 / 查看详细数据</span>
+ <button class="mobile-only" type="button" :aria-pressed="fullTable" @click="fullTable = !fullTable">{{ fullTable ? '精简表格' : '完整表格' }}</button>
  </div>
  <p v-if="invalid||error" role="status">{{ invalid?'请输入有效区间，下限须不大于上限':error }}</p>
- <div ref="viewport" class="table-wrap" @scroll="top=($event.target as HTMLElement).scrollTop;menu=undefined">
- <table :style="{width:`${width}px`}"><colgroup><col style="width:48px"/><col v-for="c in columns" :key="c.key" :style="{width:`${c.width}px`}"/></colgroup>
- <thead><tr><th>序号</th><th v-for="c in columns" :key="c.key" :class="[c.key,{fixed:c.key==='code'||c.key==='name'}]" :title="c.hint" :aria-sort="sortKey===c.key?(asc?'ascending':'descending'):'none'"><button @click="sort(c.key)">{{ c.label }} {{ sortKey===c.key?(asc?'↑':'↓'):'' }}</button></th></tr></thead>
+ <div ref="viewport" class="table-wrap scroll-x" :class="{ compact }" @scroll="top=($event.target as HTMLElement).scrollTop;menu=undefined">
+ <table :style="{ width: compact ? '100%' : `${width}px` }"><colgroup><col style="width:48px"/><col v-for="c in columns" :key="c.key" :style="{ width: compact ? (c.key === 'name' ? undefined : '76px') : `${c.width}px` }"/></colgroup>
+ <thead><tr><th>{{ mobile ? '操作' : '序号' }}</th><th v-for="c in columns" :key="c.key" :class="[c.key,{fixed:c.key==='code'||c.key==='name'}]" :title="c.hint" :aria-sort="sortKey===c.key?(asc?'ascending':'descending'):'none'"><button @click="sort(c.key)">{{ c.label }} {{ sortKey===c.key?(asc?'↑':'↓'):'' }}</button></th></tr></thead>
  <tbody><tr v-if="start" aria-hidden="true"><td :colspan="columns.length+1" :style="{height:`${start*rowHeight}px`,padding:0}"/></tr>
- <tr v-for="(r,i) in visible" :key="r.code" tabindex="0" :class="{selected:active===r.code}" :aria-label="`${r.code} ${r.name}`" @click="active=r.code" @dblclick="detail(r)" @contextmenu="context($event,r)" @keydown.enter="detail(r)" @keydown.shift.f10="keyboardMenu($event,r)">
- <td class="ordinal">{{ start+i+1 }}</td><td v-for="c in columns" :key="c.key" :class="[c.key,{fixed:c.key==='code'||c.key==='name',up:(c.signed&&Number(r[c.key])>0)||(c.key==='close'&&Number(r.change_pct)>0)||(c.key==='vol_ratio'&&Number(r.vol_ratio)>1),down:(c.signed&&Number(r[c.key])<0)||(c.key==='close'&&Number(r.change_pct)<0)||(c.key==='vol_ratio'&&r.vol_ratio!=null&&Number(r.vol_ratio)<1),'high-ratio':c.key==='vol_ratio'&&Number(r.vol_ratio)>=4}]" :title="`${c.hint?c.hint+'；':''}${r[c.key]??'未提供'}${c.key==='name'?'；行情日期 '+r.data_date:''}`">{{ format(r,c) }}</td>
+ <tr v-for="(r,i) in visible" :key="r.code" tabindex="0" :class="{selected:active===r.code}" :aria-label="`${r.code} ${r.name}`" @click="mobile ? detail(r) : active = r.code" @dblclick="detail(r)" @contextmenu="context($event,r)" @keydown.enter="detail(r)" @keydown.shift.f10="keyboardMenu($event,r)">
+ <td class="ordinal"><button v-if="mobile" class="row-action" type="button" :aria-label="`${r.name}的更多操作`" @click.stop="context($event, r)" @keydown.enter.stop>⋯</button><template v-else>{{ start+i+1 }}</template></td><td v-for="c in columns" :key="c.key" :class="[c.key,{fixed:c.key==='code'||c.key==='name',up:(c.signed&&Number(r[c.key])>0)||(c.key==='close'&&Number(r.change_pct)>0)||(c.key==='vol_ratio'&&Number(r.vol_ratio)>1),down:(c.signed&&Number(r[c.key])<0)||(c.key==='close'&&Number(r.change_pct)<0)||(c.key==='vol_ratio'&&r.vol_ratio!=null&&Number(r.vol_ratio)<1),'high-ratio':c.key==='vol_ratio'&&Number(r.vol_ratio)>=4}]" :title="`${c.hint?c.hint+'；':''}${r[c.key]??'未提供'}${c.key==='name'?'；行情日期 '+r.data_date:''}`">{{ format(r,c) }}<small v-if="compact && c.key === 'name'" class="stock-code">{{ r.code }}</small></td>
  </tr><tr v-if="filtered.length>start+visible.length" aria-hidden="true"><td :colspan="columns.length+1" :style="{height:`${(filtered.length-start-visible.length)*rowHeight}px`,padding:0}"/></tr></tbody></table>
  <div v-if="!filtered.length" class="empty" role="status">{{ loading||refreshing?'正在准备本地股票数据…':error||'没有符合条件的股票' }}</div>
  </div>
@@ -102,4 +113,24 @@ onBeforeUnmount(()=>{alive=false;clearTimeout(timer);observer?.disconnect();docu
 .high-ratio{color:var(--quote-ratio)!important}
 
 .stocks-page{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--bg-panel);color:var(--text);padding:10px 12px 0;gap:8px;font-family:Arial,'Microsoft YaHei','PingFang SC',sans-serif;font-size:15px;font-weight:400}header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}h1{font-size:20px;margin:0}header span,.hint{color:var(--text-secondary)}header>button{margin-left:auto}.filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap}input,select,button{font:inherit;color:var(--text);background:var(--bg-panel);border:1px solid var(--border);border-radius:3px;padding:5px 8px}button{cursor:pointer}button:hover{background:var(--bg-hover)}fieldset{display:flex;gap:8px;border:0;margin:0;padding:0}fieldset label,.condition{display:flex;align-items:center;gap:4px}.condition input{width:88px}.table-wrap{position:relative;flex:1;min-height:0;overflow:auto;border:1px solid var(--border)}table{table-layout:fixed;border-collapse:separate;border-spacing:0;font-variant-numeric:tabular-nums;text-align:right}th{position:sticky;top:0;z-index:3;height:36px;background:var(--bg-panel);border-bottom:1px solid var(--border);font-weight:400;color:var(--text-secondary)}th button{color:var(--text-secondary);border:0;width:100%;text-align:right;white-space:nowrap;padding:0 6px;border-radius:0}td{height:34px;padding:0 7px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ordinal{color:var(--text);text-align:center}.fixed{position:sticky;background:var(--bg-panel);z-index:1}.code{left:0;text-align:left}.name{left:100px;text-align:left;border-right:1px solid var(--border)}th.fixed{z-index:4}td.code,td.name,td.volume,td.amount,td.total_mv{color:var(--quote-highlight)}.industry{text-align:left}.selected td{background:var(--quote-selected)}tbody tr:hover td{background:var(--bg-hover)}.up{color:var(--quote-up)}.down{color:var(--quote-down)}.stock-context{position:fixed;z-index:1000;width:210px;padding:4px;background:var(--bg-panel);border:1px solid var(--border);box-shadow:0 5px 18px #0004}.stock-context button{display:block;width:100%;border:0;text-align:left;padding:10px 16px}.empty{position:sticky;left:0;padding:40px;color:var(--text-secondary)}p{margin:0;color:var(--text-secondary)}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .stocks-page { padding-inline: 8px; }
+  .hint { display: none; }
+  .filters input, .filters select { max-width: 100%; font-size: 16px; }
+  .filters > input { width: 100%; }
+  .filters fieldset, .condition { min-width: 0; flex-wrap: wrap; }
+  .condition input { width: 68px; }
+  .filters button, .stocks-page header button { min-height: var(--touch-target); }
+  .table-wrap { flex: none; height: clamp(320px, 65dvh, 720px); }
+  th { height: 44px; }
+  th button { white-space: normal; line-height: 1.2; }
+  td { height: 48px; }
+  td.ordinal { padding: 0; }
+  .compact .fixed { left: auto; position: static; }
+  .compact th.fixed { position: sticky; }
+  .compact .name { border-right: 0; }
+  .stock-code { display: block; color: var(--text-secondary); font-size: 11px; }
+  .row-action { min-height: var(--touch-target); min-width: var(--touch-target); border: 0; }
+  .stock-context button { min-height: var(--touch-target); }
+}
 </style>

@@ -142,22 +142,22 @@ curl -X POST "http://127.0.0.1:8000/api/v1/fetch-all"
 - **接口名称**：用户注册
 - **请求 Method**：POST
 - **请求 Path**：/api/v1/auth/register
-- **接口作用**：注册新用户（密码 bcrypt 哈希入库），成功后签发 JWT 并发送邮箱验证邮件。
-- **请求 Body**：有（Body-JSON：username、password、**email（必填）**、nickname?）
+- **接口作用**：注册新用户（密码 bcrypt 哈希入库），成功后签发 JWT。填写邮箱时发送验证邮件。
+- **请求 Body**：有（Body-JSON：username、password、email（选填））
 
 **请求示例（curl）**
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/api/v1/auth/register" -H "Content-Type: application/json" -d '{"username":"alice","password":"pass123456","email":"alice@example.com","nickname":"Alice"}'
+curl -X POST "http://127.0.0.1:8000/api/v1/auth/register" -H "Content-Type: application/json" -d '{"username":"alice","password":"pass123456"}'
 ```
 
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":{"token":"eyJhbGciOi...","user":{"id":1,"username":"alice","email":"alice@example.com","email_verified":false,"nickname":"Alice","avatar_url":null,"created_at":"2026-08-09T05:00:00Z"}}}
+{"code":0,"msg":"ok","data":{"token":"eyJhbGciOi...","user":{"id":1,"username":"alice","email":null,"email_verified":false,"avatar_url":null,"created_at":"2026-08-09T05:00:00Z"}}}
 ```
 
-> 邮箱必填（缺失 422）；邮箱已注册返回 `{"code":40002,"msg":"该邮箱已被注册"}`。
+> 邮箱已注册返回 `{"code":40002,"msg":"该邮箱已被注册"}`。
 
 ## 2. 用户登录
 
@@ -271,7 +271,7 @@ curl -X DELETE "http://127.0.0.1:8000/api/v1/auth/sessions/2" -H "Authorization:
 > - G19 已新增端点见上方 3~6 节：`POST /auth/refresh`、`POST /auth/logout`、`GET /auth/sessions`、`DELETE /auth/sessions/{id}`。
 
 > **G23 邮箱验证/密码重置备注（2026-09-17）**：
-> - **注册 `email` 改为必填**，注册后自动发送验证邮件（10 分钟有效链接），并校验邮箱唯一性（重复邮箱返回 `40002`）。
+> - 注册 `email` 选填。填写时检查邮箱是否已被使用（重复邮箱返回 `40002`），并在注册成功后发送验证邮件（链接有效期 10 分钟）。
 > - **登录暴力保护**：同一用户名连续失败 5 次后锁定 15 分钟，锁定期间登录返回 `423`（业务码 `42301`）；登录成功后失败计数清零。计数器存 Redis `login_fail:{username}`（Redis 不可用时降级放行，不影响可用性）。
 > - 邮箱验证/密码重置 token 与 access token 独立签名（派生密钥 + `type` 字段），验证 token 不能用于重置、反之亦然。
 > - `UserOut` 新增 `email_verified` 字段。
@@ -382,7 +382,7 @@ curl "http://127.0.0.1:8000/api/v1/users/me" -H "Authorization: Bearer eyJhbGciO
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":{"id":1,"username":"alice","email":null,"nickname":"Alice","avatar_url":null,"created_at":"2026-08-09T05:00:00Z"}}
+{"code":0,"msg":"ok","data":{"id":1,"username":"alice","email":null,"avatar_url":null,"created_at":"2026-08-09T05:00:00Z"}}
 ```
 
 ## 2. 更新当前用户
@@ -390,19 +390,19 @@ curl "http://127.0.0.1:8000/api/v1/users/me" -H "Authorization: Bearer eyJhbGciO
 - **接口名称**：更新当前用户
 - **请求 Method**：PUT
 - **请求 Path**：/api/v1/users/me
-- **接口作用**：更新昵称/头像。
-- **请求 Body**：有（Body-JSON：nickname?、avatar_url?）
+- **接口作用**：更新头像地址。
+- **请求 Body**：有（Body-JSON：avatar_url?）
 
 **请求示例（curl）**
 
 ```bash
-curl -X PUT "http://127.0.0.1:8000/api/v1/users/me" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"nickname":"新昵称"}'
+curl -X PUT "http://127.0.0.1:8000/api/v1/users/me" -H "Authorization: Bearer eyJhbGciOi..." -H "Content-Type: application/json" -d '{"avatar_url":"/static/avatar.png"}'
 ```
 
 **成功返回示例**
 
 ```json
-{"code":0,"msg":"ok","data":{"id":1,"username":"alice","nickname":"新昵称","avatar_url":null}}
+{"code":0,"msg":"ok","data":{"id":1,"username":"alice","avatar_url":"/static/avatar.png"}}
 ```
 
 ## 3. 修改密码（G33）

@@ -63,6 +63,11 @@ def list_expired(db: Session, now: datetime | None = None) -> list[ExportTask]:
     stmt = select(ExportTask).where(
         ExportTask.expires_at.is_not(None),
         ExportTask.expires_at <= now,
-        ExportTask.status != "expired",
+        (ExportTask.status != "expired") | ExportTask.file_path.is_not(None),
     )
+    return list(db.scalars(stmt))
+
+
+def list_successful(db: Session) -> list[ExportTask]:
+    stmt = select(ExportTask).where(ExportTask.status == "success", ExportTask.file_path.is_not(None))
     return list(db.scalars(stmt))

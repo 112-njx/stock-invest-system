@@ -159,7 +159,6 @@ CREATE TABLE users (
     username      VARCHAR(64) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     email         VARCHAR(128),
-    nickname      VARCHAR(64),
     avatar_url    VARCHAR(255),
     created_at    TIMESTAMP   NOT NULL DEFAULT now(),
     updated_at    TIMESTAMP   NOT NULL DEFAULT now()

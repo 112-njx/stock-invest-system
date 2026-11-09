@@ -18,7 +18,6 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str | None] = mapped_column(String(128))
     email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # G23：邮箱是否已验证
-    nickname: Mapped[str | None] = mapped_column(String(64))
     avatar_url: Mapped[str | None] = mapped_column(String(255))
     is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 管理员（管理端点鉴权）
     # G18：账户软删除（P1-5b 删除权）——软删后 30 天宽限期内可恢复，到期由 beat 硬删级联
