@@ -8,19 +8,15 @@ const panels = [
 ] as const
 const selected = ref<(typeof panels)[number]['id']>('quote')
 
-// 收盘样本来自 stockdb 的个股日 K 与行业云图，取相同交易日。
-const sampleDate = '2026-11-06'
+// 行情和板块来自 stockdb 的 2026-11-06 收盘数据。
 const quoteMetrics = [
-  ['昨收', '44.29'], ['今开', '40.86'],
+  ['今开', '40.86'],
   ['最高', '41.68'], ['最低', '40.52'],
-  ['成交量', '1.47 亿股'], ['成交额', '60.33 亿元'],
-  ['振幅', '2.62%'], ['总市值', '8,078.53 亿元'],
+  ['成交额', '60.33 亿元'],
 ]
 const constituents = [
   ['601138', '工业富联', '40.71', '-8.08%'],
   ['688256', '寒武纪', '802.90', '-4.98%'],
-  ['688008', '澜起科技', '150.10', '-8.36%'],
-  ['002463', '沪电股份', '73.21', '-9.62%'],
 ]
 const adjustmentRows = [
   ['除息前一日', '10.00', '1.0000', '9.00'],
@@ -35,12 +31,11 @@ const adjustmentRows = [
         :id="'dataset-button-' + panel.id" :aria-expanded="selected === panel.id"
         :aria-controls="'dataset-' + panel.id" @click="selected = panel.id">{{ panel.label }}</button>
 
-      <div :id="'dataset-' + panel.id" v-show="selected === panel.id" role="region"
+      <div :id="'dataset-' + panel.id" :inert="selected !== panel.id" role="region"
         :aria-labelledby="'dataset-button-' + panel.id" class="dataset-panel">
         <template v-if="panel.id === 'quote'">
           <header class="dataset-heading">
             <span><strong>工业富联</strong> <small>601138.SH</small></span>
-            <time :datetime="sampleDate">{{ sampleDate }} 收盘样本</time>
           </header>
           <div class="dataset-quote">
             <div><small>收盘价 · 元</small><strong class="dataset-number is-down">40.71</strong></div>
@@ -59,7 +54,6 @@ const adjustmentRows = [
         <template v-else-if="panel.id === 'sector'">
           <header class="dataset-heading">
             <span><strong>电子</strong> <small>申万一级 · 801080.SL</small></span>
-            <time :datetime="sampleDate">{{ sampleDate }} 收盘样本</time>
           </header>
           <dl class="dataset-metrics dataset-sector-metrics">
             <div><dt>板块涨跌</dt><dd class="is-down">−3.57%</dd></div>
@@ -81,7 +75,6 @@ const adjustmentRows = [
         <template v-else>
           <header class="dataset-heading">
             <span><strong>现金分红示例</strong> <small>每股派息 1.00 元</small></span>
-            <small>模拟数据</small>
           </header>
           <div class="scroll-x" tabindex="0" role="region" aria-label="收盘价对照表格">
             <table class="dataset-table">
@@ -94,7 +87,6 @@ const adjustmentRows = [
               </tbody>
             </table>
           </div>
-          <p class="dataset-note">以除息日的复权因子为基准，前一日收盘价折算为 9.00 元，除息日收盘价为 9.20 元。</p>
         </template>
       </div>
     </div>
@@ -102,10 +94,18 @@ const adjustmentRows = [
 </template>
 
 <style scoped>
-.dataset-accordion { display: flex; flex: 1; gap: 5px; min-height: 150px; }
+.dataset-accordion {
+  --dataset-tab-width: 46px;
+  --dataset-gap: 5px;
+  display: flex;
+  flex: 1;
+  gap: var(--dataset-gap);
+  min-height: 150px;
+  container-type: inline-size;
+}
 .dataset-slice {
   display: flex;
-  flex: 0 0 46px;
+  flex: 0 0 var(--dataset-tab-width);
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border-strong);
@@ -115,7 +115,7 @@ const adjustmentRows = [
 }
 .dataset-slice.is-active { flex: 1 1 0; border-color: var(--landing-rule); }
 .dataset-slice button {
-  flex: 0 0 44px;
+  flex: 0 0 calc(var(--dataset-tab-width) - 2px);
   min-height: 44px;
   writing-mode: vertical-rl;
   letter-spacing: .13em;
@@ -125,16 +125,18 @@ const adjustmentRows = [
 .dataset-slice.is-active button { background: var(--accent-soft); color: var(--landing-accent); }
 .dataset-slice button:focus-visible { outline-offset: -3px; }
 .dataset-panel {
-  flex: 1;
+  /* Keep every panel at its expanded width so the tallest one sets a stable height. */
+  flex: 0 0 calc(100cqi - 3 * var(--dataset-tab-width) - 2 * var(--dataset-gap));
   align-self: center;
   min-width: 0;
+  box-sizing: border-box;
   padding: clamp(8px, 1.5vw, 18px);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-.dataset-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 10px; }
+.dataset-panel[inert] { visibility: hidden; }
 .dataset-heading strong { margin-inline-end: 4px; font-size: 16px; }
-.dataset-panel :is(small, time, dt, caption, thead) { color: var(--text-secondary); font-size: 12px; }
+.dataset-panel :is(small, dt, caption, thead) { color: var(--text-secondary); font-size: 12px; }
 .dataset-quote { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px 14px; margin-block: 12px; }
 .dataset-quote small, .dataset-number { display: block; }
 .dataset-number { font-size: 30px; line-height: 1.15; }
@@ -151,7 +153,6 @@ const adjustmentRows = [
 .dataset-table tbody th { font-weight: 600; }
 .dataset-table tbody small { display: inline-block; margin-inline-start: 3px; }
 .dataset-adjusted { color: var(--landing-accent); font-weight: 700; }
-.dataset-panel .dataset-note { margin-top: 12px; font-size: 12px; }
 .is-down { color: var(--quote-down); }
 .is-up { color: var(--quote-up); }
 @media (prefers-reduced-motion: reduce) { .dataset-slice { transition: none; } }
