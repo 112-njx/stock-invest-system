@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import inspect
 import json
 import math
+import os
 from pathlib import Path
 import sys
 from zoneinfo import ZoneInfo
@@ -16,6 +17,12 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('file',type=Path)
     parser.add_argument('--sdk-dir',default='/opt/stockdb/pybao');args=parser.parse_args()
     sys.path.insert(0,args.sdk_dir)
+    import stock_sdk
+    if os.environ.get('STOCKDB_READER') == 'managed':
+        from market_data_sdk import install
+        install(stock_sdk)
+    else:
+        stock_sdk.init(host='127.0.0.1',port=7899,warm=False)
     from zhibiao import zb, BATCH_CROSS, ZHISHU, _load_rows
     matrix=json.loads(args.file.read_text(encoding='utf-8'));checks=0;nulls=0
     def ts(value):

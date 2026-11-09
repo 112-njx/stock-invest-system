@@ -572,8 +572,9 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
                 # Each native job already runs in an isolated child process.
                 # A long basket read must not occupy the ordinary indicator lane.
                 names = payload['names']
-                is_forecast = indicator_registry().FORECAST_FEATURES in names
-                lane = forecast_lock if is_forecast else composite_lock if 'zhishu' in names else indicator_lock
+                is_composite = 'zhishu' in names
+                is_forecast = not is_composite and indicator_registry().FORECAST_FEATURES in names
+                lane = composite_lock if is_composite else forecast_lock if is_forecast else indicator_lock
                 if not lane.acquire(timeout=0 if is_forecast else 5):
                     self.respond(b'{"error":"indicator engine busy; retry later"}', 503)
                     return
