@@ -22,6 +22,17 @@ def bar(code, name="测试股票", day=20261105):
     return dict(code=code, name=name, date=day, open=10, high=12, low=9, close=11)
 
 
+def test_nonblocking_cold_directory_read_schedules_only_one_refresh(monkeypatch):
+    thread = Mock()
+    monkeypatch.setattr(search, "Thread", thread)
+    for _ in range(2):
+        with pytest.raises(ApiError) as failure:
+            search.get_directory(wait_for_initial=False)
+        assert failure.value.status_code == 503
+    thread.assert_called_once()
+    thread.return_value.start.assert_called_once()
+
+
 def test_stock_identity_retirement_and_suspended_history():
     queries = []
 

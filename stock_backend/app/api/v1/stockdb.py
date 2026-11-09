@@ -1,13 +1,16 @@
 """Versioned index workspace endpoints backed exclusively by local stockdb RD."""
 
 import json
+from functools import lru_cache
 from hashlib import sha256
+from time import monotonic
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request, Response
 from pydantic import StringConstraints
 
 from app.core.config import get_settings
+from app.core.exceptions import ApiError
 from app.services import stockdb_cache as cache
 from app.services import stockdb_service as rd
 
@@ -34,6 +37,43 @@ def _snapshot(version: str | None = None) -> rd.Snapshot:
     if version is not None and data.version != version:
         raise HTTPException(status_code=409, detail="本地数据版本已更新")
     return data
+
+
+@lru_cache(maxsize=1)
+def _sample_daily_start(version: str, hour: int) -> int | None:
+    # Include an hourly bucket because corrections can predate the snapshot's chart window.
+    from app.services.stock_search_directory import valid_bar
+
+    with rd._client() as client:
+        rows = rd._rd(client, "vals", "日k", k1="key:000001", k2="all:", num=1)
+    if rows and isinstance(rows[0], dict) and valid_bar(rows[0], "000001"):
+        return int(rows[0]["date"])
+    return None
+
+
+@router.get("/coverage")
+def coverage() -> dict:
+    from app.services.stock_search_directory import get_directory
+
+    data = _snapshot()
+    try:
+        directory = get_directory(wait_for_initial=False)
+    except ApiError as exc:
+        if exc.status_code != 503:
+            raise
+        directory = {}
+    try:
+        sample_start = _sample_daily_start(data.version, int(monotonic() // 3600))
+    except rd.StockDBError:
+        sample_start = None
+    return {
+        "stock_count": directory.get("total"),
+        "stock_date": directory.get("latest_session"),
+        "stock_stale": directory.get("stale", False),
+        "board_count": len(data.boards),
+        "board_date": data.dates[-1],
+        "sample_start": sample_start,
+    }
 
 
 def _reply(request: Request, data: rd.Snapshot, build=None, identity: str = "",

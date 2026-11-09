@@ -89,11 +89,11 @@ def _refresh_directory() -> None:
             _refreshing = False
 
 
-def get_directory() -> dict:
+def get_directory(*, wait_for_initial: bool = True) -> dict:
     global _expires, _refreshing, _stale
     with _lock:
         expired = monotonic() >= _expires
-        if _snapshot is not None:
+        if _snapshot is not None or not wait_for_initial:
             if expired and not _refreshing:
                 _refreshing = True
                 worker = Thread(target=_refresh_directory, name="stock-directory-refresh", daemon=True)
@@ -104,6 +104,8 @@ def get_directory() -> dict:
                     _stale = True
                     _expires = monotonic() + 30
                     logger.exception("could not start stock directory refresh")
+            if _snapshot is None:
+                raise ApiError(status_code=503, msg="本地股票目录尚未就绪，请稍后重试")
             return {**_snapshot, "stale": _stale or expired or _refreshing}
         if _refreshing or not expired:
             raise ApiError(status_code=503, msg="本地股票目录尚未就绪，请稍后重试")
