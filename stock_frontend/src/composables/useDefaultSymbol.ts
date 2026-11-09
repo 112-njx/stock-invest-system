@@ -22,7 +22,7 @@ export async function ensureDefaultSymbol() {
     if (wl.length) {
       market.setWatchlist(wl)
       const w = wl[0]
-      market.setCurrent({ id: w.symbol_id, code: w.code, name: w.name, type: w.type })
+      if (!market.current) market.setCurrent({ id: w.symbol_id, code: w.code, name: w.name, type: w.type })
       return
     }
   } catch {
@@ -35,5 +35,5 @@ export async function ensureDefaultSymbol() {
       /* 静默：页面显示未选择标的 */
     }
   }
-  if (market.fixedIndices.length) market.setCurrent(market.fixedIndices[0])
+  if (!market.current && market.fixedIndices.length) market.setCurrent(market.fixedIndices[0])
 }

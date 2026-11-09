@@ -32,7 +32,9 @@ watch(
 )
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && store.panelOpen) store.closePanel()
+  if (e.key !== 'Escape' || e.defaultPrevented || !store.panelOpen) return
+  e.preventDefault()
+  store.closePanel()
 }
 
 async function toggle() {

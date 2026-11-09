@@ -142,6 +142,10 @@ function loadUserData() {
 
 const mobile = useMobileLayout()
 const sessionDrawer = ref<HTMLDialogElement>()
+function requestLoginFromSidebar() {
+  sessionDrawer.value?.close()
+  authModal.show('login')
+}
 watch([mobile, () => ai.activeConversationId, () => ai.mode], () => sessionDrawer.value?.close())
 
 onMounted(() => {
@@ -180,7 +184,7 @@ onUnmounted(() => {
     </dialog>
     <Teleport defer to="#mobile-sessions" :disabled="!mobile">
       <aside class="ai-side">
-        <SessionSidebar />
+        <SessionSidebar @require-login="requestLoginFromSidebar" />
       </aside>
     </Teleport>
 

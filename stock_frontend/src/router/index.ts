@@ -15,6 +15,11 @@ declare module 'vue-router' {
 
 const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return savedPosition
+    // Hash targets are handled by the page that owns them.
+    if (!to.hash && to.path !== from.path) return { left: 0, top: 0 }
+  },
   routes: [
     { path: '/stocks', name: 'stocks', component: () => import('@/views/StocksView.vue') },
     { path: '/heatmap', name: 'heatmap', component: () => import('@/views/HeatmapView.vue') },

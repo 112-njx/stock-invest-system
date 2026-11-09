@@ -35,7 +35,9 @@ function browseStock(code: string) {
   void router.push({ name: 'market-detail', query: { symbol: code, asset_type: 'stock' } })
 }
 function closePanel(event: KeyboardEvent) {
-  if (!opened.value || event.defaultPrevented) return
+  if (!opened.value || event.defaultPrevented ||
+      document.querySelector('[aria-modal="true"], dialog[open]')) return
+  event.stopPropagation()
   const button = opened.value === 'menu' ? menuButton.value : searchButton.value
   opened.value = null
   button?.focus()
@@ -52,7 +54,7 @@ onBeforeUnmount(() => clearTimeout(prepareTimer))
 </script>
 
 <template>
-  <header class="appbar" @keydown.esc.stop="closePanel">
+  <header class="appbar" @keydown.esc="closePanel">
     <div class="appbar__brand">
       <span class="appbar__logo">K</span>
       <span class="appbar__name">量化交易终端</span>

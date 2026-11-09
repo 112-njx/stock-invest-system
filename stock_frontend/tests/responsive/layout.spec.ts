@@ -155,6 +155,96 @@ test('phone stock table preserves access to all columns and row actions', async 
   await expect(page).toHaveURL(/\/market\/detail\?symbol=600519/)
 })
 
+test('phone search hides the previous quote until the selected stock resolves', async ({ page }, info) => {
+  test.skip(info.project.name !== 'phone-390')
+  await stubApi(page)
+  const next = { ...stock, code: '600520', name: '搜索标的', type: 'stock', latest_date: '2026-01-05', ordinal: 1 }
+  let allowNextSymbol = false
+  await page.route('**/api/v1/stocks/search-directory', route => route.fulfill({
+    json: { code: 0, data: { version: 'review-test', latest_session: '2026-01-05', items: [next] } },
+  }))
+  await page.route('**/api/v1/symbols?*', route => {
+    const search = new URL(route.request().url()).searchParams.get('search')
+    const data = search === stock.code ? [{ ...stock, id: 41, type: 'stock' }]
+      : search === next.code && allowNextSymbol ? [{ ...next, id: 42 }] : []
+    return route.fulfill({ json: { code: 0, data } })
+  })
+  await page.goto('/market/detail?symbol=600519&asset_type=stock')
+  await expect(page.locator('.detail-summary')).toContainText('贵州茅台')
+  await page.getByRole('button', { name: '搜索', exact: true }).tap()
+  await page.getByRole('combobox', { name: '搜索股票名称、拼音或代码' }).tap()
+  await page.getByRole('option', { name: /搜索标的/ }).tap()
+  await expect(page).toHaveURL(/symbol=600520/)
+  await expect(page.getByRole('alert')).toHaveText('无法加载标的 600520 的行情。')
+  await expect(page.locator('.detail-body')).toHaveCount(0)
+  allowNextSymbol = true
+  await page.getByRole('button', { name: '重试', exact: true }).tap()
+  await expect(page.locator('.detail-summary')).toContainText('搜索标的 · 600520')
+})
+
+test('phone opens stock detail at the top and restores the list on back', async ({ page }, info) => {
+  test.skip(info.project.name !== 'phone-landscape')
+  await stubApi(page)
+  await page.route('**/api/v1/symbols?*', route => route.fulfill({
+    json: { code: 0, data: [{ ...stock, id: 41, type: 'stock' }] },
+  }))
+  await page.goto('/stocks')
+  const nameCell = page.getByRole('row', { name: '600519 贵州茅台' }).locator('.name')
+  await expect(nameCell).toBeVisible()
+  await page.evaluate(() => scrollTo(0, 160))
+  await expect.poll(() => page.evaluate(() => scrollY)).toBe(160)
+  await nameCell.tap()
+  await expect(page.locator('.detail-summary')).toContainText('贵州茅台')
+  await expect.poll(() => page.evaluate(() => scrollY)).toBe(0)
+  await page.goBack()
+  await expect(nameCell).toBeVisible()
+  await expect.poll(() => page.evaluate(() => scrollY)).toBe(160)
+})
+
+test('stopping a stream keeps the partial response in the chat', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop')
+  await stubApi(page, () => true)
+  for (const endpoint of ['conversations', 'strategies', 'agents']) {
+    await page.route(new RegExp('/api/v1/' + endpoint + '(?:\\?|$)'), route => route.fulfill({
+      json: { code: 0, data: route.request().method() === 'POST' ? { id: 1, title: '测试' } : { items: [], total: 0 } },
+    }))
+  }
+  await page.addInitScript(() => {
+    const fetchFromNetwork = window.fetch.bind(window)
+    window.fetch = (input, init) => {
+      if (input !== '/api/v1/chat') return fetchFromNetwork(input, init)
+      return Promise.resolve(new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"type":"delta","seq":1,"content":"已收到的回复"}\n\n'))
+          init?.signal?.addEventListener('abort', () => controller.error(init.signal!.reason), { once: true })
+        },
+      }), { headers: { 'Content-Type': 'text/event-stream' } }))
+    }
+  })
+  await page.goto('/ai')
+  await page.locator('.ci-textarea').fill('测试主动停止')
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+  await expect(page.getByText('已收到的回复', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '停止', exact: true }).click()
+  await expect(page.getByText('已收到的回复', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('已停止生成', { exact: true })).toBeVisible()
+})
+
+test('desktop header focus still lets Escape close notifications and leave detail', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop')
+  await stubApi(page, () => true)
+  await page.goto('/market/detail')
+  await page.getByTitle('通知', { exact: true }).click()
+  const notifications = page.getByRole('dialog', { name: '通知中心' })
+  await expect(notifications).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(notifications).toHaveCount(0)
+  await expect(page).toHaveURL(/\/market\/detail$/)
+  await page.getByTitle(/切换到.*模式/).focus()
+  await page.keyboard.press('Escape')
+  await expect(page).toHaveURL(/\/market$/)
+})
+
 test('phone heatmap shows details on tap', async ({ page }, info) => {
   test.skip(!info.project.name.startsWith('phone'))
   await stubApi(page)
@@ -175,6 +265,22 @@ test('phone AI session drawer returns to the chat input', async ({ page }, info)
   const drawer = page.getByRole('dialog', { name: '会话与策略' })
   await expect(drawer.getByRole('button', { name: '聊天', exact: true })).toBeVisible()
   await drawer.getByRole('button', { name: '关闭会话与策略' }).tap()
+  await page.getByRole('button', { name: '会话与策略', exact: true }).tap()
+  await drawer.locator('.j-menu__item').first().tap()
+  await expect(drawer).toHaveCount(0)
+  const login = page.getByRole('dialog', { name: '登录或注册' })
+  await login.getByLabel('用户名').tap()
+  await expect(login.getByLabel('用户名')).toBeFocused()
+  await login.getByRole('button', { name: '关闭', exact: true }).tap()
+
+  await page.locator('.symbol-picker__trigger').tap()
+  const picker = page.locator('.symbol-picker__panel')
+  await expect(picker).toBeVisible()
+  const bounds = (await picker.boundingBox())!
+  const main = page.locator('.ai-main')
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+  expect(await main.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
+  await page.locator('.symbol-picker__trigger').tap()
   await page.locator('.ci-textarea').fill('布局回归检查')
   await expect(page.getByRole('button', { name: '发送', exact: true })).toBeEnabled()
   await expectNoPageOverflow(page)
