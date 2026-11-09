@@ -31,6 +31,8 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined
           if (id.includes('lightweight-charts')) return 'charts'
+          // Keep the login page's lazy scroll effects out of the initial vendor chunk.
+          if (id.includes('/node_modules/gsap/')) return 'landing-motion'
           // 其余三方依赖统一进 vendor chunk（含 axios/vue/pinia/vue-router）。
           // 不要把 axios 单独切一块：axios 1.19 内部对命名空间助手有跨 chunk 引用，
           // 与项目 http.ts chunk 形成循环依赖，生产构建下求值顺序错误，
