@@ -28,8 +28,8 @@ def main():
             expected={}
             if key=='zhishu':
                 codes=[m['code'] for m in options['members']]
-                end=datetime.fromisoformat(rows[-1]['ts']).replace(tzinfo=UTC)
-                stamp=end.astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d%H%M%S') if case['period']=='15m' else end.strftime('%Y%m%d')
+                end=datetime.fromtimestamp(ts(rows[-1]['ts']),UTC)
+                stamp=end.astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d%H%M%S') if case['period'] in {'1m','5m','15m','30m','60m'} else end.strftime('%Y%m%d')
                 arrays=list(_load_rows(codes,'1M' if case['period']=='1mon' else case['period'],options['start'].replace('-',''),stamp,'qfq'))
                 if options['weighting']=='custom':arrays[8]=[options['members'][i]['weight'] for i in arrays[0]]
                 raw=ZHISHU(*arrays,method=2 if options['weighting']=='custom' else 1,base=float(options['base']))
@@ -41,6 +41,11 @@ def main():
                           'zhishu_count':[values.get(ts(r['ts']),(None,None))[1] for r in rows]}
             elif key=='ma':
                 for n in options.get('periods',[5,10,20,30]):expected['ma'+str(n)]=zb.MA([r['close'] for r in rows],n)
+            elif key=='volume':
+                expected['volume']=[r['volume'] for r in rows]
+                for n in (5,10):expected[f'volume_ma{n}']=zb.MA(expected['volume'],n)
+            elif key=='amount':
+                expected['amount']=[r['amount'] for r in rows]
             else:
                 native=getattr(zb,key.upper());signature=list(inspect.signature(native).parameters.values())
                 count=len(d['inputs']);inputs=[]

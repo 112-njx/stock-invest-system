@@ -14,3 +14,4 @@ stock_backend/.pytest_cache
 stock_backend/.ruff_cache
 stock_backend/celerybeat-schedule*
 stock_backend/tests
+native/market_indicators/target

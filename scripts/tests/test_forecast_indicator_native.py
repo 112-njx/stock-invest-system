@@ -1,9 +1,12 @@
 """Run in the StockDB image with PYTHONPATH=/opt."""
 from datetime import date, timedelta
+import os
 from pathlib import Path
+import sys
 from unittest import TestCase, main, skipUnless
 
-SDK_DIR = "/opt/stockdb/pybao"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+SDK_DIR = os.environ.get("STOCKDB_TEST_SDK_DIR", "/opt/stockdb/pybao")
 FEATURE = "forecast_features"
 
 

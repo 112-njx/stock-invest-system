@@ -10,4 +10,4 @@ EMA20 以首 20 根收盘均值初始化，ATR14 以首 14 根真实波幅的均
 
 Redis 按标的、来源、复权口径和特征版本保存计算状态。重复请求复用已算结果，行情只追加时只将新增 K 线送入原生模块。历史补录、删减或前复权重算导致旧数据指纹变化时全量预热。历史仍会重新读取和校验，用于识别任意日期的修订。当前前复权序列用于当前快照，历史评估时还需验证复权数据在当时是否可用。
 
-本地 Docker 由 `deploy/stockdb/Dockerfile` 构建 Linux 扩展并验证 Python 可以导入。Windows 独立运行指标桥时可在 `native/market_indicators` 执行 `cargo build --release --locked`，使用 CPython 3.12 或更高版本，将构建的 `market_indicators.dll` 作为 `market_indicators.pyd` 安装到对应 Python 的模块路径。
+Docker 和 Windows 的构建、加载方式见[本地行情数据源](local-market-sources.md#阶段-2统一指标入口)。

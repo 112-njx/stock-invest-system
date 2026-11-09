@@ -35,7 +35,7 @@ class BridgeTests(unittest.TestCase):
         def native(sdk_dir,payload):
             if payload['names']==['zhishu']:
                 entered.set();self.assertTrue(release.wait(3))
-            return [{**row,'macd_hist':0} for row in payload['rows']]
+            return [{**row,'macd_hist':0,'forecast_features':{'ema20':10.5}} for row in payload['rows']]
         server=make_server('',host='127.0.0.1',port=0,service=QueryService(lambda *a:(ROWS,{})))
         thread=Thread(target=server.serve_forever,daemon=True);thread.start()
         base=f'http://127.0.0.1:{server.server_port}'

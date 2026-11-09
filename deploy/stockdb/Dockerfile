@@ -1,4 +1,4 @@
-FROM rust:1.89-bookworm AS forecast-indicators-build
+FROM rust:1.89-bookworm AS market-indicators-build
 WORKDIR /build
 ENV PYO3_NO_PYTHON=1
 COPY native/market_indicators/Cargo.toml native/market_indicators/Cargo.lock ./
@@ -18,8 +18,8 @@ COPY deploy/stockdb/stockdb.conf /opt/stockdb/stockdb.conf
 COPY deploy/stockdb/supervise.py deploy/stockdb/healthcheck.py deploy/stockdb/update_control.py /opt/
 COPY stock_backend/app/services/stockdb_files.py /opt/stockdb_files.py
 COPY stock_backend/app/services/indicator_registry.py stock_backend/app/services/indicator_catalog.json /opt/
-COPY scripts/stockdb_sdk_bridge.py /opt/stockdb_sdk_bridge.py
-COPY --from=forecast-indicators-build /build/target/release/libmarket_indicators.so /opt/market_indicators.abi3.so
+COPY scripts/stockdb_sdk_bridge.py scripts/market_indicator_library.py /opt/
+COPY --from=market-indicators-build /build/target/release/libmarket_indicators.so /opt/market_indicators.abi3.so
 RUN PYTHONPATH=/opt python -c "import market_indicators; assert market_indicators.FEATURE_VERSION >= 1"
 EXPOSE 7899 7900
 ENTRYPOINT ["python", "/opt/supervise.py"]
