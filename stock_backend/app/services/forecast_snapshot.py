@@ -5,11 +5,11 @@ import json
 import logging
 import math
 from datetime import UTC, datetime, time, timedelta
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
 from app.core.exceptions import ApiError
+from app.data_providers.base import DAILY_SESSION_CLOSE as CLOSE, DAILY_SESSION_TZ as SHANGHAI
 from app.models.symbol import Symbol
 from app.repositories import kline_repo
 from app.services import sdk_indicators
@@ -17,8 +17,6 @@ from app.services.indicator_registry import FORECAST_FEATURES, FORECAST_FEATURE_
 from app.utils.market_cache import as_utc, kline_bar_to_dict
 from app.utils.redis_client import get_redis_client
 
-SHANGHAI = ZoneInfo("Asia/Shanghai")
-CLOSE = time(15)
 MIN_BARS = 40
 RESULT_WINDOW = 40
 CACHE_TTL = 7 * 24 * 3600
@@ -31,9 +29,8 @@ def _closed_history(db, symbol_id, as_of):
     # Daily timestamps identify the session. Fetch through the end of its local
     # date so both UTC-midnight and intraday-stamped daily records are covered.
     end = datetime.combine(last_possible_day, time.max, SHANGHAI).astimezone(UTC)
-    bars = kline_repo.get_bars(
-        db, "1d", symbol_id, datetime(1900, 1, 1, tzinfo=UTC), end,
-        limit=MAX_FORECAST_ROWS + 1, latest=True,
+    bars = kline_repo.latest_bars(
+        db, "1d", symbol_id, limit=MAX_FORECAST_ROWS + 1, end=end,
     )
     if len(bars) > MAX_FORECAST_ROWS:
         raise ApiError(status_code=409, msg="日 K 线历史超过特征预热上限")
@@ -47,7 +44,7 @@ def _closed_history(db, symbol_id, as_of):
         session = as_utc(bar.ts).astimezone(SHANGHAI).date()
         if session > last_possible_day:
             continue
-        if session.weekday() >= 5 or (bar.volume == 0 and bar.amount == 0):
+        if not bar.close_confirmed or session.weekday() >= 5 or (bar.volume == 0 and bar.amount == 0):
             # Skip non-session records and no-trade placeholders. Missing
             # sessions stay missing and do not generate synthetic candles.
             excluded += 1

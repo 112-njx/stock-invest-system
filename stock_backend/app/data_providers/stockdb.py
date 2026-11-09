@@ -2,15 +2,17 @@
 
 import logging
 import math
+import os
 import re
 from bisect import bisect_right
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 
 from app.core.config import get_settings
-from .base import BaseDataProvider, KlineBar, ProviderError
+from .base import DAILY_SESSION_TZ, BaseDataProvider, KlineBar, ProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +38,37 @@ class StockDBProvider(BaseDataProvider):
 
     @staticmethod
     def _check_maintenance():
-        import os
         if os.environ.get('STOCKDB_CONTROL_DIR'):
             from app.services.stockdb_files import ensure_available
             try:
                 ensure_available(os.environ['STOCKDB_CONTROL_DIR'])
             except RuntimeError as exc:
                 raise ProviderError(str(exc)) from exc
+
+    @staticmethod
+    def daily_confirmation_cutoff(requested_at: datetime) -> datetime | None:
+        """Reading the same local files again cannot finalize an intraday bar."""
+        from app.services.stockdb_files import read_json
+
+        control = os.environ.get("STOCKDB_CONTROL_DIR")
+        if not control:
+            # Unmanaged installations do not expose update metadata.
+            return requested_at
+        try:
+            state = read_json(Path(control) / "version.json", {})
+            if state.get("status") != "ready":
+                return None
+            published = datetime.fromtimestamp(state["updated_at"], UTC)
+            if published > requested_at:
+                return None
+            if state.get("download_started_at") is not None:
+                return min(requested_at, datetime.fromtimestamp(state["download_started_at"], UTC))
+            # Older manifests record completion only. Trust earlier sessions,
+            # but do not assume the download started after that day's close.
+            published = published.astimezone(DAILY_SESSION_TZ)
+            return min(requested_at, published.replace(hour=0, minute=0, second=0, microsecond=0))
+        except (OSError, ValueError, TypeError, KeyError, OverflowError):
+            return None
 
     def can_fetch_kline(self, asset_type: str, period: str) -> bool:
         if period in {"1m", "5m", "30m", "60m"}:
