@@ -8,7 +8,7 @@
 
 7900 的 `market_indicator_library.py` 分发计算请求。现有指标目录、参数、交叉信号和输出字段沿用 `zb_core`。新增公式写在项目的 `native/market_indicators` Rust + PyO3 工程中，走势特征 `forecast_features` 是首个调用。两个原生模块独立编译，可以在同一个请求中计算，调用方统一使用 `sdk_indicators.calculate`。容器就绪检查会执行两套引擎的计算。
 
-`zhishu` 按图表周期与截止时间从项目行情读取器读取成分股的前复权历史。单成分股与多成分股共用读取路径，保留原生等权、自定义权重和 UTC 时间对齐。切换 7899 读取器会隔离 `zhishu` 成分数据缓存。
+`zhishu` 按图表周期与截止时间从项目行情读取器读取成分股的前复权历史。单成分股与多成分股共用读取路径，保留原生等权、自定义权重和 UTC 时间对齐。7900 每次启动会创建新的 `zhishu` 成分数据缓存命名空间，首次请求重新读取当前快照，同一运行期间的重复请求继续复用缓存。
 
 Docker 构建会产出 `market_indicators.abi3.so`。独立运行 Windows 查询桥时，先用 CPython 3.12 或更高版本构建并验证导入：
 

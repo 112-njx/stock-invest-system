@@ -65,9 +65,9 @@ Push-Location stock_backend
 ./.venv/Scripts/python.exe ../scripts/accept_indicator_api.py --out ../.artifacts/indicators/api-final
 Pop-Location
 
-docker cp scripts/accept_indicator_oracle.py stock-invest-dev-stockdb-local-1:/tmp/accept_indicator_oracle.py
-docker cp .artifacts/indicators/api-final/api-matrix.json stock-invest-dev-stockdb-local-1:/tmp/indicator-api-matrix.json
-docker exec stock-invest-dev-stockdb-local-1 python -B /tmp/accept_indicator_oracle.py /tmp/indicator-api-matrix.json
+docker cp scripts/accept_indicator_oracle.py stock-invest-dev-stockdb-local-1:/opt/accept_indicator_oracle.py
+docker cp .artifacts/indicators/api-final/api-matrix.json stock-invest-dev-stockdb-local-1:/opt/indicator-api-matrix.json
+docker exec stock-invest-dev-stockdb-local-1 python -B /opt/accept_indicator_oracle.py /opt/indicator-api-matrix.json
 
 Push-Location stock_frontend
 npm run verify:default-symbol

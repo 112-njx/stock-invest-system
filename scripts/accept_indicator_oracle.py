@@ -19,6 +19,8 @@ def main():
     sys.path.insert(0,args.sdk_dir)
     import stock_sdk
     if os.environ.get('STOCKDB_READER') == 'managed':
+        # The managed Docker image keeps the reader adapter above stockdb/pybao.
+        sys.path.insert(0, str(Path(args.sdk_dir).resolve().parents[1]))
         from market_data_sdk import install
         install(stock_sdk)
     else:

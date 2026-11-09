@@ -23,8 +23,10 @@ def calculate_forecast(rows, checkpoint, expected_version):
     return checkpoint
 
 
-def calculate_rows(payload, registry, composite):
-    rows, names, params = payload['rows'], payload['names'], payload.get('params') or {}
+def validate_request(payload, registry):
+    if not isinstance(payload, dict):
+        raise ValueError('invalid indicator payload')
+    rows, names, params = payload.get('rows'), payload.get('names'), payload.get('params') or {}
     forecast = registry.FORECAST_FEATURES
     if not isinstance(rows, list) or not 1 <= len(rows) <= registry.MAX_HISTORY_ROWS:
         raise ValueError('invalid history length')
@@ -45,6 +47,16 @@ def calculate_rows(payload, registry, composite):
     ) or (checkpoint is not None and (not return_checkpoint or not isinstance(checkpoint, str)
                                        or len(checkpoint) > 32_768)):
         raise ValueError('invalid incremental indicator request')
+    if forecast in names and (
+        payload.get('period') != '1d' or len(rows) > registry.MAX_FORECAST_ROWS or params.get(forecast)
+    ):
+        raise ValueError('forecast features require bounded daily history and no parameters')
+    return rows, names, params, checkpoint, return_checkpoint
+
+
+def calculate_rows(payload, registry, composite):
+    rows, names, params, checkpoint, return_checkpoint = validate_request(payload, registry)
+    forecast = registry.FORECAST_FEATURES
 
     if any(name != forecast for name in names):
         from zhibiao import zb
@@ -66,9 +78,6 @@ def calculate_rows(payload, registry, composite):
 
     for name in names:
         if name == forecast:
-            if (payload.get('period') != '1d' or len(rows) > registry.MAX_FORECAST_ROWS
-                    or params.get(name)):
-                raise ValueError('forecast features require bounded daily history and no parameters')
             checkpoint = calculate_forecast(output, checkpoint, registry.FORECAST_FEATURE_VERSION)
             continue
 

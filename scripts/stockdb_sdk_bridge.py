@@ -18,8 +18,9 @@ from pathlib import Path
 from threading import Lock
 from time import monotonic, time
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
-from market_indicator_library import calculate_rows
+from market_indicator_library import calculate_rows, validate_request
 
 
 def _industry_sdk(client, code, frequency, end):
@@ -363,7 +364,11 @@ def load_composite_arrays(sdk_dir, codes, frequency, start, end, timeout=40, max
         ensure_available(control)
         version = data_version(control)
     cache_dir = os.environ.get('STOCKDB_CACHE_DIR')
-    if use_cache and version and cache_dir:
+    reader_session = os.environ.get('STOCKDB_READER_SESSION')
+    # A fresh bridge opens a fresh reader snapshot, even if an out-of-band
+    # file replacement did not update the control directory's version.
+    cache_version = f'{version}:{reader_session}'
+    if use_cache and version and cache_dir and reader_session:
         try:
             cache = FullResultCache(Path(cache_dir) / 'composite-inputs', max_bytes=64 * 1024 * 1024)
         except (OSError, sqlite3.DatabaseError):
@@ -376,7 +381,7 @@ def load_composite_arrays(sdk_dir, codes, frequency, start, end, timeout=40, max
     if cache:
         for index, code in enumerate(codes):
             try:
-                saved = cache.get(cache_key(code), frequency, version)
+                saved = cache.get(cache_key(code), frequency, cache_version)
                 if saved:
                     results[index] = [[0] * len(saved)] + [[row[f] for row in saved] for f in fields]
             except (OSError, ValueError, KeyError, TypeError, sqlite3.DatabaseError):
@@ -412,7 +417,7 @@ def load_composite_arrays(sdk_dir, codes, frequency, start, end, timeout=40, max
                 if cache and arrays[0]:
                     try:
                         saved = [dict(zip(fields, values, strict=True)) for values in zip(*arrays[1:], strict=True)]
-                        cache.put(cache_key(codes[index]), frequency, version, saved)
+                        cache.put(cache_key(codes[index]), frequency, cache_version, saved)
                     except (OSError, ValueError, sqlite3.DatabaseError):
                         logging.getLogger('stockdb.bridge').warning('composite input cache write failed; using SDK result')
                 if progress is not None:
@@ -562,18 +567,18 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
                 self.send_error(404)
                 return
             try:
+                registry = indicator_registry()
                 size = int(self.headers.get('Content-Length', '0'))
-                if not 0 < size <= indicator_registry().MAX_REQUEST_BYTES:
+                if not 0 < size <= registry.MAX_REQUEST_BYTES:
                     raise ValueError('invalid request size')
                 self.connection.settimeout(10)
                 payload = json.loads(self.rfile.read(size))
-                if not isinstance(payload, dict) or not isinstance(payload.get('names'), list):
-                    raise ValueError('invalid indicator payload')
+                validate_request(payload, registry)
                 # Each native job already runs in an isolated child process.
                 # A long basket read must not occupy the ordinary indicator lane.
                 names = payload['names']
                 is_composite = 'zhishu' in names
-                is_forecast = not is_composite and indicator_registry().FORECAST_FEATURES in names
+                is_forecast = not is_composite and registry.FORECAST_FEATURES in names
                 lane = composite_lock if is_composite else forecast_lock if is_forecast else indicator_lock
                 if not lane.acquire(timeout=0 if is_forecast else 5):
                     self.respond(b'{"error":"indicator engine busy; retry later"}', 503)
@@ -673,6 +678,7 @@ def main():
     args = parser.parse_args()
     if args.native_dir:
         sys.path.insert(0, str(args.native_dir.resolve(strict=True)))
+    os.environ['STOCKDB_READER_SESSION'] = uuid4().hex
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     make_server(args.sdk_dir, port=args.port).serve_forever()
 

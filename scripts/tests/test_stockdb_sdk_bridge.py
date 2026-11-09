@@ -86,10 +86,15 @@ def _load_rows(codes,*args):
             control=root/'control';control.mkdir()
             state=control/'version.json'
             state.write_text(json.dumps(dict(status='ready',version='first')))
-            (root/'zhibiao.py').write_text('''def _load_rows(codes,*args):
-    return [[0],[20250101]]+[[float(int(codes[0]))] for _ in range(8)]
+            source = root/'source.txt'
+            source.write_text('0', encoding='ascii')
+            (root/'zhibiao.py').write_text('''from pathlib import Path
+def _load_rows(codes,*args):
+    offset = int(Path(__file__).with_name('source.txt').read_text())
+    return [[0],[20250101]]+[[float(int(codes[0]) + offset)] for _ in range(8)]
 ''',encoding='utf-8')
-            with patch.dict(os.environ, {'STOCKDB_CONTROL_DIR':str(control),'STOCKDB_CACHE_DIR':str(root/'cache')}):
+            with patch.dict(os.environ, {'STOCKDB_CONTROL_DIR':str(control),'STOCKDB_CACHE_DIR':str(root/'cache'),
+                                         'STOCKDB_READER_SESSION':'first-reader'}):
                 args=(str(root),['000001','000002'],'15m','20250101','20250102')
                 expected=load_composite_arrays(*args,timeout=5)
                 with patch('stockdb_sdk_bridge.multiprocessing.get_context') as context:
@@ -109,6 +114,18 @@ def _load_rows(codes,*args):
                 fetched.clear()
                 self.assertEqual(load_composite_arrays(*args,timeout=5,progress=lambda i,n:fetched.append(i)),expected)
                 self.assertEqual(sorted(fetched),[0,1])
+
+                # A restart opens replacement source files even when the
+                # updater did not register a new control version.
+                single = (str(root), ['000001'], '1d', '20250101', '20250102')
+                self.assertEqual(load_composite_arrays(*single, timeout=5)[5], [1.])
+                source.write_text('10', encoding='ascii')
+                self.assertEqual(load_composite_arrays(*single, timeout=5)[5], [1.])
+                with patch.dict(os.environ, {'STOCKDB_READER_SESSION':'reopened-reader'}):
+                    self.assertEqual(load_composite_arrays(*single, timeout=5)[5], [11.])
+                    with patch('stockdb_sdk_bridge.multiprocessing.get_context') as context:
+                        self.assertEqual(load_composite_arrays(*single)[5], [11.])
+                        context.return_value.Process.assert_not_called()
                 (control/'maintenance.json').write_text('{}')
                 with self.assertRaisesRegex(RuntimeError,'正在更新'):
                     load_composite_arrays(*args)
