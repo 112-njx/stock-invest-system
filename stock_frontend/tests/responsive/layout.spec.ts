@@ -11,6 +11,7 @@ const routes = {
   '/stockdb': '.blueprint',
   '/stockdb/trends': '.blueprint--trends',
   '/ai': '.ai-shell',
+  '/forecast': '.forecast-page',
   '/admin': '.admin-console',
   '/forgot-password': '.auth-card',
   '/reset-password': '.auth-card',
@@ -96,6 +97,32 @@ test('account page links focus the inline homepage login form', async ({ page },
     await expect(form).toBeFocused()
     await expect(form.getByLabel('用户名')).toBeInViewport()
   }
+})
+
+test('forecast navigation opens a stock history preview', async ({ page }, info) => {
+  if (!['desktop', 'phone-320', 'phone-landscape'].includes(info.project.name)) test.skip()
+  await stubApi(page)
+  await page.route('**/api/v1/stocks/search-directory', route => route.fulfill({ json: {
+    code: 0, data: { version: 'forecast-fixture', source: 'stockdb', items: [
+      { code: stock.code, name: stock.name, type: 'stock', market: stock.market, ordinal: 1, latest_date: '2026-01-05' },
+    ] },
+  } }))
+  await page.route('**/api/v1/kline?*', route => {
+    const params = new URL(route.request().url()).searchParams
+    expect(params.get('symbol')).toBe(stock.code)
+    expect(params.get('period')).toBe('1d')
+    return route.fulfill({ json: { code: 0, data: [
+      { ts: '2026-01-05T07:00:00Z', open: 1490, high: 1510, low: 1480, close: 1500, volume: 100, amount: 150000 },
+    ] } })
+  })
+  await page.goto('/ai')
+  if (info.project.name !== 'desktop') await page.getByRole('button', { name: '菜单', exact: true }).click()
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '预测走势' }).click()
+  await expect(page).toHaveURL(/\/forecast$/)
+  await page.getByRole('combobox', { name: '搜索股票名称、拼音或代码' }).fill(stock.code)
+  await page.getByRole('option', { name: /600519/ }).click()
+  await expect(page.getByRole('cell', { name: '1,500.00' })).toBeVisible()
+  await expectNoPageOverflow(page)
 })
 
 test('inline homepage login returns to the requested route', async ({ page }, info) => {

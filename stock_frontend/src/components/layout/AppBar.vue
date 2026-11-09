@@ -22,7 +22,7 @@ const menuButton = ref<HTMLButtonElement>()
 const searchButton = ref<HTMLButtonElement>()
 const titles: Record<string, string> = {
   'market-home': '行情', 'market-detail': '行情详情', stocks: '股票',
-  stockdb: '指数', heatmap: '大盘云图', ai: 'AI 策略', admin: '管理后台',
+  stockdb: '指数', heatmap: '大盘云图', ai: 'AI 策略', forecast: '预测走势', admin: '管理后台',
 }
 const title = computed(() => titles[String(route.name)] || '量化交易终端')
 watch(() => route.fullPath, () => { opened.value = null })
@@ -67,6 +67,7 @@ onBeforeUnmount(() => clearTimeout(prepareTimer))
       <RouterLink to="/stockdb" class="appbar__link" @pointerenter="prepareBlueprint" @focus="prepareBlueprint">指数</RouterLink>
       <RouterLink to="/heatmap" class="appbar__link">大盘</RouterLink>
       <RouterLink to="/ai" class="appbar__link">AI 策略</RouterLink>
+      <RouterLink :to="{ name: 'forecast' }" class="appbar__link">预测走势</RouterLink>
       <RouterLink v-if="user.user?.username === 'root' && user.user.is_admin" to="/admin" class="appbar__link appbar__admin-mobile">管理后台</RouterLink>
     </nav>
 

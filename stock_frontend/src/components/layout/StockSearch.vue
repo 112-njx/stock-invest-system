@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch } from 'vue'
 import { addWatchlist } from '@/api/market'
 import { fetchStockDirectory, type StockDirectory } from '@/api/stockSearch'
 import type { IndexedStock } from '@/utils/stockSearch'
@@ -11,6 +11,7 @@ import { toast } from '@/utils/toast'
 
 const props = defineProps<{ browse?: boolean }>()
 const emit = defineEmits<{ select: [code: string] }>()
+const optionsId = useId()
 const market = useMarketStore()
 const user = useUserStore()
 const ws = useWsStore()
@@ -147,8 +148,8 @@ onUnmounted(() => { alive = false; document.removeEventListener('pointerdown', c
     <input
       v-model="query" class="stock-search__input" type="text" maxlength="64"
       placeholder="股票名称 / 拼音 / 代码" aria-label="搜索股票名称、拼音或代码"
-      role="combobox" aria-autocomplete="list" aria-controls="stock-search-options"
-      :aria-expanded="open" :aria-activedescendant="open && active >= 0 && results[active] ? `stock-option-${results[active]?.code}` : undefined"
+      role="combobox" aria-autocomplete="list" :aria-controls="open ? optionsId : undefined"
+      :aria-expanded="open" :aria-activedescendant="open && active >= 0 && results[active] ? `${optionsId}-${results[active]?.code}` : undefined"
       autocomplete="off" @focus="show" @click="show" @keydown="onKey"
       @compositionstart="composing = true" @compositionend="composing = false"
     />
@@ -161,13 +162,13 @@ onUnmounted(() => { alive = false; document.removeEventListener('pointerdown', c
       <div v-else-if="stocks.length && !results.length" class="stock-search__message" role="status">未找到匹配股票</div>
       <div class="stock-search__heading" aria-hidden="true"><span>序号</span><span>代码</span><span>股票名称</span><span>市场</span><span>{{ browse ? '详情' : '关注' }}</span></div>
       <div
-        id="stock-search-options" ref="list" class="stock-search__list" role="listbox" aria-label="本地股票"
+        :id="optionsId" ref="list" class="stock-search__list" role="listbox" aria-label="本地股票"
         :style="{ height: `${Math.min(results.length * ROW_HEIGHT, VIEW_HEIGHT)}px` }"
         @scroll="scrollTop = ($event.target as HTMLElement).scrollTop"
       >
         <div :style="{ height: `${results.length * ROW_HEIGHT}px`, position: 'relative' }">
           <button
-            v-for="(stock, offset) in visible" :id="`stock-option-${stock.code}`" :key="stock.code"
+            v-for="(stock, offset) in visible" :id="`${optionsId}-${stock.code}`" :key="stock.code"
             class="stock-search__row" :class="{ 'is-active': active === start + offset }" type="button"
             role="option" :aria-selected="active === start + offset" :aria-disabled="!browse && (watched.has(stock.code) || Boolean(adding))"
             tabindex="-1" :style="{ top: `${(start + offset) * ROW_HEIGHT}px` }"
