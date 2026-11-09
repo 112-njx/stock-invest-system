@@ -29,92 +29,124 @@ const adjustmentRows = [
 </script>
 
 <template>
-  <section class="dataset-preview" aria-label="数据字段示例">
-    <div class="dataset-switch">
-      <button v-for="panel in panels" :key="panel.id" type="button"
+  <section class="dataset-accordion" aria-label="数据字段示例">
+    <div v-for="panel in panels" :key="panel.id" class="dataset-slice" :class="{ 'is-active': selected === panel.id }">
+      <button type="button"
         :id="'dataset-button-' + panel.id" :aria-expanded="selected === panel.id"
         :aria-controls="'dataset-' + panel.id" @click="selected = panel.id">{{ panel.label }}</button>
-    </div>
 
-    <div id="dataset-quote" v-show="selected === 'quote'" role="region" aria-labelledby="dataset-button-quote" class="dataset-panel">
-      <header class="dataset-heading">
-        <span><strong>工业富联</strong> <small>601138.SH</small></span>
-        <time :datetime="sampleDate">{{ sampleDate }} 收盘样本</time>
-      </header>
-      <div class="dataset-quote">
-        <div><small>收盘价 · 元</small><strong class="dataset-number is-down">40.71</strong></div>
-        <span class="dataset-move is-down" aria-label="涨跌额负3.58元，涨跌幅负8.08%">−3.58 <b>−8.08%</b></span>
+      <div :id="'dataset-' + panel.id" v-show="selected === panel.id" role="region"
+        :aria-labelledby="'dataset-button-' + panel.id" class="dataset-panel">
+        <template v-if="panel.id === 'quote'">
+          <header class="dataset-heading">
+            <span><strong>工业富联</strong> <small>601138.SH</small></span>
+            <time :datetime="sampleDate">{{ sampleDate }} 收盘样本</time>
+          </header>
+          <div class="dataset-quote">
+            <div><small>收盘价 · 元</small><strong class="dataset-number is-down">40.71</strong></div>
+            <dl class="dataset-move">
+              <div><dt>涨跌额</dt><dd class="is-down">−3.58 元</dd></div>
+              <div><dt>涨跌幅</dt><dd class="is-down">−8.08%</dd></div>
+            </dl>
+          </div>
+          <dl class="dataset-metrics">
+            <div v-for="[label, value] in quoteMetrics" :key="label">
+              <dt>{{ label }}</dt><dd>{{ value }}</dd>
+            </div>
+          </dl>
+        </template>
+
+        <template v-else-if="panel.id === 'sector'">
+          <header class="dataset-heading">
+            <span><strong>电子</strong> <small>申万一级 · 801080.SL</small></span>
+            <time :datetime="sampleDate">{{ sampleDate }} 收盘样本</time>
+          </header>
+          <dl class="dataset-metrics dataset-sector-metrics">
+            <div><dt>板块涨跌</dt><dd class="is-down">−3.57%</dd></div>
+            <div><dt>上涨 / 下跌</dt><dd><span class="is-up">32</span> / <span class="is-down">454</span> 只</dd></div>
+          </dl>
+          <div class="scroll-x" tabindex="0" role="region" aria-label="代表成分股表格">
+            <table class="dataset-table">
+              <caption>代表成分股</caption>
+              <thead><tr><th scope="col">股票</th><th scope="col">收盘价（元）</th><th scope="col">涨跌幅</th></tr></thead>
+              <tbody>
+                <tr v-for="[code, name, close, change] in constituents" :key="code">
+                  <th scope="row">{{ name }} <small>{{ code }}</small></th><td>{{ close }}</td><td class="is-down">{{ change }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+
+        <template v-else>
+          <header class="dataset-heading">
+            <span><strong>现金分红示例</strong> <small>每股派息 1.00 元</small></span>
+            <small>模拟数据</small>
+          </header>
+          <div class="scroll-x" tabindex="0" role="region" aria-label="收盘价对照表格">
+            <table class="dataset-table">
+              <caption>同一只股票的收盘价对照（元）</caption>
+              <thead><tr><th scope="col">交易日</th><th scope="col">原始价</th><th scope="col">复权因子</th><th scope="col">前复权价</th></tr></thead>
+              <tbody>
+                <tr v-for="[day, close, factor, adjusted] in adjustmentRows" :key="day">
+                  <th scope="row">{{ day }}</th><td>{{ close }}</td><td>{{ factor }}</td><td class="dataset-adjusted">{{ adjusted }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="dataset-note">以除息日的复权因子为基准，前一日收盘价折算为 9.00 元，除息日收盘价为 9.20 元。</p>
+        </template>
       </div>
-      <dl class="dataset-metrics">
-        <div v-for="[label, value] in quoteMetrics" :key="label">
-          <dt>{{ label }}</dt><dd>{{ value }}</dd>
-        </div>
-      </dl>
-    </div>
-
-    <div id="dataset-sector" v-show="selected === 'sector'" role="region" aria-labelledby="dataset-button-sector" class="dataset-panel">
-      <header class="dataset-heading">
-        <span><strong>电子</strong> <small>申万一级 · 801080.SL</small></span>
-        <time :datetime="sampleDate">{{ sampleDate }} 收盘样本</time>
-      </header>
-      <dl class="dataset-metrics dataset-sector-metrics">
-        <div><dt>板块涨跌</dt><dd class="is-down">−3.57%</dd></div>
-        <div><dt>上涨 / 下跌</dt><dd><span class="is-up">32</span> / <span class="is-down">454</span> 只</dd></div>
-      </dl>
-      <table class="dataset-table">
-        <caption>代表成分股</caption>
-        <thead><tr><th scope="col">股票</th><th scope="col">收盘价（元）</th><th scope="col">涨跌幅</th></tr></thead>
-        <tbody>
-          <tr v-for="[code, name, close, change] in constituents" :key="code">
-            <th scope="row">{{ name }} <small>{{ code }}</small></th><td>{{ close }}</td><td class="is-down">{{ change }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div id="dataset-adjustment" v-show="selected === 'adjustment'" role="region" aria-labelledby="dataset-button-adjustment" class="dataset-panel">
-      <header class="dataset-heading">
-        <span><strong>现金分红示例</strong> <small>每股派息 1.00 元</small></span>
-        <small>模拟数据</small>
-      </header>
-      <table class="dataset-table">
-        <caption>同一只股票的收盘价对照（元）</caption>
-        <thead><tr><th scope="col">交易日</th><th scope="col">原始价</th><th scope="col">复权因子</th><th scope="col">前复权价</th></tr></thead>
-        <tbody>
-          <tr v-for="[day, close, factor, adjusted] in adjustmentRows" :key="day">
-            <th scope="row">{{ day }}</th><td>{{ close }}</td><td>{{ factor }}</td><td class="dataset-adjusted">{{ adjusted }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <p class="dataset-note">前复权以除息日价格为基准，把前一日收盘价折算为 9.00 元。这样跨除息日比较时，可以看到 9.00 → 9.20 元的变化。</p>
     </div>
   </section>
 </template>
 
 <style scoped>
-.dataset-preview { flex: 1; min-width: 0; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-panel-2); }
-.dataset-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--border-strong); }
-.dataset-switch button { min-height: 44px; border-bottom: 2px solid transparent; color: var(--text-secondary); font-weight: 700; }
-.dataset-switch button:hover,
-.dataset-switch button[aria-expanded="true"] { background: var(--accent-soft); color: var(--landing-accent); }
-.dataset-switch button[aria-expanded="true"] { border-color: var(--landing-accent); }
-.dataset-switch button:focus-visible { outline-offset: -3px; }
-.dataset-panel { padding: clamp(10px, 1.5vw, 18px); font-size: 13px; font-variant-numeric: tabular-nums; }
+.dataset-accordion { display: flex; flex: 1; gap: 5px; min-height: 150px; }
+.dataset-slice {
+  display: flex;
+  flex: 0 0 46px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-panel-2);
+  transition: flex .36s ease, border-color .2s;
+}
+.dataset-slice.is-active { flex: 1 1 0; border-color: var(--landing-rule); }
+.dataset-slice button {
+  flex: 0 0 44px;
+  min-height: 44px;
+  writing-mode: vertical-rl;
+  letter-spacing: .13em;
+  font-weight: 720;
+}
+.dataset-slice button:hover,
+.dataset-slice.is-active button { background: var(--accent-soft); color: var(--landing-accent); }
+.dataset-slice button:focus-visible { outline-offset: -3px; }
+.dataset-panel {
+  flex: 1;
+  align-self: center;
+  min-width: 0;
+  padding: clamp(8px, 1.5vw, 18px);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
 .dataset-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 10px; }
 .dataset-heading strong { margin-inline-end: 4px; font-size: 16px; }
 .dataset-panel :is(small, time, dt, caption, thead) { color: var(--text-secondary); font-size: 12px; }
 .dataset-quote { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px 14px; margin-block: 12px; }
 .dataset-quote small, .dataset-number { display: block; }
 .dataset-number { font-size: 30px; line-height: 1.15; }
-.dataset-move { padding-bottom: 3px; }
-.dataset-move b { margin-inline-start: 4px; }
-.dataset-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 12px; margin: 0; }
+.dataset-move { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding-bottom: 3px; }
+.dataset-move dd { margin: 0; font-weight: 700; }
+.dataset-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 110px), 1fr)); column-gap: 12px; margin: 0; }
 .dataset-metrics > div { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 1px 6px; border-top: 1px solid var(--border); padding-block: 7px; }
 .dataset-metrics dd { margin: 0; font-weight: 650; }
 .dataset-sector-metrics { margin-top: 12px; }
 .dataset-table { width: 100%; border-collapse: collapse; text-align: right; margin-top: 6px; }
 .dataset-table caption { text-align: left; padding-block: 4px; }
-.dataset-table :is(th, td) { border-bottom: 1px solid var(--border); padding: 6px 2px; }
+.dataset-table :is(th, td) { border-bottom: 1px solid var(--border); padding: 6px 4px; white-space: nowrap; }
 .dataset-table th:first-child { text-align: left; }
 .dataset-table tbody th { font-weight: 600; }
 .dataset-table tbody small { display: inline-block; margin-inline-start: 3px; }
@@ -122,4 +154,5 @@ const adjustmentRows = [
 .dataset-panel .dataset-note { margin-top: 12px; font-size: 12px; }
 .is-down { color: var(--quote-down); }
 .is-up { color: var(--quote-up); }
+@media (prefers-reduced-motion: reduce) { .dataset-slice { transition: none; } }
 </style>
