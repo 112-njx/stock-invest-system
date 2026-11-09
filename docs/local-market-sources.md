@@ -40,7 +40,7 @@ docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d --b
 
 - RD：`STOCKDB_URL=http://stockdb-local:7899`；SDK 桥：`STOCKDB_SDK_URL=http://stockdb-local:7900`。仅容器内网可访问，不发布宿主端口。
 - `STOCKDB_HOST_DIR=D:/Free_stockdb/stockdb` 下的 `data`、`data1`、`data_app`、`mydb` 分别绑定挂载到 `/opt/stockdb/` 对应目录；源目录必须存在，数据不进入镜像。
-- 镜像从固定 SHA-256 的 v0.3.5 manylinux-x64 包中提取更新器和 Python 3.12 所需的 SDK 文件，并保留 MIT 声明。
+- 镜像从固定 SHA-256 的 v0.3.5 manylinux-x64 包中提取更新器、默认 `sync_url.txt` 和 Python 3.12 所需的 SDK 文件，并保留 MIT 声明。宿主机可通过挂载覆盖默认更新配置。
 - 容器总内存上限由 `STOCKDB_MEMORY_LIMIT` 控制，默认 2 GiB。
 - 项目读取器在临时目录恢复 LevelDB，原始文件的更新由容器控制器协调。
 - **禁止 Windows 服务、另一套 Compose 服务或更新器同时打开同一数据集。**不要依赖跨 Windows/Linux 文件锁互斥。
@@ -96,7 +96,7 @@ docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml -f deploy
 
 生产环境使用 `deploy/docker-compose.yml`，可按需叠加同一覆盖文件。
 
-项目读取器通过固定版本的 LevelDB 和 MessagePack 读取原 `data` 与 `data1`。
+项目读取器通过固定版本的 LevelDB 和 MessagePack 读取主库 `data` 和辅助库 `data1`。`data1` 为空时，行情服务可直接从主库启动。
 LevelDB 打开与 WAL 恢复需要的文件位于容器临时目录，原 SST 文件按路径只读引用，
 后台压缩在此镜像中禁用。原始文件更新继续通过现有控制器先停止读取进程，
 更新后再重新打开快照。7900 保留原有 SDK 的聚合、复权和指标实现，

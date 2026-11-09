@@ -10,7 +10,7 @@ ARG STOCKDB_URL=https://github.com/hello245m/free-stockdb/releases/download/%E6%
 ARG STOCKDB_SHA256=9ec47250f60cd35462446dfcf34db99ef33e6b73b3f02f0970ef329722c265cf
 RUN STOCKDB_URL="$STOCKDB_URL" STOCKDB_SHA256="$STOCKDB_SHA256" python -c "import urllib.request,hashlib,os; p='/tmp/stockdb.tar'; urllib.request.urlretrieve(os.environ['STOCKDB_URL'],p); assert hashlib.sha256(open(p,'rb').read()).hexdigest()==os.environ['STOCKDB_SHA256']" \
     && tar -xf /tmp/stockdb.tar -C /opt --wildcards \
-        'stockdb/数据更新' 'stockdb/pybao/stock_sdk.py' 'stockdb/pybao/zhibiao.py' \
+        'stockdb/数据更新' 'stockdb/sync_url.txt' 'stockdb/pybao/stock_sdk.py' 'stockdb/pybao/zhibiao.py' \
         'stockdb/pybao/stockdb.abi3.so' 'stockdb/pybao/zb_core.abi3.so' \
     && rm /tmp/stockdb.tar && chmod +x /opt/stockdb/数据更新
 

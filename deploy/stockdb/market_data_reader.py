@@ -210,7 +210,10 @@ class MarketData:
     tables = {'股票代码', '日k', '分钟k', '复权', '板块', '资金流', '退市'}
 
     def __init__(self, root):
-        self.snapshots = [Snapshot(root / name) for name in ('data', 'data1')]
+        self.snapshots = [Snapshot(root / 'data')]
+        secondary = root / 'data1'
+        if secondary.exists() and any(secondary.iterdir()):
+            self.snapshots.append(Snapshot(secondary))
 
     def get(self, key):
         for db in self.snapshots:

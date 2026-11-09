@@ -47,7 +47,7 @@ services:
       STOCKDB_CONTROL_DIR: /stockdb-control
       STOCKDB_CACHE_DIR: /var/cache/stockdb
     volumes:
-      - ../stock_backend/data/stockdb-control:/stockdb-control:ro
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - ../stock_backend/data/stockdb-cache:/var/cache/stockdb
       - type: bind
         source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data
