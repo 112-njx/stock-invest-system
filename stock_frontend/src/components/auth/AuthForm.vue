@@ -3,7 +3,7 @@
  * G35 · 登录/注册表单（共享组件）：
  * 独立登录页（LoginView）与登录弹窗（LoginModal）复用同一份表单与校验逻辑，
  * 避免两处实现漂移。机制类需求按既有泳道增量保留：
- * - G33：注册邮箱必填 + 格式校验；登录态「忘记密码？」入口
+ * - 注册邮箱选填，填写时校验格式；登录态「忘记密码？」入口
  * - G03：注册协议勾选（默认不勾选，未勾选不能提交）
  * - G18：注销后 30 天内「恢复账户」入口
  * - 规格书 §3.2：「使用 QQ 邮箱登录」按钮（V0.3 仅视觉就位，点击提示接入中）
@@ -65,10 +65,8 @@ function validate(): boolean {
   if (!password.value) e.password = '请输入密码'
   else if (password.value.length < 6) e.password = '密码至少 6 位'
   if (tab.value === 'register') {
-    // G23/G33：邮箱必填且需格式合法
     const mail = email.value.trim()
-    if (!mail) e.email = '请输入邮箱'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) e.email = '邮箱格式不正确'
+    if (mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) e.email = '邮箱格式不正确'
     if (!nickname.value.trim()) e.nickname = '请输入昵称'
     if (password.value !== confirm.value) e.confirm = '两次密码不一致'
     // G03：未勾选协议不能注册
@@ -94,11 +92,11 @@ async function submit() {
     if (tab.value === 'login') {
       await userStore.login(username.value.trim(), password.value)
     } else {
-      // 注册成功即自动登录（后端注册签发双 token，并发送验证邮件）
+      // 注册成功即自动登录
       await userStore.register(
         username.value.trim(),
         password.value,
-        email.value.trim(),
+        email.value.trim() || undefined,
         nickname.value.trim()
       )
     }
@@ -225,7 +223,7 @@ defineExpose({ restoreOpen })
         />
         <BaseInput
           v-model="email"
-          label="邮箱地址"
+          label="邮箱地址（选填）"
           placeholder="请输入邮箱"
           :error="errors.email"
           autocomplete="email"
@@ -238,8 +236,6 @@ defineExpose({ restoreOpen })
           autocomplete="nickname"
           :maxlength="64"
         />
-        <p class="form__hint">注册后将向该邮箱发送验证链接（10 分钟内有效）。</p>
-
         <!-- G03：注册协议勾选（默认不勾选，未勾选不能提交） -->
         <label class="agree">
           <input v-model="agreed" type="checkbox" class="agree__box" />
@@ -400,11 +396,6 @@ defineExpose({ restoreOpen })
 }
 .submit {
   margin-top: 6px;
-}
-.form__hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.5;
 }
 .form__aux {
   display: flex;

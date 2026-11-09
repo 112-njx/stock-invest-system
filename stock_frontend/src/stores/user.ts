@@ -32,8 +32,8 @@ export const useUserStore = defineStore('user', {
       const data = await loginApi(username, password)
       this.setAuth(data.token, data.user)
     },
-    /** 注册成功自动登录（后端注册即签发双 token；G23：email 必填） */
-    async register(username: string, password: string, email: string, nickname?: string) {
+    /** 注册成功自动登录（后端注册即签发双 token） */
+    async register(username: string, password: string, email?: string, nickname?: string) {
       const data = await registerApi(username, password, email, nickname)
       this.setAuth(data.token, data.user)
     },

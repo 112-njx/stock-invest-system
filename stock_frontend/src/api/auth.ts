@@ -6,8 +6,8 @@ export function loginApi(username: string, password: string) {
   return request<LoginResult>({ url: '/auth/login', method: 'post', data: { username, password } })
 }
 
-/** 注册：注册成功即自动登录（G23：email 必填） */
-export function registerApi(username: string, password: string, email: string, nickname?: string) {
+/** 注册：邮箱选填，注册成功即自动登录 */
+export function registerApi(username: string, password: string, email?: string, nickname?: string) {
   return request<LoginResult>({
     url: '/auth/register',
     method: 'post',

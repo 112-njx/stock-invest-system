@@ -51,10 +51,10 @@ def register(
     username = payload.username.strip()
     if user_repo.get_by_username(db, username):
         raise ApiError(status_code=400, code=40001, msg="用户名已被占用")
-    # G23: 邮箱唯一性检查
-    if user_repo.get_by_email(db, payload.email):
+    email = (payload.email or "").strip() or None
+    if email is not None and user_repo.get_by_email(db, email):
         raise ApiError(status_code=400, code=40002, msg="该邮箱已被注册")
-    user = user_repo.create(db, username, hash_password(payload.password), payload.email, payload.nickname)
+    user = user_repo.create(db, username, hash_password(payload.password), email, payload.nickname)
     db.refresh(user)
     result = _build_auth_result(db, user, user_agent, ip_address)
     # G23: 注册后发送验证邮件（best-effort，不阻断注册）

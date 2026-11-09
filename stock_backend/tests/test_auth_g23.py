@@ -4,6 +4,8 @@ import os
 import uuid
 from unittest.mock import patch
 
+import pytest
+
 os.environ.setdefault("APP_ENV", "test")
 os.environ["EMBEDDING_MODEL"] = "hash"
 
@@ -42,22 +44,37 @@ def _register(client: TestClient, username: str, email: str, password: str = "pa
     )
 
 
-class TestEmailRequired:
-    """注册邮箱必填测试。"""
+class TestRegistrationEmail:
+    @pytest.mark.parametrize("email_fields", [{}, {"email": None}, {"email": "  "}])
+    def test_register_and_login_without_email(self, client: TestClient, email_fields: dict):
+        username = _uname()
+        credentials = {"username": username, "password": "pass123456"}
+        try:
+            with patch("app.services.email_service.send_email") as send_email:
+                resp = client.post("/api/v1/auth/register", json={**credentials, **email_fields})
+                send_email.assert_not_called()
+            assert resp.status_code == 200
+            data = resp.json()["data"]
+            assert data["token"]
+            assert data["user"]["email"] is None
+            assert data["user"]["email_verified"] is False
 
-    def test_register_without_email_fails(self, client: TestClient):
-        """不传 email 注册应 422。"""
-        resp = client.post(
-            "/api/v1/auth/register",
-            json={"username": _uname(), "password": "pass123456"},
-        )
-        assert resp.status_code == 422
+            resp = client.post("/api/v1/auth/login", json=credentials)
+            assert resp.status_code == 200
+            assert resp.json()["data"]["user"]["username"] == username
+        finally:
+            _cleanup_users(username)
 
     def test_register_with_email_succeeds(self, client: TestClient):
         """传 email 注册应成功。"""
         uname = _uname()
         try:
-            resp = _register(client, uname, _email(uname))
+            email = _email(uname)
+            with patch("app.services.email_service.send_email") as send_email:
+                resp = _register(client, uname, email)
+                send_email.assert_called_once()
+                assert send_email.call_args.kwargs["recipient"] == email
+                assert send_email.call_args.kwargs["template_name"] == "verify_email"
             assert resp.status_code == 200
             assert resp.json()["code"] == 0
         finally:

@@ -11,7 +11,7 @@ from app.schemas.validators import HttpUrlTextOptional, SafeTextOptional
 class RegisterIn(BaseModel):
     username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_]+$", description="用户名")
     password: str = Field(min_length=6, max_length=128, description="密码（明文，服务端 bcrypt 哈希）")
-    email: str = Field(max_length=128, description="邮箱（必填，用于账号验证和密码重置）")
+    email: str | None = Field(None, max_length=128, description="邮箱（选填，用于账号验证和密码重置）")
     nickname: SafeTextOptional = Field(None, max_length=64)
 
 
