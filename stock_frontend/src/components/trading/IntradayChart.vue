@@ -10,14 +10,12 @@ interface History {rows:Row[];latest:number|null;start:string|null;end:string|nu
 const theme=useThemeStore(), host=ref<HTMLElement>(), data=ref<History|null>(null)
 const busy=ref(false),error=ref(''),hover=ref('')
 let chart:IChartApi|undefined, observer:ResizeObserver|undefined,sequence=0
-let sessionSnapTimer: ReturnType<typeof setTimeout> | undefined
 function time(row:Row):UTCTimestamp {
   const s=String(row.date)
   return (Date.UTC(+s.slice(0,4),+s.slice(4,6)-1,+s.slice(6,8),+s.slice(8,10),+s.slice(10,12),+s.slice(12,14))/1000) as UTCTimestamp
 }
 function label(t:Time){return typeof t==='number'?new Date(t*1000).toISOString().slice(5,16).replace('T',' '):''}
 function dispose(){
-  clearTimeout(sessionSnapTimer)
   observer?.disconnect();observer=undefined;chart?.remove();chart=undefined
 }
 async function render(){
@@ -25,17 +23,13 @@ async function render(){
   if(!host.value || !data.value?.rows.length)return
   const rows=data.value.rows,light=theme.mode==='light',text=light?'#1f2937':'#e5e7eb',grid=light?'#e4e7ec':'#2d3748'
   const baseline=data.value.previous
-  const sessions = new Map<number, { from: number; to: number }>()
-  const dayAt = (index: number) => Math.floor(rows[index]!.date / 1_000_000)
-  for (let index = 0; index < rows.length; index++) {
-    const day = dayAt(index)
-    const session = sessions.get(day)
-    if (session) session.to = index
-    else sessions.set(day, { from: index, to: index })
+  const sessionCounts = new Map<number, number>()
+  for (const row of rows) {
+    const day = Math.floor(row.date / 1_000_000)
+    sessionCounts.set(day, (sessionCounts.get(day) ?? 0) + 1)
   }
-  const longestSession = Math.max(...Array.from(sessions.values(), ({ from, to }) => to - from + 1))
-  let zoomSessionBars = longestSession
-  const maxBarSpacing = (width: number) => Math.max(0.05, width / zoomSessionBars)
+  const sessionBars = Math.max(...sessionCounts.values())
+  const maxBarSpacing = (width: number) => Math.max(0.05, width / sessionBars)
 
   let lastFrom = -1
   let lastTo = -1
@@ -115,22 +109,6 @@ async function render(){
   const timeScale = chart.timeScale()
   timeScale.subscribeSizeChange(width => {
     if (width > 0) timeScale.applyOptions({ maxBarSpacing: maxBarSpacing(width) })
-  })
-  timeScale.subscribeVisibleLogicalRangeChange(range => {
-    clearTimeout(sessionSnapTimer)
-    if (!range) return
-    const visibleBars = range.to - range.from + 1
-    if (visibleBars > zoomSessionBars + 0.01) return
-
-    // Let a drag finish before aligning to the session at the center of the view.
-    sessionSnapTimer = setTimeout(() => {
-      const center = Math.min(rows.length - 1, Math.max(0, Math.round((range.from + range.to) / 2)))
-      const session = sessions.get(dayAt(center))!
-      if (Math.abs(range.from - session.from) < 0.01 && Math.abs(range.to - session.to) < 0.01) return
-      zoomSessionBars = session.to - session.from + 1
-      timeScale.applyOptions({ maxBarSpacing: maxBarSpacing(timeScale.width()) })
-      timeScale.setVisibleLogicalRange(session)
-    }, 120)
   })
   timeScale.fitContent()
   const lookup=new Map(rows.map(r=>[time(r),r]))
