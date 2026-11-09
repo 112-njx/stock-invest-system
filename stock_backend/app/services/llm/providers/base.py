@@ -20,6 +20,7 @@ class LLMResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     usage_estimated: bool = False  # True = 非上游 usage，而是本地估算
+    model_revision: str | None = None
 
 
 class BaseLLMProvider(ABC):

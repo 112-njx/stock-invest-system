@@ -63,7 +63,8 @@ class DeepSeekProvider(BaseLLMProvider):
         prompt_t, completion_t = self._usage_breakdown(resp)
         return LLMResult(
             text=text,
-            model=self.model,
+            model=resp.response_metadata.get("model_name") or self.model,
+            model_revision=resp.response_metadata.get("system_fingerprint"),
             tokens=prompt_t + completion_t,
             prompt_tokens=prompt_t,
             completion_tokens=completion_t,

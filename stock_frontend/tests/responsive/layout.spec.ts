@@ -125,6 +125,58 @@ test('forecast navigation opens a stock history preview', async ({ page }, info)
   await expectNoPageOverflow(page)
 })
 
+test('forecast shows both stages and can enable tracking', async ({ page }, info) => {
+  test.skip(!['desktop', 'phone-320', 'phone-landscape'].includes(info.project.name))
+  await stubApi(page, () => true)
+  const session = '2026-01-05'
+  const evidence = [{ session, feature: 'ema20', value: 1500, reason: '收盘在均线上方' }]
+  const run = {
+    id: 42, symbol: stock.code, trigger: 'manual', status: 'predicting', created_at: `${session}T08:00:00Z`,
+    snapshot: { latest_session: session, as_of: `${session}T16:00:00+08:00`, bar_count: 40,
+      data_version: 'a'.repeat(64), feature_version: 1, source: 'stockdb' },
+    diagnosis: { regime: 'tight_channel', bias: 'up', summary: '窄通道延续', evidence },
+    models: { diagnosis: { name: 'test-model', revision: null } }, error: null,
+  }
+  let started = false
+  let complete = false
+  let tracking = false
+  await page.route('**/api/v1/stocks/search-directory', route => route.fulfill({ json: {
+    code: 0, data: { version: 'forecast-analysis-fixture', source: 'stockdb', items: [
+      { code: stock.code, name: stock.name, type: 'stock', market: stock.market, ordinal: 1, latest_date: session },
+    ] },
+  } }))
+  await page.route('**/api/v1/forecast/runs**', route => {
+    if (route.request().method() === 'POST') {
+      started = true
+      return route.fulfill({ json: { code: 0, data: run } })
+    }
+    const result = complete ? {
+      ...run, status: 'completed', prediction: {
+        next_candle: { direction: 'up', reason: '收盘延续', evidence },
+        next_regime: { regime: 'undetermined', reason: '后续信号冲突', evidence: [] },
+      },
+    } : run
+    return route.fulfill({ json: { code: 0, data: { runs: started ? [result] : [], tracking } } })
+  })
+  await page.route('**/api/v1/forecast/tracking', route => {
+    tracking = route.request().postDataJSON().enabled
+    return route.fulfill({ json: { code: 0, data: { tracking } } })
+  })
+  await page.goto('/forecast')
+  await page.getByRole('combobox', { name: '搜索股票名称、拼音或代码' }).fill(stock.code)
+  await page.getByRole('option', { name: /600519/ }).click()
+  await expect(page.getByRole('button', { name: '开启自动跟踪' })).toBeVisible()
+  await page.getByRole('button', { name: '分析走势' }).click()
+  await expect(page.getByText('第二阶段 · 正在推演走势')).toBeVisible()
+  await expect(page.getByText('2026-01-05 · EMA20 1,500')).toBeVisible()
+  complete = true
+  await expect(page.getByRole('heading', { name: '下一根日 K 线 · 涨' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '下一阶段走势 · 无法判断' })).toBeVisible()
+  await page.getByRole('button', { name: '开启自动跟踪' }).click()
+  await expect(page.getByRole('button', { name: '关闭自动跟踪' })).toHaveAttribute('aria-pressed', 'true')
+  await expectNoPageOverflow(page)
+})
+
 test('inline homepage login returns to the requested route', async ({ page }, info) => {
   test.skip(!['desktop', 'phone-390'].includes(info.project.name))
   await stubApi(page)

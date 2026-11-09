@@ -23,12 +23,27 @@ CACHE_TTL = 7 * 24 * 3600
 logger = logging.getLogger(__name__)
 
 
-def _closed_history(db, symbol_id, as_of):
+def _cutoff(as_of):
     local = as_of.astimezone(SHANGHAI)
     last_possible_day = local.date() if local.time() >= CLOSE else local.date() - timedelta(days=1)
     # Daily timestamps identify the session. Fetch through the end of its local
     # date so both UTC-midnight and intraday-stamped daily records are covered.
     end = datetime.combine(last_possible_day, time.max, SHANGHAI).astimezone(UTC)
+    return last_possible_day, end
+
+
+def latest_confirmed_session(db, symbol_id, as_of):
+    _, end = _cutoff(as_of)
+    rows = kline_repo.latest_bars(db, "1d", symbol_id, limit=10, end=end, confirmed_only=True)
+    for bar in reversed(rows):
+        session = as_utc(bar.ts).astimezone(SHANGHAI).date()
+        if session.weekday() < 5:
+            return session
+    return None
+
+
+def _closed_history(db, symbol_id, as_of):
+    last_possible_day, end = _cutoff(as_of)
     bars = kline_repo.latest_bars(
         db, "1d", symbol_id, limit=MAX_FORECAST_ROWS + 1, end=end,
     )
@@ -129,13 +144,18 @@ def _features(rows, symbol_id, source):
     return tail, version
 
 
+def resolve_stock(db, code):
+    symbol = db.scalar(select(Symbol).where(Symbol.code == code, Symbol.type == "stock"))
+    if symbol is None or symbol.market not in {"SSE", "SZSE", "BSE"}:
+        raise ApiError(status_code=404, msg="未找到该 A 股股票")
+    return symbol
+
+
 def build_snapshot(db, code: str, *, as_of: datetime | None = None) -> dict:
     as_of = as_of or datetime.now(UTC)
     if as_of.tzinfo is None:
         raise ValueError("forecast snapshot cutoff requires a timezone")
-    symbol = db.scalar(select(Symbol).where(Symbol.code == code, Symbol.type == "stock"))
-    if symbol is None or symbol.market not in {"SSE", "SZSE", "BSE"}:
-        raise ApiError(status_code=404, msg="未找到该 A 股股票")
+    symbol = resolve_stock(db, code)
     rows, source, last_possible_day, excluded = _closed_history(db, symbol.id, as_of)
     features, version = _features(rows, symbol.id, source) if rows else ([], None)
     return {
