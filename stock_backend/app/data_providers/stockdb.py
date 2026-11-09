@@ -86,6 +86,17 @@ class StockDBProvider(BaseDataProvider):
         keys = self.query("keys", "日k", k1=f"key:{code}", k2="all:", num=-1)
         return datetime.strptime(keys[-1].rsplit(":", 1)[-1], "%Y%m%d").date() if keys else None
 
+    def adjustment_timeline(self, symbol):
+        factors = self.query("get", "复权", k1=f"key:{symbol}", k2="all:")
+        return sorted((int(key.rsplit(":", 1)[-1]), float(value["cum"])) for key, value in factors)
+
+    def raw_daily_history(self, symbol, start, end):
+        cursor = start
+        while cursor <= end:
+            last = min(cursor + timedelta(days=365), end)
+            yield from self.query("vals", "日k", k1=f"key:{symbol}", k2=f"fwd:{cursor:%Y%m%d},{last:%Y%m%d}")
+            cursor = last + timedelta(days=1)
+
     def refresh_sdk(self):
         try:
             with httpx.Client(timeout=180, trust_env=False) as client:
@@ -104,8 +115,7 @@ class StockDBProvider(BaseDataProvider):
         first_day, last_day = local_start.date(), local_end.date()
         if period == "1d":
             first_day, last_day = start.astimezone(UTC).date(), end.astimezone(UTC).date()
-        factors = self.query("get", "复权", k1=f"key:{symbol}", k2="all:")
-        timeline = sorted((int(key.rsplit(":", 1)[-1]), float(value["cum"])) for key, value in factors)
+        timeline = self.adjustment_timeline(symbol)
         factor_dates = [date for date, _ in timeline]
         latest_factor = timeline[-1][1] if timeline else 1.0
         output = []

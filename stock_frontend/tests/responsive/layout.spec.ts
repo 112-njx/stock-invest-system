@@ -173,6 +173,19 @@ test('forecast shows both stages and can enable tracking', async ({ page }, info
     tracking = route.request().postDataJSON().enabled
     return route.fulfill({ json: { code: 0, data: { tracking } } })
   })
+  let replayStarted = false
+  await page.route(/\/api\/v1\/forecast\/replay(?:\?|$)/, route => {
+    if (route.request().method() === 'POST') {
+      expect(route.request().postDataJSON()).toEqual({ symbol: stock.code, end: null, samples: 5, mode: 'archived' })
+      replayStarted = true
+    }
+    const data = replayStarted ? {
+      id: 1, status: 'completed', error: null, options: { samples: 5, mode: 'archived' },
+      report: { total: 1, horizon: 5, rule_version: 1, scores: { direction: { labelled: 1, covered: 0, hits: 0 } },
+        cases: [{ session, actual_direction: 'up', actual_regime: 'range', status: 'missing_archive' }] },
+    } : null
+    return route.fulfill({ json: { code: 0, data } })
+  })
   await page.goto('/forecast')
   await page.getByRole('combobox', { name: '搜索股票名称、拼音或代码' }).fill(stock.code)
   await page.getByRole('option', { name: /600519/ }).click()
@@ -190,6 +203,11 @@ test('forecast shows both stages and can enable tracking', async ({ page }, info
   await page.getByRole('button', { name: '重试此记录' }).click()
   await expect(page.getByText('行情截至 2025-12-31', { exact: false })).toBeVisible()
   await expect(page.getByRole('status').filter({ hasText: '等待分析' })).toBeVisible()
+  await page.getByLabel('数据口径').selectOption('archived')
+  await page.getByRole('button', { name: '开始历史回放' }).click()
+  await expect(page.getByRole('cell', { name: '0%（0/1）' })).toBeVisible()
+  await page.getByText('逐日结果').click()
+  await expect(page.getByRole('cell', { name: '缺少当日快照' })).toBeVisible()
   await expectNoPageOverflow(page)
 })
 

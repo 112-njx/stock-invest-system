@@ -8,6 +8,11 @@ from app.core.config import get_settings
 def build_beat_schedule() -> dict:
     settings = get_settings()
     return {
+        "forecast-replay-dispatch": {
+            "task": "app.worker.tasks.forecast_tasks.replay_forecasts",
+            "schedule": 60.0,
+            "options": {"expires": 60},
+        },
         "forecast-tracking-and-delivery": {
             "task": "app.worker.tasks.forecast_tasks.sweep_forecasts",
             "schedule": 60.0,

@@ -1,4 +1,4 @@
-from app.services import forecast_runs
+from app.services import forecast_replay, forecast_runs
 from app.worker.celery_app import celery_app
 
 
@@ -10,3 +10,8 @@ def run_forecast(run_id: int):
 @celery_app.task(ignore_result=True, time_limit=55)
 def sweep_forecasts():
     forecast_runs.sweep()
+
+
+@celery_app.task(ignore_result=True, time_limit=3000)
+def replay_forecasts():
+    forecast_replay.work_once()

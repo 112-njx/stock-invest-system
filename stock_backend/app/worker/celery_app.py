@@ -35,6 +35,7 @@ celery_app.conf.update(
         "app.worker.tasks.ai_tasks.*": {"queue": "ai"},
         "app.worker.tasks.forecast_tasks.run_forecast": {"queue": "ai"},
         "app.worker.tasks.forecast_tasks.sweep_forecasts": {"queue": "control"},
+        "app.worker.tasks.forecast_tasks.replay_forecasts": {"queue": "forecast_replay"},
         # G17：导出任务复用 ai 队列（新增独立队列需同步改 docker-compose 的 -Q 参数）
         "app.worker.tasks.export_tasks.*": {"queue": "ai"},
         # G18：账户硬删为低频运维任务，复用 sync 队列（beat 每日触发）

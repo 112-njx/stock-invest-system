@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.agent import AgentRun, AgentStep, MemoryChunk, UserAgent
 from app.models.export_task import ExportTask
-from app.models.forecast import ForecastRun, ForecastTracking
+from app.models.forecast import ForecastReplay, ForecastRun, ForecastTracking
 from app.models.strategy import BacktestResult, BacktestTask, ChatMessage, Conversation, TradingStrategy
 from app.models.user import SupportResistance, User, UserWatchlist
 from app.repositories import export_repo
@@ -182,12 +182,14 @@ def _collect_memory_facts(db: Session, user_id: int) -> list[dict]:
 def _collect_forecast(db: Session, user_id: int) -> dict:
     runs = db.query(ForecastRun).filter_by(user_id=user_id).order_by(ForecastRun.id)
     tracking = db.query(ForecastTracking).filter_by(user_id=user_id).order_by(ForecastTracking.symbol)
+    replays = db.query(ForecastReplay).filter_by(user_id=user_id).order_by(ForecastReplay.id)
     return {
         "runs": _rows_to_dicts(runs, [
             "id", "symbol", "trigger", "status", "snapshot", "data_version", "diagnosis", "prediction",
             "models", "error", "created_at", "updated_at",
         ]),
         "tracking": _rows_to_dicts(tracking, ["symbol", "last_session"]),
+        "replays": _rows_to_dicts(replays, ["id", "symbol", "status", "options", "report", "error", "created_at"]),
     }
 
 

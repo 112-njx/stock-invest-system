@@ -9,7 +9,8 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 
 from app.services.indicator_registry import FORECAST_FEATURES
 
-PLAYBOOK_VERSION = 3
+PLAYBOOK_VERSION = 4
+REGIME_HORIZON = 5
 Regime = Literal["trend", "tight_channel", "broad_channel", "range", "breakout", "undetermined"]
 Direction = Literal["up", "down", "flat", "undetermined"]
 EvidenceField = Literal[
@@ -170,7 +171,9 @@ async def predict(llm, snapshot, diagnosis):
     return await _structured(
         llm, Prediction,
         "第二阶段：按已选规则推演两个独立结果。下一根日 K 线方向是该根收盘价相对其开盘价的涨、跌或平。"
-        "下一阶段判断后续最可能演化的走势类型，允许维持原类型。证据不足或冲突时各自可选 undetermined。"
+        f"下一阶段判断未来 {REGIME_HORIZON} 根有成交日 K 线形成的走势类型，允许维持原类型。"
+        "持续越过近期区间边界归为突破，其余按净位移与路径的方向一致性区分趋势、窄通道、宽通道和震荡。"
+        "证据不足或冲突时各自可选 undetermined。"
         f"当前诊断对应规则：{PLAYBOOK[diagnosis['regime']]}",
         {"latest_session": snapshot["latest_session"], "diagnosis": diagnosis, "bars_by_session": rows},
         validate,

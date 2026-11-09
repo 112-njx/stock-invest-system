@@ -43,3 +43,47 @@ export const retryForecast = (id: number) =>
 
 export const setForecastTracking = (symbol: string, enabled: boolean) =>
   request<{ tracking: boolean }>({ url: '/forecast/tracking', method: 'put', data: { symbol, enabled }, silent: true })
+
+export interface ReplayOptions {
+  end: string | null
+  samples: number
+  mode: 'reconstructed' | 'archived'
+}
+
+export interface ReplayScore {
+  labelled: number
+  covered: number
+  hits: number
+}
+
+export interface ForecastReplay {
+  id: number
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  error: string | null
+  options: ReplayOptions
+  report: {
+    total: number
+    horizon: number
+    rule_version: number
+    scores: Record<string, ReplayScore>
+    cases: {
+      session: string
+      next_session: string | null
+      regime_through: string | null
+      direction?: string
+      regime?: string
+      actual_direction: string | null
+      actual_regime: string | null
+      last_candle: string
+      always_up: string
+      previous_regime: string | null
+      status: string
+    }[]
+  } | null
+}
+
+export const getForecastReplay = (symbol: string) =>
+  request<ForecastReplay | null>({ url: '/forecast/replay', params: { symbol }, silent: true })
+
+export const startForecastReplay = (symbol: string, options: ReplayOptions) =>
+  request<ForecastReplay>({ url: '/forecast/replay', method: 'post', data: { symbol, ...options }, silent: true })

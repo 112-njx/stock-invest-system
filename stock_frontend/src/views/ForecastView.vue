@@ -5,6 +5,7 @@ import { fetchKLine, type KLineBar } from '@/api/market'
 import { getForecastHistory, retryForecast, setForecastTracking, startForecast, type ForecastRun } from '@/api/forecast'
 import StockSearch from '@/components/layout/StockSearch.vue'
 import ForecastEvidence from '@/components/trading/ForecastEvidence.vue'
+import ForecastReplay from '@/components/trading/ForecastReplay.vue'
 import { useAuthModalStore } from '@/stores/authModal'
 import { useUserStore } from '@/stores/user'
 
@@ -209,6 +210,8 @@ async function loadHistory(code: string) {
         </details>
       </template>
     </section>
+
+    <ForecastReplay v-if="symbol && user.token && user.user" :key="user.user.id" :symbol="symbol" />
 
     <section v-if="symbol" class="forecast-history" aria-labelledby="forecast-history-title" :aria-busy="state === 'loading'">
       <h2 id="forecast-history-title">{{ symbol }} · 最近日 K 线</h2>

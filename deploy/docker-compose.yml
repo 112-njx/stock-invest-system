@@ -294,6 +294,22 @@ services:
     restart: unless-stopped
     networks: [backend]
 
+  worker-forecast-replay:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "forecast_replay", "--pool=prefork", "--concurrency=1", "-n", "forecast-replay@%h"]
+    environment: *backend_env
+    volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
+      - backenddata:/app/data
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck: { disable: true }
+    restart: unless-stopped
+    networks: [backend]
+
   worker-ai:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "ai", "--pool=solo", "--concurrency=1", "-n", "ai@%h"]
