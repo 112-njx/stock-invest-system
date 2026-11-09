@@ -42,14 +42,9 @@ def start_readers():
     global reader_scratch
     if stopping:
         raise RuntimeError('container is stopping')
-    env = None
-    if os.environ.get('STOCKDB_READER') == 'managed':
-        reader_scratch = TemporaryDirectory(prefix='market-reader-')
-        env = {**os.environ, 'TMPDIR': reader_scratch.name}
-        command = ['python', '/opt/market_data_reader.py']
-    else:
-        command = ['/opt/stockdb/stockdb', '/opt/stockdb/stockdb.conf']
-    children.append(subprocess.Popen(command, env=env, start_new_session=True))
+    reader_scratch = TemporaryDirectory(prefix='market-reader-')
+    env = {**os.environ, 'TMPDIR': reader_scratch.name}
+    children.append(subprocess.Popen(['python', '/opt/market_data_reader.py'], env=env, start_new_session=True))
     deadline = time.monotonic() + 60
     while True:
         if stopping or children[0].poll() is not None:

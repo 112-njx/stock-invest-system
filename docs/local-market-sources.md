@@ -32,7 +32,7 @@ Docker 构建会产出 `market_indicators.abi3.so`。独立运行 Windows 查询
 回测冷启动和图表历史补拉共用后台历史准备流程：取得证券级事务锁，查询范围包含库中已有历史，校验返回数据覆盖完整已有区间后再原子写入，避免新旧前复权基准拼接。提交后再次失效图表和指标缓存。空图首次补拉携带 `initial=true`；近期窗口没有记录时，在后台扩大到供应商可用历史，支持长期停牌、退市标的。普通向左分页不启用这一全历史探测；两类任务分别去重。
 
 
-Docker Compose 默认运行 `stockdb-local`，同容器内启动 Linux stockdb 和现有 SDK 查询桥，不再需要打开 Windows stockdb 或手动启动 7900 桥。
+Docker Compose 的 `stockdb-local` 在同一个容器内启动项目行情读取器和 SDK 查询桥。
 
 ```powershell
 docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d --build
@@ -40,9 +40,9 @@ docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml up -d --b
 
 - RD：`STOCKDB_URL=http://stockdb-local:7899`；SDK 桥：`STOCKDB_SDK_URL=http://stockdb-local:7900`。仅容器内网可访问，不发布宿主端口。
 - `STOCKDB_HOST_DIR=D:/Free_stockdb/stockdb` 下的 `data`、`data1`、`data_app`、`mydb` 分别绑定挂载到 `/opt/stockdb/` 对应目录；源目录必须存在，数据不进入镜像。
-- 使用固定 SHA-256 的 v0.3.5 manylinux-x64 包及 Python 3.12；MIT 声明随镜像保留。SDK 查询、缓存、子进程隔离逻辑保持不变。
-- 初始缓存配置为 256 MiB，容器总内存上限由 `STOCKDB_MEMORY_LIMIT` 控制，默认 2 GiB；缓存配置不是整个进程的内存上限。
-- 服务端配置 `readonly: yes` 禁止协议写入，但 LevelDB 打开、恢复、锁文件仍可能需要文件写权限，绑定挂载不设置只读。
+- 镜像从固定 SHA-256 的 v0.3.5 manylinux-x64 包中提取更新器和 Python 3.12 所需的 SDK 文件，并保留 MIT 声明。
+- 容器总内存上限由 `STOCKDB_MEMORY_LIMIT` 控制，默认 2 GiB。
+- 项目读取器在临时目录恢复 LevelDB，原始文件的更新由容器控制器协调。
 - **禁止 Windows 服务、另一套 Compose 服务或更新器同时打开同一数据集。**不要依赖跨 Windows/Linux 文件锁互斥。
 - 更新数据：通过管理员页“一键更新原始数据”提交任务。现有容器控制进程暂停 RD/SDK 子进程，运行 Linux 更新器，校验文件后恢复服务；不要手动停止整个容器或再运行 Windows 更新器。
 - `/health` 仅探测桥进程；Docker 健康检查使用 `/opt/healthcheck.py` 调用 `/ready`，通过桥发起真实 SDK 查询并优先复用正常缓存，验证 7899、SDK 和数据；`/metrics` 提供耗时、缓存、共享请求及内存指标。关键子进程退出会导致整个容器失败并重启。
@@ -84,18 +84,17 @@ SDK 桥第一阶段采用独立缓存锁与 SDK 执行锁，同参数并发请�
 
 新增周期仅开放给 stock；ETF 和指数沿用原周期选项。历史记录按周期独立保存、缓存和计算指标，需应用迁移 0033。分钟线左滑窗口为七天，低于接口 5000 根上限；空白初次加载仍可回溯已停牌标的的历史。所有数据目录挂载保持不变。
 
-### 阶段 1：项目行情读取器
+### 项目行情读取器
 
-`deploy/docker-compose.market-data.yml` 将原 Compose 服务 `stockdb-local` 切换为独立镜像
-`stock-invest-market-data-local:phase1`。两个模式使用相同的服务名、数据挂载和控制目录，
-Compose 切换时会替换原容器。开发环境启动候选模式：
+开发和生产 Compose 都从同一个 Dockerfile 构建项目行情读取器。
+已有环境可继续叠加 `deploy/docker-compose.market-data.yml`，沿用镜像标签
+`stock-invest-market-data-local:phase1` 和 `/tmp` 的 tmpfs 设置。单独重建开发环境的行情服务：
 
 ```powershell
 docker compose --env-file .env.docker -f deploy/docker-compose.dev.yml -f deploy/docker-compose.market-data.yml up -d --build --no-deps stockdb-local
 ```
 
-恢复发行版模式时，运行同一命令并移除 `-f deploy/docker-compose.market-data.yml`。
-生产环境使用基础文件 `deploy/docker-compose.yml`，并按需叠加同一覆盖文件。
+生产环境使用 `deploy/docker-compose.yml`，可按需叠加同一覆盖文件。
 
 项目读取器通过固定版本的 LevelDB 和 MessagePack 读取原 `data` 与 `data1`。
 LevelDB 打开与 WAL 恢复需要的文件位于容器临时目录，原 SST 文件按路径只读引用，
