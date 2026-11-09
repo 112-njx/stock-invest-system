@@ -77,7 +77,7 @@ async function submit() {
       </div>
 
       <div class="footer">
-        <button class="link" @click="router.push({ name: 'login' })">返回登录</button>
+        <button class="link" @click="router.push({ name: 'login', hash: '#sign-in' })">返回登录</button>
       </div>
     </div>
   </div>

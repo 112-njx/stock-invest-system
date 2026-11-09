@@ -148,8 +148,8 @@ async function submitRestore() {
   }
 }
 
-/** 供父级（登录弹窗）读取：是否有未完成的恢复流程（避免误关弹窗） */
-defineExpose({ restoreOpen })
+/** 父级可在提交或账户恢复期间保留表单。 */
+defineExpose({ loading, restoreOpen })
 </script>
 
 <template>

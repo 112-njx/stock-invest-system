@@ -56,7 +56,7 @@ async function openLogin(event?: MouseEvent) {
 }
 
 async function closeLogin() {
-  if (legal.open || authForm.value?.restoreOpen) return
+  if (legal.open || authForm.value?.restoreOpen || authForm.value?.loading) return
   drawerOpen.value = false
   await nextTick()
   const returnTarget = trigger ?? page.value?.querySelector<HTMLElement>('.nav-login')
@@ -116,15 +116,16 @@ const metrics = computed(() => {
   ]
 })
 
-async function loadCoverage(attempt = 0) {
+async function loadCoverage(retryDelay = 2200) {
   try {
     const response = await fetch('/api/v1/stockdb/coverage', { signal: coverageRequest.signal })
     if (response.ok && !coverageRequest.signal.aborted) coverage.value = await response.json() as Coverage
   } catch {
     // The rest of the landing page remains usable when local market data is unavailable.
   }
-  if ((coverage.value?.stock_count == null || coverage.value.stock_stale) && attempt < 3 && !coverageRequest.signal.aborted) {
-    coverageTimer = setTimeout(() => void loadCoverage(attempt + 1), 2200)
+  if ((coverage.value?.stock_count == null || coverage.value.stock_stale) && !coverageRequest.signal.aborted) {
+    const nextDelay = Math.min(retryDelay * 2, 30_000)
+    coverageTimer = setTimeout(() => void loadCoverage(nextDelay), retryDelay)
   }
 }
 
@@ -310,7 +311,8 @@ onBeforeUnmount(() => {
             @keydown="onDrawerKey">
             <div class="drawer-heading">
               <strong>量化交易终端</strong>
-              <button ref="closeButton" type="button" aria-label="关闭登录" @click="closeLogin">×</button>
+              <button ref="closeButton" type="button" aria-label="关闭登录"
+                :aria-disabled="authForm?.loading || undefined" @click="closeLogin">×</button>
             </div>
             <AuthForm ref="authForm" :show-qq-login="false" @success="onSuccess" />
           </section>

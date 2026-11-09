@@ -264,6 +264,7 @@
 .landing-drawer-panel .drawer-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 22px; }
 .landing-drawer-panel .drawer-heading button { width: 40px; height: 40px; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 24px; }
 .landing-drawer-panel .drawer-heading button:hover { background: var(--bg-hover); }
+.landing-drawer-panel .drawer-heading button[aria-disabled='true'] { opacity: .5; cursor: wait; }
 .landing-drawer-panel .base-input__field { min-height: 42px; }
 .landing-drawer-enter-active, .landing-drawer-leave-active { transition: opacity .22s ease; }
 .landing-drawer-enter-active .landing-drawer-panel, .landing-drawer-leave-active .landing-drawer-panel { transition: transform .24s ease; }
@@ -283,7 +284,18 @@
   .login-landing .coverage-grid > div { padding: 6px 0; border-left: 0; border-top: 1px solid var(--border-strong); }
   .login-landing :is(.feature-grid, .workflow-steps) { grid-template-columns: minmax(0, 1fr); }
   .login-landing .workflow-steps { gap: 9px; }
-  .landing-drawer-panel { width: 100%; border-left: 0; }
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  .landing-drawer-panel {
+    width: 100%;
+    height: var(--screen-height);
+    border-left: 0;
+    padding: max(21px, var(--safe-top)) max(21px, var(--safe-right))
+      max(21px, var(--safe-bottom)) max(21px, var(--safe-left));
+  }
+  .landing-drawer-panel .drawer-heading button,
+  .landing-drawer-panel .base-input__field { min-height: var(--touch-target); }
+  .landing-drawer-panel .drawer-heading button { min-width: var(--touch-target); }
 }
 @media (max-width: 350px) {
   .login-landing .nav-market { display: none; }

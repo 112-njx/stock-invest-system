@@ -81,6 +81,65 @@ test('every page fits the viewport', async ({ page, viewport }, info) => {
   }
 })
 
+test('account page links open the homepage login drawer directly', async ({ page }, info) => {
+  test.skip(!['desktop', 'phone-390'].includes(info.project.name))
+  await stubApi(page)
+  for (const [path, label] of [
+    ['/forgot-password', '返回登录'],
+    ['/reset-password', '返回登录'],
+    ['/verify-email', '前往登录'],
+  ]) {
+    await page.goto(path!)
+    await page.getByRole('button', { name: label }).click()
+    await expect(page).toHaveURL(/\/#sign-in$/)
+    await expect(page.getByRole('dialog', { name: '登录或注册' })).toBeVisible()
+  }
+})
+
+test('homepage login keeps the form mounted until a pending submission completes', async ({ page }, info) => {
+  test.skip(!['desktop', 'phone-390'].includes(info.project.name))
+  await stubApi(page)
+  let release = () => {}
+  const pending = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/v1/auth/login', async route => {
+    await pending
+    await route.fulfill({ json: { code: 0, data: { token: 'test-token', user: { id: 1, username: 'tester' } } } })
+  })
+  await page.goto('/?redirect=%2Fstocks')
+  const drawer = page.getByRole('dialog', { name: '登录或注册' })
+  await drawer.getByLabel('用户名').fill('tester')
+  await drawer.getByLabel('密码', { exact: true }).fill('test-password')
+  await drawer.getByRole('button', { name: '登 录', exact: true }).click()
+  try {
+    await expect(drawer.getByRole('button', { name: '关闭登录' })).toHaveAttribute('aria-disabled', 'true')
+    await page.keyboard.press('Escape')
+    await expect(drawer).toBeVisible()
+  } finally {
+    release()
+  }
+  await expect(page).toHaveURL(/\/stocks$/)
+})
+
+test('homepage coverage recovers after more than three warmup retries', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop')
+  await stubApi(page)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.clock.install()
+  let attempts = 0
+  await page.route('**/api/v1/stockdb/coverage', async route => {
+    attempts++
+    await route.fulfill({ json: {
+      stock_count: attempts >= 5 ? 5529 : null, stock_stale: false, stock_date: '20261106',
+      board_count: 1337, board_date: 20261106, sample_start: 20000104,
+    } })
+  })
+  await page.goto('/')
+  await expect.poll(async () => {
+    await page.clock.fastForward(30_000)
+    return page.locator('.coverage-grid dd').first().textContent()
+  }).toBe('5,529')
+})
+
 test('phone navigation, chart controls and dialog focus', async ({ page }, info) => {
   test.skip(!info.project.name.startsWith('phone'))
   await stubApi(page)
