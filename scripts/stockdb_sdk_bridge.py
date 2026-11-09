@@ -495,18 +495,28 @@ def calculate_composite_rows(rows, chosen, period, loader=None, sdk_dir=None):
 
 
 def calculate_indicator_rows(sdk_dir, payload):
-    """Native calculations only; never fetch an independently based price series."""
+    """Dispatch both native modules behind the same indicator library."""
     import math
     sys.path.insert(0, sdk_dir)
-    from zhibiao import zb
     rows, names, params = payload['rows'], payload['names'], payload.get('params') or {}
     if not isinstance(rows, list) or not 1 <= len(rows) <= indicator_registry().MAX_HISTORY_ROWS:
         raise ValueError('invalid history length')
     registry = indicator_registry()
-    if not isinstance(names, list) or not names or any(n not in registry.REGISTRY for n in names):
+    if not isinstance(names, list) or not names or any(
+        n != registry.FORECAST_FEATURES and n not in registry.REGISTRY for n in names
+    ):
         raise ValueError('unsupported indicator')
     if not isinstance(params, dict):
         raise ValueError('invalid parameters')
+    checkpoint = payload.get('checkpoint')
+    return_checkpoint = payload.get('return_checkpoint', False)
+    if type(return_checkpoint) is not bool or (
+        (return_checkpoint or checkpoint is not None) and names != [registry.FORECAST_FEATURES]
+    ) or (checkpoint is not None and (not return_checkpoint or not isinstance(checkpoint, str)
+                                       or len(checkpoint) > 32_768)):
+        raise ValueError('invalid incremental indicator request')
+    if any(name != registry.FORECAST_FEATURES for name in names):
+        from zhibiao import zb
     def array(field):
         values = [float(row[field]) for row in rows]
         if not all(math.isfinite(v) for v in values):
@@ -520,6 +530,25 @@ def calculate_indicator_rows(sdk_dir, payload):
             for row, value in zip(output, values):
                 row[field] = float(value) if math.isfinite(value) else None
     for name in names:
+        if name == registry.FORECAST_FEATURES:
+            from market_indicators import FEATURE_VERSION, calculate
+            if (payload.get('period') != '1d' or len(rows) > registry.MAX_FORECAST_ROWS
+                    or params.get(name)):
+                raise ValueError('forecast features require bounded daily history and no parameters')
+            if FEATURE_VERSION != registry.FORECAST_FEATURE_VERSION:
+                raise RuntimeError('forecast indicator version mismatch')
+            bars = [(date.fromisoformat(row['ts'][:10]).toordinal(),
+                     *(float(row[field]) for field in ('open', 'high', 'low', 'close', 'volume')))
+                    for row in rows]
+            features, checkpoint = calculate(bars, checkpoint)
+            for row, item in zip(output, json.loads(features), strict=True):
+                for pivot in item['confirmed_pivots']:
+                    pivot['session'] = date.fromordinal(pivot.pop('day')).isoformat()
+                if item['pullback'] is not None:
+                    pullback = item['pullback']
+                    pullback['from_session'] = date.fromordinal(pullback.pop('from_day')).isoformat()
+                row[name] = item
+            continue
         definition = registry.REGISTRY[name]
         chosen = registry.validate_parameters(name, params.get(name))
         if name == 'zhishu':
@@ -542,7 +571,7 @@ def calculate_indicator_rows(sdk_dir, payload):
                               *[array(f) for f in ('open', 'high', 'low', 'close', 'volume')], False)
             signal = raw[3][raw[2].index('cross')]
             append([name + '_cross'], [signal])
-    return output
+    return {'rows': output, 'checkpoint': checkpoint} if return_checkpoint else output
 
 
 def _indicator_worker(connection, sdk_dir, payload):

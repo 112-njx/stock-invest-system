@@ -1,0 +1,13 @@
+# 预测走势：日线快照和指标计算
+
+`GET /api/v1/forecast/snapshot?symbol=600519` 返回 A 股个股的前复权日线快照。复用项目现有历史行情与来源优先级，每个快照只使用一个来源。响应包含行情截止时间、最后有成交的日线日期、来源、数据指纹、特征版本、历史总根数和最近 40 根日线的特征。
+
+以上海时间 15:00 为当日日线纳入的最早时间，实际使用数据源已经提供的日线。周末记录及零成交量且零成交额的占位行不参与计算。节假日、停牌和缺失交易日不会生成补齐的 K 线。历史不足 40 根时返回 `insufficient_history`。是否有最新可用行情可从 `latest_session` 读取，`closed_through` 是时间截断上界，不代表那天一定交易或数据已到达。
+
+Python 调用层统一使用 `sdk_indicators.calculate`，容器内同一 `/indicators/calculate` 入口按指标名分发。图表原有指标继续使用 `zhibiao` / `zb_core`。预测使用独立 Rust + PyO3 模块 `market_indicators` 的 `forecast_features`，可和原指标在同一请求中计算。指标目录和图表设置保持原有口径。
+
+EMA20 以首 20 根收盘均值初始化，ATR14 以首 14 根真实波幅的均值初始化，之后分别使用指数平滑和 Wilder 平滑。量比以当前成交量除以前 20 根的平均成交量。突破相对前 20 根的高低边界，区分影线越界与收盘突破。局部波段高低点在右侧一根日线收盘时确认。支撑与压力从最近 40 根的已确认低点和高点中选取，回撤按最近一段可确认波段和当前收盘价计算。
+
+Redis 按标的、来源、复权口径和特征版本保存计算状态。重复请求复用已算结果，行情只追加时只将新增 K 线送入原生模块。历史补录、删减或前复权重算导致旧数据指纹变化时全量预热。历史仍会重新读取和校验，用于识别任意日期的修订。当前前复权序列用于当前快照，历史评估时还需验证复权数据在当时是否可用。
+
+本地 Docker 由 `deploy/stockdb/Dockerfile` 构建 Linux 扩展并验证 Python 可以导入。Windows 独立运行指标桥时可在 `native/market_indicators` 执行 `cargo build --release --locked`，使用 CPython 3.12 或更高版本，将构建的 `market_indicators.dll` 作为 `market_indicators.pyd` 安装到对应 Python 的模块路径。

@@ -1,3 +1,10 @@
+FROM rust:1.89-bookworm AS forecast-indicators-build
+WORKDIR /build
+ENV PYO3_NO_PYTHON=1
+COPY native/market_indicators/Cargo.toml native/market_indicators/Cargo.lock ./
+COPY native/market_indicators/src ./src
+RUN cargo build --release --locked
+
 FROM python:3.12-slim-bookworm AS legacy
 ARG STOCKDB_URL=https://github.com/hello245m/free-stockdb/releases/download/%E6%B5%8B%E8%AF%95%E7%89%88%E6%9C%AC0.3.5/free-stockdb-manylinux-x64-v0.3.5-more-power.tar
 ARG STOCKDB_SHA256=9ec47250f60cd35462446dfcf34db99ef33e6b73b3f02f0970ef329722c265cf
@@ -12,6 +19,8 @@ COPY deploy/stockdb/supervise.py deploy/stockdb/healthcheck.py deploy/stockdb/up
 COPY stock_backend/app/services/stockdb_files.py /opt/stockdb_files.py
 COPY stock_backend/app/services/indicator_registry.py stock_backend/app/services/indicator_catalog.json /opt/
 COPY scripts/stockdb_sdk_bridge.py /opt/stockdb_sdk_bridge.py
+COPY --from=forecast-indicators-build /build/target/release/libmarket_indicators.so /opt/market_indicators.abi3.so
+RUN PYTHONPATH=/opt python -c "import market_indicators; assert market_indicators.FEATURE_VERSION >= 1"
 EXPOSE 7899 7900
 ENTRYPOINT ["python", "/opt/supervise.py"]
 
