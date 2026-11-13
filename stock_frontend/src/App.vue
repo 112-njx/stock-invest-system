@@ -48,7 +48,7 @@ watch(
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'app-shell--workspace': route.name === 'ai' }">
+  <div class="app-shell" :class="{ 'app-shell--workspace': route.name === 'ai', 'app-shell--forecast': route.name === 'forecast' }">
     <AppBar v-if="showAppbar" />
     <!-- G16：系统公告 banner（有活跃公告时展示，可关闭） -->
     <AnnouncementBanner v-if="showAppbar" />
@@ -84,5 +84,6 @@ watch(
     padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
   }
   .app-shell--workspace { height: var(--visible-height, var(--screen-height)); min-height: 0; }
+  .app-shell--forecast { height: var(--screen-height); min-height: 0; }
 }
 </style>

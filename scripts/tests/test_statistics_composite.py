@@ -114,6 +114,20 @@ class StatisticsCompositeTests(unittest.TestCase):
         for day,row in zip(['20250101','20250102','20250103'],result):
             self.assertEqual((row['zhishu_close'],row['zhishu_count']),expected.get(day,(None,None)))
 
+    def test_one_member_uses_the_same_project_reader_as_a_basket(self):
+        rows = [{'ts': '2025-01-02T00:00:00Z'}]
+        prices = [10., 20.]
+        arrays = [[0, 0], [20250101, 20250102]] + [prices] * 8
+        # A zero-weight member leaves a single effective member. The real
+        # reader must still install the managed adapter and use its cache.
+        params = {'members': [{'code': '600519', 'weight': 2}, {'code': '300502', 'weight': 0}],
+                  'weighting': 'custom', 'start': '2025-01-01'}
+        with patch('stockdb_sdk_bridge.load_composite_arrays', return_value=arrays) as load:
+            result = calculate_indicator_rows(SDK_DIR, {'rows': rows, 'names': ['zhishu'],
+                'period': '1d', 'params': {'zhishu': params}})
+        load.assert_called_once_with(SDK_DIR, ['600519'], '1d', '20250101', '20250102')
+        self.assertEqual(result, [{**rows[0], 'zhishu_close': 2000., 'zhishu_count': 1}])
+
     def test_local_snapshot_change_discards_index(self):
         sys.path.insert(0, SDK_DIR)
         prices=[10.,20.]

@@ -182,6 +182,7 @@ class Controller:
             self.stop()
             write_json(self.root/'version.json', {'status':'updating', 'version':None})
             self.report('downloading', 15, 'Linux 更新器运行中，原始文件直接写入现有 D 盘挂载目录')
+            download_started_at = time.time()
             self.run_updater()
             self.report('verifying', 75, '下载结束，开始校验原始文件')
             last = [0.0]
@@ -191,7 +192,10 @@ class Controller:
                     self.report('verifying', 80, f'已校验 {count} 个文件')
                     last[0] = time.monotonic()
             fingerprint = manifest_fingerprint(self.data, verify=True, progress=progress)
-            write_json(self.root/'version.json', {'status':'ready','version':uuid4().hex,'fingerprint':fingerprint,'updated_at':time.time()})
+            write_json(self.root/'version.json', {
+                'status': 'ready', 'version': uuid4().hex, 'fingerprint': fingerprint,
+                'updated_at': time.time(), 'download_started_at': download_started_at,
+            })
             self.report('starting', 90, '恢复 RD 和 SDK，验证真实查询')
             self.start()
             self.probe()

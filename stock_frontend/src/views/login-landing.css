@@ -212,46 +212,6 @@
 .login-landing .feature-card .plot-caption { padding: 0; margin-top: -8px; }
 .login-landing .feature-link { width: fit-content; margin-top: auto; color: var(--landing-accent); font-weight: 700; }
 .login-landing .feature-link:hover { text-decoration: underline; text-underline-offset: 4px; }
-.login-landing .sector-map { display: grid; grid-auto-flow: dense; grid-template-columns: 2fr 1fr 1fr; grid-template-rows: repeat(2, 1fr); min-height: 123px; gap: 4px; }
-.login-landing .sector-map span {
-  display: grid;
-  place-items: center;
-  padding: 5px;
-  border-radius: 4px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--up) 24%, var(--bg-panel));
-  font-size: clamp(11px, 1.2vw, 14px);
-  transition: background .24s;
-}
-.login-landing .sector-map span:first-child { grid-row: span 2; background: color-mix(in srgb, var(--down) 29%, var(--bg-panel)); }
-.login-landing .sector-map span:nth-child(3) { background: color-mix(in srgb, var(--down) 16%, var(--bg-panel)); }
-.login-landing .sector-map span:nth-child(4) { background: color-mix(in srgb, var(--up) 13%, var(--bg-panel)); }
-.login-landing .sector-map:hover span:first-child { background: color-mix(in srgb, var(--down) 40%, var(--bg-panel)); }
-.login-landing .dataset-accordion { display: flex; flex: 1; gap: 5px; min-height: 150px; }
-.login-landing .dataset-slice {
-  display: flex;
-  flex: 0 0 44px;
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--bg-panel-2);
-  transition: flex .36s ease, border-color .2s;
-}
-.login-landing .dataset-slice.is-active { flex: 1 1 0; border-color: var(--landing-rule); }
-.login-landing .dataset-slice button {
-  flex: 0 0 42px;
-  min-height: 42px;
-  writing-mode: vertical-rl;
-  letter-spacing: .13em;
-  font-weight: 720;
-}
-.login-landing .dataset-slice button:hover, .login-landing .dataset-slice.is-active button { background: var(--accent-soft); color: var(--landing-accent); }
-.login-landing .dataset-slice button:focus-visible { outline-offset: -3px; }
-.login-landing .dataset-content { align-self: center; padding: 12px; overflow-wrap: anywhere; min-width: 0; }
-.login-landing .dataset-content p { margin: 0 0 8px; color: var(--text); font-weight: 650; }
-.login-landing .dataset-content small { color: var(--text-secondary); line-height: 1.6; }
-
 .login-landing .workflow {
   display: grid;
   grid-template-columns: minmax(240px, .72fr) minmax(0, 1.38fr);
@@ -282,6 +242,7 @@
   overflow: hidden;
 }
 .login-landing .workflow-graphic { height: clamp(114px, 17vw, 208px); margin-top: 15px; }
+.login-landing .workflow-graphic--table { height: auto; }
 
 .login-landing .landing-cta {
   display: flex;

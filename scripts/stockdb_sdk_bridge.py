@@ -18,6 +18,9 @@ from pathlib import Path
 from threading import Lock
 from time import monotonic, time
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
+
+from market_indicator_library import calculate_rows, validate_request
 
 
 def _industry_sdk(client, code, frequency, end):
@@ -54,13 +57,21 @@ def _industry_sdk(client, code, frequency, end):
     return history
 
 
+def configure_sdk_reader():
+    import stock_sdk
+    if os.environ.get('STOCKDB_READER') == 'managed':
+        from market_data_sdk import install
+        install(stock_sdk)
+    return stock_sdk
+
+
 def _sdk_worker(connection, sdk_dir, code, frequency, start, end):
     timings = {}
     phase = 'sdk_init_ms'
     begun = monotonic()
     try:
         sys.path.insert(0, sdk_dir)
-        import stock_sdk
+        stock_sdk = configure_sdk_reader()
         client = None if code.endswith('.SL') else stock_sdk.StockDBClient()
         timings['sdk_init_ms'] = (monotonic() - begun) * 1000
         phase = 'sdk_compute_ms'
@@ -300,6 +311,8 @@ def _composite_data_worker(connection, sdk_dir, jobs, frequency, start, end):
     """Fetch and aggregate each member using the official SDK, in its own process."""
     try:
         sys.path.insert(0, sdk_dir)
+        if os.environ.get('STOCKDB_READER') == 'managed':
+            configure_sdk_reader()
         from zhibiao import _load_rows
         for index, code in jobs:
             if frequency in {'1m', '5m', '15m', '30m', '60m'}:
@@ -351,19 +364,24 @@ def load_composite_arrays(sdk_dir, codes, frequency, start, end, timeout=40, max
         ensure_available(control)
         version = data_version(control)
     cache_dir = os.environ.get('STOCKDB_CACHE_DIR')
-    if use_cache and version and cache_dir:
+    reader_session = os.environ.get('STOCKDB_READER_SESSION')
+    # A fresh bridge opens a fresh reader snapshot, even if an out-of-band
+    # file replacement did not update the control directory's version.
+    cache_version = f'{version}:{reader_session}'
+    if use_cache and version and cache_dir and reader_session:
         try:
             cache = FullResultCache(Path(cache_dir) / 'composite-inputs', max_bytes=64 * 1024 * 1024)
         except (OSError, sqlite3.DatabaseError):
             logging.getLogger('stockdb.bridge').warning('composite input cache unavailable; using SDK')
     sdk_files = [Path(sdk_dir) / 'zhibiao.py', *sorted(Path(sdk_dir).glob('zb_core*'))]
     sdk_version = [(f.name, f.stat().st_size, f.stat().st_mtime_ns) for f in sdk_files if f.exists()]
+    reader = os.environ.get('STOCKDB_READER', 'legacy')
     def cache_key(code):
-        return 'sdk-input-v1:' + code + '@' + json.dumps([frequency, start, end, sdk_version], separators=(',', ':'))
+        return 'sdk-input-v2:' + code + '@' + json.dumps([reader, frequency, start, end, sdk_version], separators=(',', ':'))
     if cache:
         for index, code in enumerate(codes):
             try:
-                saved = cache.get(cache_key(code), frequency, version)
+                saved = cache.get(cache_key(code), frequency, cache_version)
                 if saved:
                     results[index] = [[0] * len(saved)] + [[row[f] for row in saved] for f in fields]
             except (OSError, ValueError, KeyError, TypeError, sqlite3.DatabaseError):
@@ -399,7 +417,7 @@ def load_composite_arrays(sdk_dir, codes, frequency, start, end, timeout=40, max
                 if cache and arrays[0]:
                     try:
                         saved = [dict(zip(fields, values, strict=True)) for values in zip(*arrays[1:], strict=True)]
-                        cache.put(cache_key(codes[index]), frequency, version, saved)
+                        cache.put(cache_key(codes[index]), frequency, cache_version, saved)
                     except (OSError, ValueError, sqlite3.DatabaseError):
                         logging.getLogger('stockdb.bridge').warning('composite input cache write failed; using SDK result')
                 if progress is not None:
@@ -434,7 +452,7 @@ def calculate_composite_rows(rows, chosen, period, loader=None, sdk_dir=None):
     from datetime import datetime, UTC
     import math
     from zoneinfo import ZoneInfo
-    from zhibiao import ZHISHU, _load_rows
+    from zhibiao import ZHISHU
     if period not in ('1d', '1w', '1mon', '1m', '5m', '15m', '30m', '60m'):
         raise ValueError('invalid composite period')
     chosen = indicator_registry().validate_composite(chosen)
@@ -451,10 +469,11 @@ def calculate_composite_rows(rows, chosen, period, loader=None, sdk_dir=None):
         ensure_available(control)
         version = data_version(control)
     frequency = '1M' if period == '1mon' else period
-    if loader is None and sdk_dir and len(codes) > 1:
-        arrays = list(load_composite_arrays(sdk_dir, codes, frequency, chosen['start'].replace('-', ''), end_stamp))
+    start_stamp = chosen['start'].replace('-', '')
+    if loader is None:
+        arrays = list(load_composite_arrays(sdk_dir, codes, frequency, start_stamp, end_stamp))
     else:
-        arrays = list((loader or _load_rows)(codes, frequency, chosen['start'].replace('-', ''), end_stamp, 'qfq'))
+        arrays = list(loader(codes, frequency, start_stamp, end_stamp, 'qfq'))
     present = set(arrays[0])
     if any(i not in present for i in range(len(codes))):
         raise ValueError('部分所选股票在起算日期之后没有本地历史数据')
@@ -485,54 +504,10 @@ def calculate_composite_rows(rows, chosen, period, loader=None, sdk_dir=None):
 
 
 def calculate_indicator_rows(sdk_dir, payload):
-    """Native calculations only; never fetch an independently based price series."""
-    import math
     sys.path.insert(0, sdk_dir)
-    from zhibiao import zb
-    rows, names, params = payload['rows'], payload['names'], payload.get('params') or {}
-    if not isinstance(rows, list) or not 1 <= len(rows) <= indicator_registry().MAX_HISTORY_ROWS:
-        raise ValueError('invalid history length')
-    registry = indicator_registry()
-    if not isinstance(names, list) or not names or any(n not in registry.REGISTRY for n in names):
-        raise ValueError('unsupported indicator')
-    if not isinstance(params, dict):
-        raise ValueError('invalid parameters')
-    def array(field):
-        values = [float(row[field]) for row in rows]
-        if not all(math.isfinite(v) for v in values):
-            raise ValueError('nonfinite input')
-        return values
-    output = [dict(row) for row in rows]
-    def append(fields, series):
-        for field, values in zip(fields, series, strict=True):
-            if len(values) != len(rows):
-                raise ValueError('native output length mismatch')
-            for row, value in zip(output, values):
-                row[field] = float(value) if math.isfinite(value) else None
-    for name in names:
-        definition = registry.REGISTRY[name]
-        chosen = registry.validate_parameters(name, params.get(name))
-        if name == 'zhishu':
-            output = calculate_composite_rows(output, chosen, payload.get('period'), sdk_dir=sdk_dir)
-            continue
-        field, cross = registry.validate_controls(name, params.get(name))
-        if name == 'ma':
-            close = array('close')
-            periods = chosen['periods']
-            append([f'ma{n}' for n in periods], [zb.MA(close, n) for n in periods])
-        elif definition['native']:
-            raw = getattr(zb, definition['native'])(*[array(field if f == 'close' and definition.get('input_fields') else f) for f in definition['inputs']], *chosen.values())
-            fields = definition['native_outputs']
-            append(fields, raw if len(fields) > 1 else [raw])
-        elif name == 'volume':
-            append(('volume_ma5', 'volume_ma10'), [zb.MA(array('volume'), n) for n in (5,10)])
-        if cross:
-            from zhibiao import BATCH_CROSS
-            raw = BATCH_CROSS([name], [list(chosen.values())], [0] * len(rows), list(range(len(rows))),
-                              *[array(f) for f in ('open', 'high', 'low', 'close', 'volume')], False)
-            signal = raw[3][raw[2].index('cross')]
-            append([name + '_cross'], [signal])
-    return output
+    return calculate_rows(payload, indicator_registry(),
+                          lambda rows, chosen, period: calculate_composite_rows(
+                              rows, chosen, period, sdk_dir=sdk_dir))
 
 
 def _indicator_worker(connection, sdk_dir, payload):
@@ -580,6 +555,7 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
     logger = logging.getLogger('stockdb.bridge')
     indicator_lock = Lock()
     composite_lock = Lock()
+    forecast_lock = Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -591,17 +567,20 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
                 self.send_error(404)
                 return
             try:
+                registry = indicator_registry()
                 size = int(self.headers.get('Content-Length', '0'))
-                if not 0 < size <= indicator_registry().MAX_REQUEST_BYTES:
+                if not 0 < size <= registry.MAX_REQUEST_BYTES:
                     raise ValueError('invalid request size')
                 self.connection.settimeout(10)
                 payload = json.loads(self.rfile.read(size))
-                if not isinstance(payload, dict) or not isinstance(payload.get('names'), list):
-                    raise ValueError('invalid indicator payload')
+                validate_request(payload, registry)
                 # Each native job already runs in an isolated child process.
                 # A long basket read must not occupy the ordinary indicator lane.
-                lane = composite_lock if 'zhishu' in payload['names'] else indicator_lock
-                if not lane.acquire(timeout=5):
+                names = payload['names']
+                is_composite = 'zhishu' in names
+                is_forecast = not is_composite and registry.FORECAST_FEATURES in names
+                lane = composite_lock if is_composite else forecast_lock if is_forecast else indicator_lock
+                if not lane.acquire(timeout=0 if is_forecast else 5):
                     self.respond(b'{"error":"indicator engine busy; retry later"}', 503)
                     return
                 try:
@@ -632,12 +611,19 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
                 if url.path == '/health':
                     encoded = b'{"status":"ok"}'
                 elif url.path == '/indicators/ready':
-                    probe = {'rows': [dict(ts=str(i), close=float(i+1)) for i in range(12)], 'names': ['macd']}
+                    forecast = indicator_registry().FORECAST_FEATURES
+                    probe = {
+                        'rows': [dict(ts=date(2024, 1, i).isoformat(), open=i, high=i, low=i, close=i, volume=1)
+                                 for i in range(1, 21)],
+                        'names': ['macd', forecast],
+                        'period': '1d',
+                    }
                     if not indicator_lock.acquire(timeout=5):
                         raise TimeoutError('indicator engine busy')
                     try:
                         rows = sdk_indicators(sdk_dir, probe)
-                        if len(rows) != 12 or rows[-1].get('macd_hist') is None:
+                        if (len(rows) != 20 or rows[-1].get('macd_hist') is None
+                                or rows[-1].get(forecast, {}).get('ema20') != 10.5):
                             raise ValueError('indicator engine probe failed')
                         encoded = b'{"status":"ok"}'
                     finally:
@@ -687,8 +673,12 @@ def make_server(sdk_dir, host='0.0.0.0', port=7900, service=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--sdk-dir', default=r'D:\Free_stockdb\stockdb\pybao')
+    parser.add_argument('--native-dir', type=Path, help='Directory containing the project market_indicators extension')
     parser.add_argument('--port', type=int, default=7900)
     args = parser.parse_args()
+    if args.native_dir:
+        sys.path.insert(0, str(args.native_dir.resolve(strict=True)))
+    os.environ['STOCKDB_READER_SESSION'] = uuid4().hex
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     make_server(args.sdk_dir, port=args.port).serve_forever()
 

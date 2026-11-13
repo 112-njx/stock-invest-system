@@ -8,11 +8,20 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, time as clock_time
+from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+DAILY_SESSION_TZ = ZoneInfo("Asia/Shanghai")
+DAILY_SESSION_CLOSE = clock_time(15)
+
+
+def daily_session_close(stamp: datetime) -> datetime:
+    utc_stamp = stamp.replace(tzinfo=UTC) if stamp.tzinfo is None else stamp
+    session = utc_stamp.astimezone(DAILY_SESSION_TZ).date()
+    return datetime.combine(session, DAILY_SESSION_CLOSE, DAILY_SESSION_TZ)
 
 
 class ProviderError(Exception):
@@ -43,6 +52,7 @@ class KlineBar:
     volume: int
     amount: float
     source: str = "stockdb"
+    close_confirmed: bool = False
 
 
 class BaseDataProvider(ABC):

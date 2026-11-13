@@ -1,0 +1,7 @@
+services:
+  stockdb-local:
+    image: stock-invest-market-data-local:phase1
+    build:
+      target: market-data-local
+    tmpfs:
+      - /tmp

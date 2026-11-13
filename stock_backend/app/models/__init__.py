@@ -5,6 +5,7 @@ from .audit import AuditLog
 from .base import Base
 from .email_log import EmailLog
 from .export_task import ExportTask
+from .forecast import ForecastReplay, ForecastRun, ForecastTracking
 from .kline import KLINE_MODELS, Kline1d, Kline1w, Kline1mon, Kline15m
 from .kline_quality import KlineQuality
 from .notification import AdminAnnouncement, Notification
@@ -26,6 +27,9 @@ __all__ = [
     "Conversation",
     "EmailLog",
     "ExportTask",
+    "ForecastRun",
+    "ForecastReplay",
+    "ForecastTracking",
     "KLINE_MODELS",
     "Kline15m",
     "Kline1d",

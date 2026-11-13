@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.config import get_settings
 
-from .base import BaseDataProvider, KlineBar
+from .base import BaseDataProvider, KlineBar, daily_session_close
 from .request_activity import kline_scope
 from .stockdb import StockDBProvider
 
@@ -110,10 +110,15 @@ class DataProviderFactory:
         return [p for p in self._providers if p.name == "stockdb" or enabled]
 
     @staticmethod
-    def _label_bars(bars, provider):
+    def _label_bars(bars, provider, period, requested_at):
+        cutoff = requested_at
+        if period == "1d" and isinstance(provider, StockDBProvider):
+            cutoff = provider.daily_confirmation_cutoff(requested_at)
         for bar in bars:
             if isinstance(bar, KlineBar):
                 bar.source = "stockdb" if provider.name == "stockdb" else "akshare"
+                if period == "1d":
+                    bar.close_confirmed = cutoff is not None and cutoff >= daily_session_close(bar.ts)
         return bars
 
     @property
@@ -135,11 +140,12 @@ class DataProviderFactory:
             try:
                 scope_context = kline_scope(*args) if method == "fetch_kline" else nullcontext()
                 with scope_context:
+                    requested_at = datetime.now(UTC)
                     result = getattr(p, method)(*args, **kwargs)
                 if result:
                     with self._lock:
                         circuit.record_success(now)
-                    return self._label_bars(result, p) if method == "fetch_kline" else result
+                    return self._label_bars(result, p, args[1], requested_at) if method == "fetch_kline" else result
                 logger.warning("[provider] %s empty, fallback to next", p.name)
             except Exception as exc:  # noqa: BLE001
                 with self._lock:
@@ -188,11 +194,12 @@ class DataProviderFactory:
             attempted = True
             try:
                 with kline_scope(symbol, period, start, end, asset_type):
+                    requested_at = datetime.now(UTC)
                     bars = p.fetch_kline(symbol, period, start, end, asset_type)
                 if bars:
                     with self._lock:
                         circuit.record_success(now)
-                    return self._label_bars(bars, p), True
+                    return self._label_bars(bars, p, period, requested_at), True
             except Exception as exc:  # noqa: BLE001
                 confirmed = False
                 with self._lock:

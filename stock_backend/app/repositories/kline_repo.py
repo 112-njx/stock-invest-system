@@ -60,13 +60,22 @@ def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) 
         }
         for b in bars
     }.values())
+    fields = ("open", "high", "low", "close", "volume", "amount")
+    if period == "1d":
+        confirmations = {(b.ts, b.source): b.close_confirmed for b in bars}
+        for row in rows:
+            row["close_confirmed"] = confirmations[(row["ts"], row["source"])]
+        fields += ("close_confirmed",)
     for offset in range(0, len(rows), 1000):
         stmt = pg_insert(model).values(rows[offset:offset + 1000])
-        fields = ("open", "high", "low", "close", "volume", "amount")
+        changed_fields = or_(*(getattr(model, field).is_distinct_from(getattr(stmt.excluded, field)) for field in fields))
+        if period == "1d":
+            # A slower intraday fetch can finish after a final refresh.
+            changed_fields = and_(changed_fields, or_(~model.close_confirmed, stmt.excluded.close_confirmed))
         stmt = stmt.on_conflict_do_update(
             index_elements=["symbol_id", "ts", "source"],
             set_={field: getattr(stmt.excluded, field) for field in fields},
-            where=or_(*(getattr(model, field).is_distinct_from(getattr(stmt.excluded, field)) for field in fields)),
+            where=changed_fields,
         )
         changed += db.execute(stmt).rowcount or 0
     return changed
@@ -156,18 +165,31 @@ def get_bars(
     return list(reversed(rows)) if latest else rows
 
 
-def latest_bars(db: Session, period: str, symbol_id: int, limit: int = 1000) -> list:
+def latest_bars(db: Session, period: str, symbol_id: int, limit: int = 1000, *,
+                end: datetime | None = None, confirmed_only: bool = False) -> list:
     """最近 N 根 K 线（返回按 ts 升序），供"最新N根"缓存与默认查询。"""
     model = _model(period)
+    if confirmed_only and period != "1d":
+        raise ValueError("only daily bars have close confirmation")
     if use_transient_source(db, model, symbol_id):
         from app.services.source_history import cached
-        return (cached(symbol_id, period) or [])[-limit:]
+        from app.utils.market_cache import as_utc
+        rows = cached(symbol_id, period) or []
+        if end is not None:
+            rows = [bar for bar in rows if as_utc(bar.ts) <= end]
+        if confirmed_only:
+            rows = [bar for bar in rows if bar.close_confirmed and (bar.volume or bar.amount)]
+        return rows[-limit:]
     stmt = (
         select(model)
         .where(model.symbol_id == symbol_id, source_filter(model, symbol_id))
         .order_by(model.ts.desc())
         .limit(limit)
     )
+    if end is not None:
+        stmt = stmt.where(model.ts <= end)
+    if confirmed_only:
+        stmt = stmt.where(model.close_confirmed, or_(model.volume != 0, model.amount != 0))
     rows = list(db.scalars(stmt))
     rows.reverse()
     return rows

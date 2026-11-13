@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useThemeStore } from '@/stores/theme'
-import { tiles, type Heatmap, type HeatStock, type HeatBoard, type Rect } from '@/api/heatmap'
+import { heatColor, tiles, type Heatmap, type HeatStock, type HeatBoard, type Rect } from '@/api/heatmap'
 
 const data = ref<Heatmap>(), error = ref(''), loading = ref(false), selected = ref('')
 const theme = useThemeStore()
@@ -15,7 +15,6 @@ let controller: AbortController | undefined
 const pct = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}%`
 const money = (n: number) => `${(n / 1e8).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 亿`
 const date = computed(() => String(data.value?.date ?? '').replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'))
-const color = (n: number) => n === 0 ? '#525a64' : `hsl(${n > 0 ? 356 : 141} ${Math.min(85, 42 + Math.abs(n) * 7)}% ${Math.min(49, 28 + Math.abs(n) * 3)}%)`
 
 async function refresh() {
   if (loading.value) return
@@ -45,12 +44,12 @@ function draw() {
   hits = []; hover.value = undefined
   const boards = data.value?.boards.filter(b => !selected.value || b.code === selected.value) ?? []
   for (const { item: board, box } of tiles(boards, { x: 0, y: 0, w: width, h: height })) {
-    ctx.fillStyle = color(board.change); ctx.fillRect(box.x + 1, box.y + 1, box.w - 2, box.h - 2)
+    ctx.fillStyle = heatColor(board.change); ctx.fillRect(box.x + 1, box.y + 1, box.w - 2, box.h - 2)
     ctx.save(); ctx.beginPath(); ctx.rect(box.x + 4, box.y, Math.max(0, box.w - 8), 24); ctx.clip()
     ctx.fillStyle = '#fff'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left'
     ctx.fillText(`${board.name}  ${pct(board.change)}  涨${board.up} 跌${board.down}`, box.x + 6, box.y + 17); ctx.restore()
     for (const { item: stock, box: r } of tiles(board.children, { x: box.x + 2, y: box.y + 25, w: box.w - 4, h: box.h - 27 })) {
-      ctx.fillStyle = color(stock.change); ctx.fillRect(r.x, r.y, Math.max(0, r.w - 1), Math.max(0, r.h - 1))
+      ctx.fillStyle = heatColor(stock.change); ctx.fillRect(r.x, r.y, Math.max(0, r.w - 1), Math.max(0, r.h - 1))
       if (r.w > 30 && r.h > 25) {
         const font = Math.max(10, Math.min(32, r.w / Math.max(stock.name.length, 4) * .83, r.h / 3.5))
         ctx.save(); ctx.beginPath(); ctx.rect(r.x + 2, r.y + 1, r.w - 4, r.h - 2); ctx.clip()

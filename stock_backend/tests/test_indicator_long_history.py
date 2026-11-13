@@ -1,4 +1,4 @@
-"""Latest indicator queries must not stop at the first 100,000 bars."""
+"""Latest indicator queries must preserve warmup even beyond 100,000 bars."""
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -42,7 +42,8 @@ def test_default_indicators_include_newest_bars(monkeypatch, history, pandas_ena
     monkeypatch.setattr(indicator_service, '_set_cache', lambda *a: None)
 
     def sdk(rows, *args):
-        assert len(rows) == 100000
+        assert len(rows) == 100005
+        assert rows[0]['volume'] == 0
         assert rows[-1]['volume'] == 100004
         return rows
 

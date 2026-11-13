@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import inspect
 import json
 import math
+import os
 from pathlib import Path
 import sys
 from zoneinfo import ZoneInfo
@@ -16,6 +17,14 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('file',type=Path)
     parser.add_argument('--sdk-dir',default='/opt/stockdb/pybao');args=parser.parse_args()
     sys.path.insert(0,args.sdk_dir)
+    import stock_sdk
+    if os.environ.get('STOCKDB_READER') == 'managed':
+        # The managed Docker image keeps the reader adapter above stockdb/pybao.
+        sys.path.insert(0, str(Path(args.sdk_dir).resolve().parents[1]))
+        from market_data_sdk import install
+        install(stock_sdk)
+    else:
+        stock_sdk.init(host='127.0.0.1',port=7899,warm=False)
     from zhibiao import zb, BATCH_CROSS, ZHISHU, _load_rows
     matrix=json.loads(args.file.read_text(encoding='utf-8'));checks=0;nulls=0
     def ts(value):
@@ -28,8 +37,8 @@ def main():
             expected={}
             if key=='zhishu':
                 codes=[m['code'] for m in options['members']]
-                end=datetime.fromisoformat(rows[-1]['ts']).replace(tzinfo=UTC)
-                stamp=end.astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d%H%M%S') if case['period']=='15m' else end.strftime('%Y%m%d')
+                end=datetime.fromtimestamp(ts(rows[-1]['ts']),UTC)
+                stamp=end.astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d%H%M%S') if case['period'] in {'1m','5m','15m','30m','60m'} else end.strftime('%Y%m%d')
                 arrays=list(_load_rows(codes,'1M' if case['period']=='1mon' else case['period'],options['start'].replace('-',''),stamp,'qfq'))
                 if options['weighting']=='custom':arrays[8]=[options['members'][i]['weight'] for i in arrays[0]]
                 raw=ZHISHU(*arrays,method=2 if options['weighting']=='custom' else 1,base=float(options['base']))
@@ -41,6 +50,11 @@ def main():
                           'zhishu_count':[values.get(ts(r['ts']),(None,None))[1] for r in rows]}
             elif key=='ma':
                 for n in options.get('periods',[5,10,20,30]):expected['ma'+str(n)]=zb.MA([r['close'] for r in rows],n)
+            elif key=='volume':
+                expected['volume']=[r['volume'] for r in rows]
+                for n in (5,10):expected[f'volume_ma{n}']=zb.MA(expected['volume'],n)
+            elif key=='amount':
+                expected['amount']=[r['amount'] for r in rows]
             else:
                 native=getattr(zb,key.upper());signature=list(inspect.signature(native).parameters.values())
                 count=len(d['inputs']);inputs=[]

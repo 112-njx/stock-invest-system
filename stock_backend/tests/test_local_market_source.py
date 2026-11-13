@@ -209,11 +209,6 @@ def test_manual_job_uses_source_date_and_refreshes_existing_history(monkeypatch,
     before = {period: [(bar.ts, float(bar.close)) for bar in kline_repo.latest_bars(db, period, target_id)]
               for period in ("1d", "15m")}
 
-    def session():
-        connection = get_session()
-        connection.scalars = Mock(return_value=[SimpleNamespace(id=target_id, name=scope, type="stock", market="SSE")])
-        return connection
-
     def fetch(symbol, period, start, end, asset_type):
         assert start <= first
         target = datetime.now(sync_service.settings.tz).date() if offline else last.date()
@@ -223,7 +218,7 @@ def test_manual_job_uses_source_date_and_refreshes_existing_history(monkeypatch,
                 KlineBar(last, 6, 6, 6, 6, 200, 1200)]
 
     provider = SimpleNamespace(fetch_kline=fetch)
-    monkeypatch.setattr(local_market_sync, "get_session", session)
+    monkeypatch.setattr(local_market_sync, "_sync_targets", lambda _: [(target, True)])
     def source_date(self):
         if offline:
             raise ProviderError("offline")

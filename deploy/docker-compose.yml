@@ -47,7 +47,7 @@ services:
       STOCKDB_CONTROL_DIR: /stockdb-control
       STOCKDB_CACHE_DIR: /var/cache/stockdb
     volumes:
-      - ../stock_backend/data/stockdb-control:/stockdb-control:ro
+      - ../stock_backend/data/stockdb-control:/stockdb-control
       - ../stock_backend/data/stockdb-cache:/var/cache/stockdb
       - type: bind
         source: ${STOCKDB_HOST_DIR:-D:/Free_stockdb/stockdb}/data
@@ -281,6 +281,22 @@ services:
   worker-backtest:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest", "--pool=solo", "--concurrency=1", "-n", "backtest@%h"]
+    environment: *backend_env
+    volumes:
+      - ../stock_backend/data/stockdb-control:/stockdb-control
+      - backenddata:/app/data
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      db: { condition: service_healthy }
+      stockdb-local: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck: { disable: true }
+    restart: unless-stopped
+    networks: [backend]
+
+  worker-forecast-replay:
+    build: { context: .., dockerfile: stock_backend/Dockerfile }
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "forecast_replay", "--pool=prefork", "--concurrency=1", "-n", "forecast-replay@%h"]
     environment: *backend_env
     volumes:
       - ../stock_backend/data/stockdb-control:/stockdb-control

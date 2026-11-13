@@ -3,7 +3,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, Numeric, PrimaryKeyConstraint, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Numeric, PrimaryKeyConstraint, String, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -31,6 +31,7 @@ class Kline15m(KlineMixin, Base):
 class Kline1d(KlineMixin, Base):
     __tablename__ = "kline_1d"
     __table_args__ = (PrimaryKeyConstraint("symbol_id", "ts", "source"), {"postgresql_partition_by": "RANGE (ts)"})
+    close_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
 
 
 class Kline1mon(KlineMixin, Base):

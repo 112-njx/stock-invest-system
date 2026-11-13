@@ -11,6 +11,7 @@ const routes = {
   '/stockdb': '.blueprint',
   '/stockdb/trends': '.blueprint--trends',
   '/ai': '.ai-shell',
+  '/forecast': '.forecast-page',
   '/admin': '.admin-console',
   '/forgot-password': '.auth-card',
   '/reset-password': '.auth-card',
@@ -96,6 +97,118 @@ test('account page links focus the inline homepage login form', async ({ page },
     await expect(form).toBeFocused()
     await expect(form.getByLabel('用户名')).toBeInViewport()
   }
+})
+
+test('forecast navigation opens a stock history preview', async ({ page }, info) => {
+  if (!['desktop', 'phone-320', 'phone-landscape'].includes(info.project.name)) test.skip()
+  await stubApi(page)
+  await page.route('**/api/v1/stocks/search-directory', route => route.fulfill({ json: {
+    code: 0, data: { version: 'forecast-fixture', source: 'stockdb', items: [
+      { code: stock.code, name: stock.name, type: 'stock', market: stock.market, ordinal: 1, latest_date: '2026-01-05' },
+    ] },
+  } }))
+  await page.route('**/api/v1/kline?*', route => {
+    const params = new URL(route.request().url()).searchParams
+    expect(params.get('symbol')).toBe(stock.code)
+    expect(params.get('period')).toBe('1d')
+    return route.fulfill({ json: { code: 0, data: [
+      { ts: '2026-01-05T07:00:00Z', open: 1490, high: 1510, low: 1480, close: 1500, volume: 100, amount: 150000 },
+    ] } })
+  })
+  await page.goto('/ai')
+  if (info.project.name !== 'desktop') await page.getByRole('button', { name: '菜单', exact: true }).click()
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '预测走势' }).click()
+  await expect(page).toHaveURL(/\/forecast$/)
+  await page.getByRole('combobox', { name: '搜索股票名称、拼音或代码' }).fill(stock.code)
+  await page.getByRole('option', { name: /600519/ }).click()
+  await expect(page.getByRole('cell', { name: '1,500.00' })).toBeVisible()
+  await expectNoPageOverflow(page)
+})
+
+test('forecast shows both stages and can enable tracking', async ({ page }, info) => {
+  test.skip(!['desktop', 'phone-320', 'phone-landscape'].includes(info.project.name))
+  await stubApi(page, () => true)
+  const session = '2026-01-05'
+  const evidence = [{ session, feature: 'ema20', value: 1500, reason: '旧记录的未核验说明' }]
+  const run = {
+    id: 42, symbol: stock.code, trigger: 'manual', status: 'predicting', created_at: `${session}T08:00:00Z`,
+    snapshot: { latest_session: session, as_of: `${session}T16:00:00+08:00`, bar_count: 40,
+      data_version: 'a'.repeat(64), feature_version: 1, source: 'stockdb' },
+    diagnosis: { regime: 'tight_channel', bias: 'up', summary: '窄通道延续', evidence },
+    models: { diagnosis: { name: 'test-model', revision: null } }, error: null,
+  }
+  let started = false
+  let complete = false
+  let tracking = false
+  let retried = false
+  const prior = {
+    ...run, id: 41, status: 'failed', diagnosis: null, error: '旧记录中断',
+    snapshot: { ...run.snapshot, latest_session: '2025-12-31' },
+  }
+  await page.route('**/api/v1/stocks/search-directory', route => route.fulfill({ json: {
+    code: 0, data: { version: 'forecast-analysis-fixture', source: 'stockdb', items: [
+      { code: stock.code, name: stock.name, type: 'stock', market: stock.market, ordinal: 1, latest_date: session },
+    ] },
+  } }))
+  await page.route('**/api/v1/forecast/runs/41/retry', route => {
+    expect(route.request().method()).toBe('POST')
+    retried = true
+    return route.fulfill({ json: { code: 0, data: { ...prior, status: 'queued', error: null } } })
+  })
+  await page.route(/\/api\/v1\/forecast\/runs(?:\?|$)/, route => {
+    if (route.request().method() === 'POST') {
+      started = true
+      return route.fulfill({ json: { code: 0, data: run } })
+    }
+    const result = complete ? {
+      ...run, status: 'completed', prediction: {
+        next_candle: { direction: 'up', reason: '收盘延续', evidence },
+        next_regime: { regime: 'undetermined', reason: '后续信号冲突', evidence: [] },
+      },
+    } : run
+    const history = complete ? [result, retried ? { ...prior, status: 'queued', error: null } : prior] : [result]
+    return route.fulfill({ json: { code: 0, data: { runs: started ? history : [], tracking } } })
+  })
+  await page.route('**/api/v1/forecast/tracking', route => {
+    tracking = route.request().postDataJSON().enabled
+    return route.fulfill({ json: { code: 0, data: { tracking } } })
+  })
+  let replayStarted = false
+  await page.route(/\/api\/v1\/forecast\/replay(?:\?|$)/, route => {
+    if (route.request().method() === 'POST') {
+      expect(route.request().postDataJSON()).toEqual({ symbol: stock.code, end: null, samples: 5, mode: 'archived' })
+      replayStarted = true
+    }
+    const data = replayStarted ? {
+      id: 1, status: 'completed', error: null, options: { samples: 5, mode: 'archived' },
+      report: { total: 1, horizon: 5, rule_version: 1, scores: { direction: { labelled: 1, covered: 0, hits: 0 } },
+        cases: [{ session, actual_direction: 'up', actual_regime: 'range', status: 'missing_archive' }] },
+    } : null
+    return route.fulfill({ json: { code: 0, data } })
+  })
+  await page.goto('/forecast')
+  await page.getByRole('combobox', { name: '搜索股票名称、拼音或代码' }).fill(stock.code)
+  await page.getByRole('option', { name: /600519/ }).click()
+  await expect(page.getByRole('button', { name: '开启自动跟踪' })).toBeVisible()
+  await page.getByRole('button', { name: '分析走势' }).click()
+  await expect(page.getByText('第二阶段 · 正在推演走势')).toBeVisible()
+  await expect(page.getByText('2026-01-05 · EMA20 1,500')).toBeVisible()
+  await expect(page.getByText('旧记录的未核验说明')).toHaveCount(0)
+  complete = true
+  await expect(page.getByRole('heading', { name: '下一根日 K 线 · 涨' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '下一阶段走势 · 无法判断' })).toBeVisible()
+  await page.getByRole('button', { name: '开启自动跟踪' }).click()
+  await expect(page.getByRole('button', { name: '关闭自动跟踪' })).toHaveAttribute('aria-pressed', 'true')
+  await page.getByLabel('分析记录').selectOption('41')
+  await page.getByRole('button', { name: '重试此记录' }).click()
+  await expect(page.getByText('行情截至 2025-12-31', { exact: false })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: '等待分析' })).toBeVisible()
+  await page.getByLabel('数据口径').selectOption('archived')
+  await page.getByRole('button', { name: '开始历史回放' }).click()
+  await expect(page.getByRole('cell', { name: '0%（0/1）' })).toBeVisible()
+  await page.getByText('逐日结果').click()
+  await expect(page.getByRole('cell', { name: '缺少当日快照' })).toBeVisible()
+  await expectNoPageOverflow(page)
 })
 
 test('inline homepage login returns to the requested route', async ({ page }, info) => {

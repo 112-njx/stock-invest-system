@@ -4,17 +4,27 @@ import logging
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, select, text
 
+from app.models.forecast import ForecastTracking
 from app.models.ops import SyncTask
 from app.models.symbol import Symbol
-from app.models.user import UserWatchlist
+from app.models.user import User, UserWatchlist
 from app.repositories import ops_repo
 from app.utils.db import get_session
 
 TASK_TYPE = "local_market_sync"
 LOCK_KEY = 6100000001
 logger = logging.getLogger(__name__)
+
+
+def _sync_targets(db):
+    regular = Symbol.is_fixed_index.is_(True) | Symbol.id.in_(select(UserWatchlist.symbol_id))
+    tracked_codes = select(ForecastTracking.symbol).join(User, User.id == ForecastTracking.user_id).where(
+        User.is_deleted.is_(False),
+    )
+    tracked = and_(Symbol.type == "stock", Symbol.market.in_(("SSE", "SZSE", "BSE")), Symbol.code.in_(tracked_codes))
+    return db.execute(select(Symbol, regular).where(regular | tracked).order_by(Symbol.id)).all()
 
 
 def request_sync() -> dict:
@@ -122,17 +132,20 @@ def run(task_id: str) -> dict:
         catalog = sync_service.run_catalog_sync(force=True)
         if catalog.get("status") == "partial":
             raise RuntimeError("所有数据源均未返回证券目录，请稍后重试")
-        symbols = list(db.scalars(select(Symbol).where(
-            Symbol.is_fixed_index.is_(True) | Symbol.id.in_(select(UserWatchlist.symbol_id))
-        ).order_by(Symbol.id)))
-        symbols = [sym for sym in symbols if sync_service.supported_symbol(sym)]
+        symbols = [(sym, regular) for sym, regular in _sync_targets(db) if sync_service.supported_symbol(sym)]
         failed = []
         changed = 0
         end = datetime.combine(target_day, datetime.max.time(), get_settings().tz).astimezone(UTC)
-        for number, symbol in enumerate(symbols, 1):
+        start = end - timedelta(days=get_settings().KLINE_INIT_DAYS)
+        for number, (symbol, regular) in enumerate(symbols, 1):
             try:
-                result = sync_service.run_kline_init(symbol_id=symbol.id, end=end)
-                changed += sum(sum(periods.values()) for periods in result.values())
+                if regular:
+                    result = sync_service.run_kline_init(symbol_id=symbol.id, end=end)
+                    changed += sum(sum(periods.values()) for periods in result.values())
+                else:
+                    with get_session() as history_db:
+                        result = sync_service.prepare_history_window(history_db, symbol, "1d", start, end, initial=True)
+                        changed += result["added"]
             except Exception as exc:
                 failed.append(f"{symbol.name}: {str(exc)[:120]}")
             ops_repo.upsert_sync_status(
