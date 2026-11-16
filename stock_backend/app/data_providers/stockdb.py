@@ -94,7 +94,8 @@ class StockDBProvider(BaseDataProvider):
         cursor = start
         while cursor <= end:
             last = min(cursor + timedelta(days=365), end)
-            yield from self.query("vals", "日k", k1=f"key:{symbol}", k2=f"fwd:{cursor:%Y%m%d},{last:%Y%m%d}")
+            rows = self.query("vals", "日k", k1=f"key:{symbol}", k2=f"fwd:{cursor:%Y%m%d},{last:%Y%m%d}")
+            yield from sorted(rows, key=lambda row: row["date"])
             cursor = last + timedelta(days=1)
 
     def refresh_sdk(self):

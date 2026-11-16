@@ -12,6 +12,7 @@ export interface ForecastRun {
   trigger: 'manual' | 'auto'
   status: 'queued' | 'diagnosing' | 'predicting' | 'completed' | 'failed'
   created_at: string
+  regime_horizon: number | null
   snapshot: {
     latest_session: string | null
     as_of: string
@@ -66,6 +67,7 @@ export interface ForecastReplay {
     horizon: number
     rule_version: number
     scores: Record<string, ReplayScore>
+    matched_scores?: Record<string, { count: number; ai_hits: number; baseline_hits: number }>
     cases: {
       session: string
       next_session: string | null

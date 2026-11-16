@@ -33,6 +33,9 @@ def _lock_user(db, user_id):
 
 
 def as_response(run):
+    horizon = run.models.get("regime_horizon")
+    if horizon is None and run.models.get("playbook_version") in (4, 5):
+        horizon = 5
     return {
         "id": run.id,
         "symbol": run.symbol,
@@ -43,6 +46,7 @@ def as_response(run):
         "snapshot": {key: value for key, value in run.snapshot.items() if key != "rows"},
         "diagnosis": run.diagnosis,
         "prediction": run.prediction,
+        "regime_horizon": horizon,
         "models": run.models,
         "error": run.error,
     }
@@ -283,7 +287,10 @@ def execute(run_id):
             _advance(run_id, lease, status="failed", error="AI 服务尚未配置，请在账号设置填写模型 API Key。")
             return
         diagnosis, model = await forecast_analysis.diagnose(llm, run.snapshot)
-        models = {"diagnosis": model, "playbook_version": forecast_analysis.PLAYBOOK_VERSION}
+        models = {
+            "diagnosis": model, "playbook_version": forecast_analysis.PLAYBOOK_VERSION,
+            "regime_horizon": forecast_analysis.REGIME_HORIZON,
+        }
         next_lease = _advance(run_id, lease, status="predicting", diagnosis=diagnosis, models=models)
         if next_lease is None:
             return

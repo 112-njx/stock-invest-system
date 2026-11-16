@@ -164,7 +164,8 @@ test('forecast shows both stages and can enable tracking', async ({ page }, info
       return route.fulfill({ json: { code: 0, data: run } })
     }
     const result = complete ? {
-      ...run, status: 'completed', prediction: {
+      ...run, status: 'completed', models: { ...run.models, prediction: { name: 'old-model', revision: null } },
+      regime_horizon: null, prediction: {
         next_candle: { direction: 'up', reason: '收盘延续', evidence },
         next_regime: { regime: 'undetermined', reason: '后续信号冲突', evidence: [] },
       },
@@ -177,14 +178,23 @@ test('forecast shows both stages and can enable tracking', async ({ page }, info
     return route.fulfill({ json: { code: 0, data: { tracking } } })
   })
   let replayStarted = false
+  let replayPolled = false
   await page.route(/\/api\/v1\/forecast\/replay(?:\?|$)/, route => {
     if (route.request().method() === 'POST') {
       expect(route.request().postDataJSON()).toEqual({ symbol: stock.code, end: null, samples: 5, mode: 'archived' })
       replayStarted = true
+      return route.abort('failed')
+    }
+    if (replayStarted && !replayPolled) {
+      replayPolled = true
+      return route.fulfill({ json: { code: 0, data: {
+        id: 1, status: 'running', error: null, options: { samples: 5, mode: 'archived' }, report: null,
+      } } })
     }
     const data = replayStarted ? {
       id: 1, status: 'completed', error: null, options: { samples: 5, mode: 'archived' },
       report: { total: 1, horizon: 5, rule_version: 1, scores: { direction: { labelled: 1, covered: 0, hits: 0 } },
+        matched_scores: { always_up: { count: 0, ai_hits: 0, baseline_hits: 0 } },
         cases: [{ session, actual_direction: 'up', actual_regime: 'range', status: 'missing_archive' }] },
     } : null
     return route.fulfill({ json: { code: 0, data } })
@@ -200,6 +210,7 @@ test('forecast shows both stages and can enable tracking', async ({ page }, info
   complete = true
   await expect(page.getByRole('heading', { name: '下一根日 K 线 · 涨' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '下一阶段走势 · 无法判断' })).toBeVisible()
+  await expect(page.getByText('旧版预测，观察窗口未固定。')).toBeVisible()
   await page.getByRole('button', { name: '开启自动跟踪' }).click()
   await expect(page.getByRole('button', { name: '关闭自动跟踪' })).toHaveAttribute('aria-pressed', 'true')
   await page.getByLabel('分析记录').selectOption('41')
@@ -208,7 +219,9 @@ test('forecast shows both stages and can enable tracking', async ({ page }, info
   await expect(page.getByRole('status').filter({ hasText: '等待分析' })).toBeVisible()
   await page.getByLabel('数据口径').selectOption('archived')
   await page.getByRole('button', { name: '开始历史回放' }).click()
+  await expect(page.getByRole('status').filter({ hasText: '逐日回放中' })).toBeVisible()
   await expect(page.getByRole('cell', { name: '0%（0/1）' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '同样本基线对照' })).toBeVisible()
   await page.getByText('逐日结果').click()
   await expect(page.getByRole('cell', { name: '缺少当日快照' })).toBeVisible()
   await expectNoPageOverflow(page)

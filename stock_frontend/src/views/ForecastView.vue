@@ -352,6 +352,8 @@ async function loadHistory(code: string) {
           </section>
           <section>
             <h3>下一阶段走势 · {{ regimes[chosen.prediction.next_regime.regime] }}</h3>
+            <p v-if="chosen.regime_horizon">观察窗口为未来 {{ chosen.regime_horizon }} 根有成交日 K 线。</p>
+            <p v-else-if="chosen.models.prediction">旧版预测，观察窗口未固定。</p>
             <p>{{ chosen.prediction.next_regime.reason }}</p>
             <ForecastEvidence :items="chosen.prediction.next_regime.evidence" />
           </section>

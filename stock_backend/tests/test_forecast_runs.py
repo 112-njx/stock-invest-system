@@ -171,9 +171,15 @@ def test_manual_and_automatic_share_dedup_and_store_result(db_factory, monkeypat
         assert saved.status == "completed"
         assert saved.snapshot["data_version"] == "b"
         assert saved.models["prediction"]["revision"] == "test-revision"
+        assert saved.models["regime_horizon"] == analysis.REGIME_HORIZON
         assert saved.prediction["next_candle"]["evidence"][0]["value"] == 10.5
         assert db.get(ForecastTracking, (user_id, "600519")).last_session == latest
-        assert "rows" not in runs.history(db, user_id, "600519")["runs"][0]["snapshot"]
+        result = runs.history(db, user_id, "600519")["runs"][0]
+        assert "rows" not in result["snapshot"]
+        assert result["regime_horizon"] == analysis.REGIME_HORIZON
+        for version, expected in ((3, None), (4, 5), (5, 5)):
+            saved.models = {"playbook_version": version}
+            assert runs.as_response(saved)["regime_horizon"] == expected
 
 
 def test_insufficient_data_completes_without_model(db_factory, monkeypatch):

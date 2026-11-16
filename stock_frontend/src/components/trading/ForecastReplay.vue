@@ -12,7 +12,9 @@ const submitting = ref(false)
 const error = ref('')
 let timer: ReturnType<typeof setTimeout> | undefined
 let generation = 0
-const busy = computed(() => submitting.value || result.value?.status === 'queued' || result.value?.status === 'running')
+const active = computed(() => result.value?.status === 'queued' || result.value?.status === 'running')
+const busy = computed(() => submitting.value || active.value)
+type UncertainSubmission = { priorId: number | null; message: string; retryUntil: number }
 const names: Record<string, string> = {
   direction: 'AI · 下一根方向', last_candle: '方向基线 · 沿用上一根', always_up: '方向基线 · 一律预测涨',
   regime: 'AI · 走势类型', previous_regime: '走势基线 · 沿用前五根类型',
@@ -36,28 +38,32 @@ function label(value?: string | null) {
   return value ? labels[value] ?? '—' : '—'
 }
 
-function poll() {
+function poll(submission?: UncertainSubmission) {
   clearTimeout(timer)
-  timer = setTimeout(() => void refresh(), 5000)
+  timer = setTimeout(() => void refresh(submission), 5000)
 }
 
-async function refresh() {
+async function refresh(submission?: UncertainSubmission) {
   const request = generation
   try {
     const data = await getForecastReplay(props.symbol)
     if (request !== generation) return
     result.value = data
-    error.value = ''
+    error.value = submission && !active.value && (!data || data.id === submission.priorId) ? submission.message : ''
   } catch {
     if (request !== generation) return
-    error.value = '无法读取回放结果'
+    error.value = submission?.message || '无法读取回放结果'
+    poll(submission)
+    return
   }
-  if (busy.value || error.value) poll()
+  if (active.value) poll()
+  else if (submission && error.value && Date.now() < submission.retryUntil) poll(submission)
 }
 
 async function start() {
   if (busy.value) return
   const request = ++generation
+  const priorId = result.value?.id ?? null
   clearTimeout(timer)
   submitting.value = true
   error.value = ''
@@ -68,7 +74,10 @@ async function start() {
     poll()
   } catch (cause) {
     if (request !== generation) return
-    error.value = isAxiosError<{ msg?: string }>(cause) ? cause.response?.data?.msg || '提交回放失败' : '提交回放失败'
+    const response = isAxiosError<{ msg?: string }>(cause) ? cause.response : undefined
+    const message = response?.data?.msg || '提交回放失败'
+    const retryUntil = !response || response.status >= 500 ? Date.now() + 15000 : 0
+    await refresh({ priorId, message, retryUntil })
   } finally {
     if (request === generation) submitting.value = false
   }
@@ -130,6 +139,22 @@ onUnmounted(() => { generation++; clearTimeout(timer) })
             </tbody>
           </table>
         </div>
+        <template v-if="result.report.matched_scores">
+          <h3>同样本基线对照</h3>
+          <p>每行只比较 AI 和该基线都给出明确预测、且已有实际结果的样本。</p>
+          <div class="scroll-x" tabindex="0" aria-label="同样本基线对照">
+            <table>
+              <thead><tr><th>基线</th><th>共同样本</th><th>AI 命中率</th><th>基线命中率</th></tr></thead>
+              <tbody>
+                <tr v-for="(score, key) in result.report.matched_scores" :key="key">
+                  <th scope="row">{{ names[key] }}</th><td>{{ score.count }}</td>
+                  <td>{{ ratio(score.ai_hits, score.count) }}</td>
+                  <td>{{ ratio(score.baseline_hits, score.count) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
         <details>
           <summary>逐日结果</summary>
           <div class="scroll-x" tabindex="0" aria-label="逐日预测与实际结果">
