@@ -87,7 +87,10 @@ onUnmounted(() => { generation++; clearTimeout(timer) })
 
 <template>
   <section class="forecast-replay" aria-labelledby="forecast-replay-title">
-    <h2 id="forecast-replay-title">历史回放</h2>
+    <header class="replay-head">
+      <h3 id="forecast-replay-title">历史回放</h3>
+      <span>{{ symbol }} · 日线</span>
+    </header>
     <form @submit.prevent="start">
       <label>数据口径
         <select v-model="mode">
@@ -110,7 +113,7 @@ onUnmounted(() => { generation++; clearTimeout(timer) })
     <p v-else>当日存档只取本账号在该日收盘后保存的快照。缺少存档的日期计入覆盖率分母。</p>
     <p v-if="error || result?.error" role="alert">{{ error || result?.error }}</p>
     <template v-if="result">
-      <p role="status">{{ statusText[result.status] }}
+      <p class="replay-status" role="status">{{ statusText[result.status] }}
         <template v-if="result.report"> · 已处理 {{ result.report.cases.length }}/{{ result.report.total }}</template>
       </p>
       <p>本报告使用{{ result.options.mode === 'archived' ? '当日存档' : '重建历史' }}，申请 {{ result.options.samples }} 个样本。</p>
@@ -151,15 +154,26 @@ onUnmounted(() => { generation++; clearTimeout(timer) })
 </template>
 
 <style scoped>
-.forecast-replay { margin-block-end: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); }
-h2 { font-size: 16px; margin-block-end: 12px; }
-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
-label { display: grid; gap: 4px; min-width: 0; }
-input, select, button { min-height: var(--touch-target); max-width: 100%; border: 1px solid var(--border); border-radius: 4px; padding-inline: 8px; }
-button { background: var(--accent); color: white; }
+.forecast-replay { min-width: 0; padding: clamp(14px, 2.4vw, 28px); border: 1px solid var(--forecast-rule); border-radius: 16px; background: var(--forecast-panel); }
+.replay-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-block-end: 16px; }
+.replay-head h3 { font-size: clamp(19px, 2.2vw, 26px); font-weight: 680; }
+.replay-head span { color: var(--forecast-accent); font-size: 12px; font-weight: 650; }
+h3:not(#forecast-replay-title) { font-size: 16px; margin-block-start: 18px; }
+form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 12px; border-radius: 10px; background: var(--forecast-inset); }
+label { display: grid; gap: 4px; min-width: 0; max-width: 100%; color: var(--text-secondary); }
+input, select, button { min-height: max(var(--touch-target), 44px); min-width: 0; max-width: 100%; border: 1px solid var(--forecast-rule); border-radius: 7px; padding-inline: 10px; }
+input, select { background: var(--forecast-panel); color: var(--text); }
+button { background: var(--forecast-action); color: var(--forecast-action-ink); font-weight: 690; }
+button:not(:disabled):hover { filter: brightness(1.08); }
 button:disabled { opacity: .6; }
 p { margin-block: 8px; color: var(--text-secondary); }
-table { width: 100%; border-collapse: collapse; white-space: nowrap; }
-th, td { padding: 8px; text-align: start; border-bottom: 1px solid var(--border); }
+.replay-status { margin-block-start: 16px; color: var(--forecast-accent); font-weight: 700; }
+table { width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums; }
+th, td { padding: 8px; text-align: start; border-bottom: 1px solid var(--forecast-rule); }
+thead { color: var(--text-secondary); }
+tbody tr:hover { background: var(--forecast-inset); }
 summary { cursor: pointer; min-height: var(--touch-target); padding-block: 12px; }
+@media (max-width: 480px) {
+  form { display: grid; grid-template-columns: minmax(0, 1fr); }
+}
 </style>
