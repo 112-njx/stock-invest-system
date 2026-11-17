@@ -14,6 +14,7 @@ import pandas as pd
 
 from app.core.config import get_settings
 from app.models.kline import KLINE_MODELS
+from app.models.symbol import Symbol
 from app.repositories import kline_repo
 from app.services import market_service
 from app.services.indicators import get_indicator
@@ -58,7 +59,6 @@ def compute_indicators(
     if symbol_id is None:
         return []
     if period in {'1m', '5m', '30m', '60m'}:
-        from app.models.symbol import Symbol
         sym = db.get(Symbol, symbol_id)
         if sym is None or sym.type != 'stock':
             raise ValueError('新增分钟周期仅支持个股')
@@ -69,8 +69,10 @@ def compute_indicators(
         start = end - timedelta(days=_DEFAULT_BACK_DAYS)
 
     # Keep the bounded warmup window anchored to the newest bar for latest-N queries.
-    bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end,
-                               limit=MAX_HISTORY_ROWS + 1, source_window=(start, end), latest=not explicit_range)
+    bars = market_service.read_local_daily(db.get(Symbol, symbol_id), None, end) if period == "1d" else []
+    if not bars:
+        bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end,
+                                  limit=MAX_HISTORY_ROWS + 1, source_window=(start, end), latest=not explicit_range)
     if len(bars) > MAX_HISTORY_ROWS:
         raise ValueError(f"指标计算历史超过 {MAX_HISTORY_ROWS} 根上限，不能截断预热序列")
     if not bars:

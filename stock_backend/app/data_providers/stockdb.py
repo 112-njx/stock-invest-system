@@ -122,7 +122,7 @@ class StockDBProvider(BaseDataProvider):
         output = []
         cursor = first_day
         while cursor <= last_day:
-            last = min(cursor + timedelta(days=365), last_day)
+            last = last_day if period == "1d" else min(cursor + timedelta(days=365), last_day)
             first_key, last_key = cursor.strftime("%Y%m%d"), last.strftime("%Y%m%d")
             table = "日k" if period == "1d" else "分钟k"
             if period == "15m":

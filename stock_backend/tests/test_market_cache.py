@@ -18,6 +18,7 @@ from app.utils.db import get_session
 @pytest.fixture(autouse=True)
 def _cleanup(monkeypatch):
     monkeypatch.setattr("app.services.sync_service.supported_symbol", lambda sym: True)
+    monkeypatch.setattr(market_service, "read_local_daily", lambda *args: [])
     yield
     db = get_session()
     test_ids = db.query(Symbol.id).filter(Symbol.name.like("测试%")).all()

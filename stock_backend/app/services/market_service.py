@@ -2,12 +2,14 @@
 
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.data_providers.base import KlineBar, ProviderError
 from app.data_providers.factory import get_provider
+from app.data_providers.stockdb import StockDBProvider
 from app.models.kline import KLINE_MODELS, Kline1d
 from app.models.symbol import Symbol
 from app.repositories import kline_repo, symbol_repo
@@ -111,6 +113,33 @@ def resolve_symbol_id(db: Session, symbol: str) -> int | None:
     return None
 
 
+def local_daily_date(symbol: Symbol):
+    if symbol.type in {"stock", "etf"}:
+        try:
+            return StockDBProvider().latest_day(symbol.code)
+        except (ProviderError, ValueError, TypeError, KeyError) as exc:
+            logger.warning("Local daily date unavailable for %s: %s", symbol.code, exc)
+    return None
+
+
+def read_local_daily(
+    symbol: Symbol | None, start: datetime | None, end: datetime,
+) -> list[KlineBar]:
+    """Read one adjusted series for chart and indicator queries."""
+    if symbol is None or symbol.type not in {"stock", "etf"}:
+        return []
+    start = market_cache.as_utc(start) or datetime(1900, 1, 1, tzinfo=UTC)
+    end = market_cache.as_utc(end)
+    if start > end:
+        return []
+    try:
+        bars = StockDBProvider().fetch_kline(symbol.code, "1d", start, end, symbol.type)
+        return [bar for bar in bars if start <= bar.ts <= end]
+    except (ProviderError, ValueError, TypeError, KeyError, ArithmeticError) as exc:
+        logger.warning("Local daily history unavailable for %s: %s", symbol.code, exc)
+        return []
+
+
 def get_kline(
     db: Session,
     symbol: str,
@@ -120,22 +149,24 @@ def get_kline(
     limit: int = 1000,
     offset: int = 0,
 ) -> list[dict]:
-    """K 线查询：默认区间（未显式 start/end）走"最近N根"Redis 缓存，未命中回源 PG 并回写。
-
-    显式指定 start/end/offset 时直查 PG（保证范围正确性，不参与缓存）。
-    返回统一 dict 列表（ts 为 ISO 字符串），供 API/前端渲染。
-    """
+    """Serve local stock and ETF daily bars before consulting stored history."""
     if period not in (*KLINE_MODELS.keys(), "1w", "1mon"):
         raise ValueError(f"unsupported period: {period}")
     symbol_id = resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
+    use_cache = start is None and end is None and offset == 0
+    if period == "1d":
+        query_end = end if end is not None else datetime.now(UTC)
+        query_start = start if start is not None or use_cache else query_end - timedelta(days=365)
+        bars = read_local_daily(db.get(Symbol, symbol_id), query_start, query_end)
+        if bars:
+            selected = bars[-limit:] if use_cache else bars[offset:offset + limit]
+            return [market_cache.kline_bar_to_dict(bar) for bar in selected]
     if period in {'1m', '5m', '30m', '60m'}:
-        from app.models.symbol import Symbol
         sym = db.get(Symbol, symbol_id)
         if sym is None or sym.type != 'stock':
             raise ValueError('新增分钟周期仅支持个股')
-    use_cache = start is None and end is None and offset == 0
     if use_cache:
         cached = market_cache.get_kline_cache(symbol_id, period, limit)
         if cached is not None:

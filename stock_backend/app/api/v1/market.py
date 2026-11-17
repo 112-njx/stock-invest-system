@@ -159,6 +159,11 @@ def get_kline_quality(
         raise ApiError(status_code=404, msg="标的不存在")
     if period != "1d" or not kline_quality_service.eligible(sym):
         return ok(data={"status": "unsupported", "missing_count": 0, "missing_ranges": [], "checked_at": None})
+    local_date = market_service.local_daily_date(sym)
+    if local_date is not None:
+        return ok(data={"status": "complete", "checked_to": local_date.isoformat(),
+                        "missing_count": 0, "missing_ranges": [], "checked_at": None,
+                        "sync_status": "idle"})
     data = kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period))
     latest = kline_repo.latest_ts(db, period, sym.id)
     data.update(status="complete" if latest else "unchecked", missing_count=0, missing_ranges=[])

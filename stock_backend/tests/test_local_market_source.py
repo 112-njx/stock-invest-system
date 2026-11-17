@@ -68,6 +68,33 @@ def test_index_code_collision_never_queries_local_stock_prices(monkeypatch):
     assert not hasattr(provider, "fetch_realtime")
 
 
+def test_daily_chart_reads_stockdb_before_cache_and_preserves_pagination(monkeypatch):
+    from app.data_providers.base import KlineBar
+    from app.services import market_service
+
+    stamps = [datetime(2026, 11, day, tzinfo=UTC) for day in (5, 6, 9, 12)]
+    bars = [KlineBar(stamp, 100, 102, 99, 101, 1000, 1e6) for stamp in stamps]
+    fetch = Mock(side_effect=lambda code, period, start, end, asset: [
+        bar for bar in bars if start.date() <= bar.ts.date() <= end.date()
+    ])
+    stale_cache = Mock(return_value=[{"ts": stamps[0].isoformat()}])
+    monkeypatch.setattr(StockDBProvider, "fetch_kline", fetch)
+    monkeypatch.setattr(market_service, "resolve_symbol_id", lambda *args: 1)
+    monkeypatch.setattr(market_service.market_cache, "get_kline_cache", stale_cache)
+    db = Mock()
+    db.get.return_value = SimpleNamespace(code="300308", type="stock")
+
+    latest = market_service.get_kline(db, "300308", "1d", limit=2)
+    assert [row["ts"] for row in latest] == [stamp.isoformat() for stamp in stamps[-2:]]
+    ranged = market_service.get_kline(db, "300308", "1d", start=stamps[0] + timedelta(hours=1),
+                                      end=stamps[-1], limit=1, offset=1)
+    assert [row["ts"] for row in ranged] == [stamps[2].isoformat()]
+    stale_cache.assert_not_called()
+
+    fetch.side_effect = ProviderError("offline")
+    assert market_service.get_kline(db, "300308", "1d", limit=2) == stale_cache.return_value
+
+
 @pytest.mark.parametrize("local", [[], ProviderError("offline")])
 def test_watchlist_history_falls_back_when_local_is_empty_or_offline(local, monkeypatch):
     monkeypatch.setattr("app.services.market_policy.akshare_enabled", lambda: True)
