@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import Date, and_, case, delete, exists, func, or_, select
+from sqlalchemy import Date, and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -19,9 +19,7 @@ def _model(period: str):
 
 def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) -> int:
     """幂等写入：按 (symbol_id, ts) 更新变化记录（支持前复权历史刷新）。"""
-    from app.services.market_policy import history_storage_enabled
-    if not history_storage_enabled():
-        bars = [bar for bar in bars if bar.source != 'akshare']
+    bars = [bar for bar in bars if bar.source == 'stockdb']
     if not bars:
         return 0
     model = _model(period)
@@ -82,42 +80,13 @@ def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) 
 
 
 def source_filter(model, symbol_id, start=None, end=None):
-    from app.services.market_policy import akshare_enabled, history_storage_enabled
-    if not akshare_enabled() or not history_storage_enabled():
-        return model.source == "stockdb"
-    local = model.__table__.alias("local_history")
-    if start is not None or end is not None:
-        def bounds(source):
-            conditions = [local.c.symbol_id == symbol_id, local.c.source == source]
-            if start is not None:
-                conditions.append(local.c.ts >= start)
-            if end is not None:
-                conditions.append(local.c.ts <= end)
-            return tuple(select(aggregate(local.c.ts)).where(*conditions).scalar_subquery()
-                         for aggregate in (func.min, func.max))
-
-        local_first, local_last = bounds('stockdb')
-        remote_first, remote_last = bounds('akshare')
-        # Pick one source for the requested window, including indicator warmup.
-        # Never replace individual bars across different qfq bases.
-        remote_covers_more = and_(
-            remote_first <= local_first, remote_last >= local_last,
-            or_(remote_first < local_first, remote_last > local_last),
-        )
-        return model.source == case(
-            (or_(local_first.is_(None), remote_covers_more), 'akshare'), else_='stockdb'
-        )
-    has_local = exists(select(1).select_from(local).where(
-        local.c.symbol_id == symbol_id, local.c.source == "stockdb"
-    ))
-    # Select a whole source for the series; never splice AkShare rows into local history.
-    return model.source == case((has_local, "stockdb"), else_="akshare")
+    return model.source == "stockdb"
 
 
 def use_transient_source(db, model, symbol_id, start=None, end=None):
     from app.services import market_policy, source_history
     policy = market_policy.read()
-    if not policy['akshare_enabled'] or policy['history_storage_enabled']:
+    if not policy['akshare_enabled']:
         return False
     conditions = [model.symbol_id == symbol_id, model.source == 'stockdb']
     if start is not None:

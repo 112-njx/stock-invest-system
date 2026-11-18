@@ -50,15 +50,14 @@ function policyChanged() {
   </section>
   <section class="admin-card">
     <div class="card-title">
-      <div><h2>一键更新原始数据</h2><p>步骤一：更新 D 盘 StockDB 数据文件，并恢复本地读取服务</p></div>
+      <div><h2>一键更新原始数据</h2><p>更新 D 盘 StockDB 数据文件，并恢复本地读取服务</p></div>
       <span class="badge" :class="{ danger: s.update.data?.status === 'failed' }">{{ stateLabel(s.update.data?.status || 'idle') }}</span>
     </div>
     <div class="notice">
       此操作会暂停本地源读取，暂停 RD 和 SDK 读取进程，运行容器内 Linux 更新器下载原始文件，
       按清单校验后生成新的数据版本，再启动服务并检查真实查询。不会创建备份，也不会自动导入项目数据库。
-      原有项目库历史仍可查看，需要补拉的数据暂不可用。
+      更新完成后，个股与 ETF 行情直接读取新版本。
     </div>
-    <p>请等待正在执行的行情同步结束，再更新原始数据。更新成功后，点击下方“同步本地行情”完成第二步。</p>
     <AdminNotice :resource="s.update" />
     <p v-if="s.update.data && !s.update.data.helper_online" class="notice danger">容器更新控制器未连接，请检查 stockdb-local 容器。</p>
     <template v-if="s.update.data">
@@ -69,47 +68,11 @@ function policyChanged() {
       <small v-if="s.update.data.data_version">当前数据版本 {{ s.update.data.data_version }}</small>
     </template>
     <div class="form-actions">
-      <button class="primary" :disabled="!s.update.data?.helper_online || controller.busyUpdate.value || controller.busySync.value || (s.update.data.maintenance && !s.update.data.can_retry)" @click="controller.startUpdate">
+      <button class="primary" :disabled="!s.update.data?.helper_online || controller.busyUpdate.value || (s.update.data.maintenance && !s.update.data.can_retry)" @click="controller.startUpdate">
         {{ controller.busyUpdate.value ? '原始数据更新中…' : s.update.data?.can_retry ? '重试原始数据更新' : '一键更新原始数据' }}
       </button>
       <span class="success" role="status">{{ s.feedback.update }}</span>
       <span class="danger" role="alert">{{ s.saveError.update }}</span>
-    </div>
-  </section>
-  <section class="admin-card">
-    <div class="card-title">
-      <div>
-        <h2>本地行情同步</h2>
-        <p>步骤二：将本地数据导入项目数据库；AkShare 是否入库由下方独立开关控制</p>
-      </div>
-      <span class="badge" :class="{ danger: s.sync.data?.status === 'failed' }">{{
-        s.sync.data ? stateLabel(s.sync.data.status) : '等待读取'
-      }}</span>
-    </div>
-    <div class="notice">
-      原始数据更新成功、StockDB 服务恢复后再执行。此操作读取证券目录、受支持的固定指数和关注标的行情，
-      校验后写入项目数据库，并刷新相关图表与指标缓存。它不会运行“数据更新.exe”、下载原始文件或重启 StockDB。
-      重试同步会复用同一数据版本下已成功计算的行业结果；失败计算不会缓存。
-    </div>
-    <AdminNotice :resource="s.sync" />
-    <template v-if="s.sync.data"
-      ><p class="sync-message">{{ s.sync.data.message }}</p>
-      <progress :value="Math.max(0, Math.min(100, s.sync.data.progress))" max="100" />
-      <div class="split">
-        <small>同步进度</small><b>{{ s.sync.data.progress }}%</b>
-      </div>
-      <p v-if="s.sync.data.task_id" class="task-id">任务 {{ s.sync.data.task_id }}</p>
-      <AdminErrors v-if="s.sync.data.error" :error="s.sync.data.error" /></template
-    >
-    <div class="form-actions">
-      <button
-        class="primary"
-        :disabled="!s.sync.data || controller.busySync.value || controller.sourceBlocked.value"
-        @click="controller.startSync"
-      >
-        {{ controller.busySync.value ? '同步任务处理中…' : '同步本地行情' }}</button
-      ><span class="success" role="status">{{ s.feedback.sync }}</span
-      ><span class="danger" role="alert">{{ s.saveError.sync }}</span>
     </div>
   </section>
   <section class="admin-card">
@@ -126,20 +89,14 @@ function policyChanged() {
         <label class="switch-row"
           ><div>
             <b>启用 AkShare 兜底补充</b
-            ><small>允许本地源无法满足请求时按策略访问外部数据源。</small>
+            ><small>本地源缺少数据时允许使用 AkShare 缓存补充。</small>
           </div>
           <input
             v-model="s.policyForm.akshare_enabled"
             type="checkbox"
             @change="policyChanged" /></label
-        ><label class="switch-row"
-          ><div><b>保留 AkShare 历史 K 线入库</b><small>默认关闭：AkShare 历史行情只缓存，不写入项目数据库。StockDB 历史入库不受影响。</small></div>
-          <input
-            v-model="s.policyForm.history_storage_enabled"
-            type="checkbox"
-            @change="policyChanged"
-        /></label>
-        <label class="switch-row"><div><b>每日 16:30 自动同步</b><small>默认关闭，使用手动同步。此操作不运行数据更新.exe。</small></div><input v-model="s.policyForm.auto_sync_enabled" type="checkbox" @change="policyChanged" /></label>
+        >
+        <label class="switch-row"><div><b>每日 16:30 自动更新 StockDB</b><small>北京时间每天 16:30 运行本地数据更新程序，默认关闭。</small></div><input v-model="s.policyForm.auto_update_enabled" type="checkbox" @change="policyChanged" /></label>
       </fieldset>
       <div class="form-actions">
         <button class="primary" :disabled="!s.policy.data || s.saving.policy || !s.dirty.policy">

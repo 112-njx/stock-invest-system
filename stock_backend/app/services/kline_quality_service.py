@@ -53,9 +53,7 @@ def check_and_repair(db, symbol, provider, *, now: datetime | None = None, full_
     """Record available history coverage without calendar gap scans or automatic repairs."""
     now = now or datetime.now(UTC)
     from app.services import market_policy, source_history
-    query = select(Kline1d.ts).where(Kline1d.symbol_id == symbol.id)
-    if not market_policy.history_storage_enabled():
-        query = query.where(Kline1d.source == 'stockdb')
+    query = select(Kline1d.ts).where(Kline1d.symbol_id == symbol.id, Kline1d.source == 'stockdb')
     dates = list(db.scalars(query.order_by(Kline1d.ts)))
     if not dates and market_policy.akshare_enabled():
         dates = [bar.ts for bar in (source_history.cached(symbol.id, '1d') or [])]

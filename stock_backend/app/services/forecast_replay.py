@@ -224,6 +224,12 @@ def start(db, user_id, symbol, options):
     row = ForecastReplay(user_id=user_id, symbol=symbol, options=options, status="queued")
     db.add(row)
     db.commit()
+    from app.worker.tasks.forecast_tasks import replay_forecasts
+
+    try:
+        replay_forecasts.delay()
+    except Exception:
+        logger.exception("Forecast replay %s is queued pending delivery", row.id)
     return _response(row)
 
 
@@ -330,3 +336,4 @@ def work_once():
     except Exception:
         logger.exception("Forecast replay %s failed", job.id)
         _save(job.id, report, "failed", "无法读取或处理回放行情，请检查本地数据源后重试")
+    return True

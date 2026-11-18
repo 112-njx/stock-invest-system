@@ -158,6 +158,17 @@ def _resolve_symbol(db: Session, symbol: str) -> int | None:
 # ---- 回测执行（Celery worker 调用）----
 def _load_backtest_bars(db, task, symbol):
     """Prepare a missing window in the worker, preserving the local-first policy."""
+    if symbol.type in {"stock", "etf"}:
+        from app.services import local_history, source_history
+
+        bars = local_history.read(symbol, task.period, task.start_ts, task.end_ts, limit=_KLINE_LIMIT)
+        if bars:
+            return bars[:_KLINE_LIMIT]
+        cached = source_history.window(db, symbol.id, task.period, task.start_ts, task.end_ts, _KLINE_LIMIT)
+        if cached:
+            return cached
+        source_history.load(db, symbol.id, task.period)
+        return source_history.window(db, symbol.id, task.period, task.start_ts, task.end_ts, _KLINE_LIMIT)
     bars = kline_repo.get_bars(db, task.period, task.symbol_id, task.start_ts, task.end_ts, limit=_KLINE_LIMIT)
     if not bars and kline_repo.use_transient_source(db, KLINE_MODELS[task.period], task.symbol_id,
                                                   task.start_ts, task.end_ts):

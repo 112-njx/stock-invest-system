@@ -127,7 +127,7 @@ const qualityWarning = computed(() => {
     const ranges = quality.value.missing_ranges.slice(0, 2).map((r) => r.join('～')).join('、')
     return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${retryRemaining.value > 0 ? `${retryRemaining.value} 秒后同步` : quality.value.sync_status === 'syncing' ? '更新中' : '暂未同步'}`
   }
-  if (quality.value?.status === 'unknown') return '暂无可用历史数据，请在管理后台同步'
+  if (quality.value?.status === 'unknown') return isEquityChart() ? '本地数据源暂无历史行情' : '暂无可用历史数据'
   if (quality.value?.status === 'unchecked') return '历史数据尚未初始化'
   return ''
 })
@@ -956,9 +956,9 @@ async function loadOlder() {
     const older = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
     if (version !== loadVersion) return
     await merge(older)
-    if ((period === '1w' || period === '1mon') && older.length) {
-      historyCursor = loadedBars[0].ts
-      historyState.value = ''
+    if (isEquityChart() || ((period === '1w' || period === '1mon') && older.length)) {
+      historyCursor = older.length ? loadedBars[0].ts : start.toISOString()
+      historyState.value = older.length ? '' : 'empty'
       return
     }
     const retry = retryBackfill
@@ -988,8 +988,12 @@ async function loadOlder() {
   }
 }
 
+function isEquityChart() {
+  return props.symbol?.type === 'stock' || props.symbol?.type === 'etf'
+}
+
 async function loadInitialMissing(version: number, symbolId: number, period: Period) {
-  if (props.showIndicators && (period === '1w' || period === '1mon')) {
+  if (!isEquityChart() && props.showIndicators && (period === '1w' || period === '1mon')) {
     await fillInitialPeriod(version, symbolId, period)
     return
   }
@@ -1064,7 +1068,7 @@ async function fillInitialPeriod(version: number, symbolId: number, period: '1w'
 function retryHistory() {
   historyState.value = ''
   retryBackfill = true
-  if (props.showIndicators && (market.period === '1w' || market.period === '1mon') && loadedBars.length < initialPeriodCount(market.period) && props.symbol) {
+  if (!isEquityChart() && props.showIndicators && (market.period === '1w' || market.period === '1mon') && loadedBars.length < initialPeriodCount(market.period) && props.symbol) {
     void fillInitialPeriod(loadVersion, props.symbol.id, market.period)
     return
   }
@@ -1140,7 +1144,7 @@ async function loadKline() {
     if (version !== loadVersion || props.symbol?.id !== symbolId || market.period !== period) return
     // 周/月 K 的时间戳是本周期最后一个交易日，周期内更新会改变时间戳。
     const existing = initialViewport || period === '1w' || period === '1mon' ? [] : loadedBars
-    const byTime = new Map([...existing, ...loaded].map((bar) => [bar.ts, bar]))
+    const byTime = new Map([...existing, ...loaded].map((bar) => [toUtcSeconds(bar.ts), bar]))
     const bars = [...byTime.values()].sort((a, b) => toUtcSeconds(a.ts) - toUtcSeconds(b.ts))
     quality.value = checked
     retryRemaining.value = checked?.retry_after_seconds ?? 0
@@ -1155,7 +1159,7 @@ async function loadKline() {
       indicators.reset()
   overlays.reset()
       if (period === '1w' || period === '1mon') showInitialPeriodRange(period, 1)
-      void loadInitialMissing(version, symbolId, period)
+      if (!isEquityChart()) void loadInitialMissing(version, symbolId, period)
       return
     }
     lastBar = bars.length ? bars[bars.length - 1] : null
@@ -1188,7 +1192,7 @@ async function loadKline() {
         : Math.max(0, bars.length - previousCount)
       chart?.timeScale().setVisibleLogicalRange({ from: previousRange.from + prepended, to: previousRange.to + prepended })
     }
-    if ((period === '1w' || period === '1mon') && props.showIndicators && bars.length < initialPeriodCount(period)) {
+    if (!isEquityChart() && (period === '1w' || period === '1mon') && props.showIndicators && bars.length < initialPeriodCount(period)) {
       void fillInitialPeriod(version, symbolId, period)
     }
     trackTiming('kline_load', performance.now() - t0, {
@@ -1306,7 +1310,7 @@ onMounted(() => {
     loadSRLines()
   }
   qualityTimer = setInterval(async () => {
-    if (!props.symbol || !quality.value || quality.value.status === 'complete' || quality.value.status === 'unsupported') return
+    if (!props.symbol || isEquityChart() || !quality.value || quality.value.status === 'complete' || quality.value.status === 'unsupported') return
     const symbolId = props.symbol.id
     const period = market.period
     const checked = await fetchKlineQuality(symbolId, period).catch(() => null)

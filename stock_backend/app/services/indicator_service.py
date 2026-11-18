@@ -69,8 +69,19 @@ def compute_indicators(
         start = end - timedelta(days=_DEFAULT_BACK_DAYS)
 
     # Keep the bounded warmup window anchored to the newest bar for latest-N queries.
-    bars = market_service.read_local_daily(db.get(Symbol, symbol_id), None, end) if period == "1d" else []
-    if not bars:
+    sym = db.get(Symbol, symbol_id)
+    if sym is not None and sym.type in {"stock", "etf"}:
+        from app.data_providers.base import ProviderError
+        from app.services import local_history, source_history
+
+        warmup_start = start - timedelta(days=90) if explicit_range and period in local_history.MINUTE_BARS else None
+        try:
+            bars = local_history.read(sym, period, warmup_start, end, limit=limit + 1000)
+        except ProviderError:
+            bars = []
+        if not bars:
+            bars = source_history.window(db, symbol_id, period, local_history.FIRST, end, MAX_HISTORY_ROWS + 1)
+    else:
         bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end,
                                   limit=MAX_HISTORY_ROWS + 1, source_window=(start, end), latest=not explicit_range)
     if len(bars) > MAX_HISTORY_ROWS:

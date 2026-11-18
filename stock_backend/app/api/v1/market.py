@@ -42,8 +42,13 @@ def request_kline_backfill(payload: KlineBackfillRequest, db: Session = Depends(
     max_days = 500 if payload.period == "1w" else 100
     if not timedelta(0) < payload.end - payload.start <= timedelta(days=max_days) or payload.end > datetime.now(payload.end.tzinfo):
         raise ApiError(status_code=400, msg=f"历史区间须在过去且不超过{max_days}天")
-    if db.get(Symbol, payload.symbol_id) is None:
+    symbol = db.get(Symbol, payload.symbol_id)
+    if symbol is None:
         raise ApiError(status_code=404, msg="标的不存在")
+    if symbol.type in {"stock", "etf"}:
+        from app.services.market_policy import akshare_enabled
+        if not akshare_enabled():
+            raise ApiError(status_code=409, msg="该标的直接读取 StockDB，外部缓存补充未启用")
     from app.utils.redis_client import get_redis_client
     from app.worker.tasks.sync_tasks import kline_backfill
 
@@ -157,23 +162,27 @@ def get_kline_quality(
     sym = db.get(Symbol, symbol_id) if symbol_id is not None else None
     if sym is None:
         raise ApiError(status_code=404, msg="标的不存在")
-    if period != "1d" or not kline_quality_service.eligible(sym):
+    if period != "1d" or (sym.type not in {"stock", "etf"} and not kline_quality_service.eligible(sym)):
         return ok(data={"status": "unsupported", "missing_count": 0, "missing_ranges": [], "checked_at": None})
     local_date = market_service.local_daily_date(sym)
     if local_date is not None:
         return ok(data={"status": "complete", "checked_to": local_date.isoformat(),
                         "missing_count": 0, "missing_ranges": [], "checked_at": None,
                         "sync_status": "idle"})
+    if sym.type in {"stock", "etf"}:
+        from app.services.source_history import cached
+        bars = cached(sym.id, period) or []
+        return ok(data={"status": "complete" if bars else "unknown", "missing_count": 0,
+                        "missing_ranges": [], "checked_at": None, "sync_status": "idle"})
     data = kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period))
     latest = kline_repo.latest_ts(db, period, sym.id)
     data.update(status="complete" if latest else "unchecked", missing_count=0, missing_ranges=[])
     if latest:
         data["checked_to"] = latest.date().isoformat()
-    tasks = [ops_repo.latest_sync_task(db, kind, sym.id) for kind in ('kline_incremental', 'kline_init')]
-    symbol_syncing = any(
+    task = ops_repo.latest_sync_task(db, "kline_init", sym.id)
+    symbol_syncing = (
         task is not None and task.status in {'queued', 'running'} and task.last_run_at is not None
         and datetime.now(UTC) - market_cache.as_utc(task.last_run_at) < timedelta(hours=2)
-        for task in tasks
     )
     # Fixed-index pre-sync is queued as one batch. Until the worker reaches a
     # symbol, its per-symbol SyncTask is not running yet, so the batch status
@@ -185,10 +194,6 @@ def get_kline_quality(
         from app.utils.redis_client import get_redis_client
 
         data['retry_after_seconds'] = max(0, get_redis_client().ttl('provider:fixed-indices-retry'))
-    elif kline_quality_service.is_a_share_stock(sym):
-        next_times = [task.next_run_at for task in tasks if task and task.status in {'queued', 'failed'}
-                      and task.next_run_at is not None]
-        data['retry_after_seconds'] = max(0, int((min(map(market_cache.as_utc, next_times)) - datetime.now(UTC)).total_seconds())) if next_times else 0
     return ok(data=data)
 
 

@@ -87,7 +87,7 @@ export interface WatchlistItem {
   updated_at?: string | null
   created_at?: string | null
   /** V0.2：K线同步状态 pending/syncing/done/failed */
-  sync_status?: 'pending' | 'syncing' | 'done' | 'failed'
+  sync_status?: 'pending' | 'syncing' | 'done' | 'failed' | null
   /** V0.2：最近同步完成时间 */
   last_synced_at?: string | null
 }

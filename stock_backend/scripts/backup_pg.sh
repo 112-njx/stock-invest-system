@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # G05 · P1-1 PostgreSQL 每日全量备份 + 保留期清理 + 文件镜像 + 异地同步。
 #
-# 与 Celery beat 任务（app/worker/tasks/backup_tasks.py）共用同一实现
+# 与备份任务（app/worker/tasks/backup_tasks.py）共用同一实现
 # （app/services/backup_service.py），本脚本供人工执行 / 系统 cron / 容器内独立调用，
 # 避免"脚本一套逻辑、任务另一套逻辑"分叉。
 #

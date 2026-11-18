@@ -25,10 +25,8 @@ celery_app.conf.update(
     task_default_exchange="sync",
     task_default_routing_key="sync",
     task_routes={
-        "app.worker.tasks.sync_tasks.watchlist_stock_sync": {"queue": "watchlist"},
-        "app.worker.tasks.sync_tasks.watchlist_delivery_reconcile": {"queue": "control"},
+        "app.worker.tasks.sync_tasks.update_stockdb_daily": {"queue": "control"},
         "app.worker.tasks.sync_tasks.kline_init_fixed_indices": {"queue": "fixed_indices"},
-        "app.worker.tasks.sync_tasks.local_market_sync": {"queue": "fixed_indices"},
         "app.worker.tasks.sync_tasks.kline_backfill": {"queue": "backfill"},
         "app.worker.tasks.sync_tasks.*": {"queue": "sync"},
         "app.worker.tasks.backtest_tasks.*": {"queue": "backtest"},

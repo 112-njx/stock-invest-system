@@ -213,7 +213,13 @@ def start() -> None:
     _stop.clear()
 
     def run():
+        from app.services.stockdb_update import dispatch_version_change
+
         while not _stop.wait(15):
+            try:
+                dispatch_version_change()
+            except Exception:
+                logger.warning("StockDB version event could not be published", exc_info=True)
             _rebuild()
 
     _timer = Thread(target=run, name="stockdb-cache", daemon=True)

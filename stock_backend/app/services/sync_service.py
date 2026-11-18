@@ -1,7 +1,4 @@
-"""行情同步服务：K线全量/增量、缓存准备。被 Celery 任务调用，不阻塞主线程。
-
-写入链路：StockDB K线入库；AkShare历史按独立开关入库或仅缓存。
-"""
+"""Index history synchronization, security catalog and cache preparation."""
 
 import logging
 from datetime import UTC, datetime, timedelta
@@ -36,8 +33,7 @@ def _provider_params(sym: Symbol) -> tuple[str, str]:
 
 def _write_bars(db, period: str, symbol_id: int, bars) -> int:
     """幂等写 K 线 + 失效缓存 + 推送最新末根（WS 增量）。"""
-    from app.services.market_policy import history_storage_enabled
-    if bars and bars[0].source == 'akshare' and not history_storage_enabled():
+    if bars and bars[0].source == 'akshare':
         from app.services import source_history
         if not source_history.load(db, symbol_id, period, refresh=True):
             raise RuntimeError('AkShare 历史缓存未准备完成')
@@ -68,50 +64,28 @@ def _write_bars(db, period: str, symbol_id: int, bars) -> int:
     return added
 
 
-def _validate_qfq_coverage(db, period, sym, bars):
-    from app.services.market_policy import history_storage_enabled
-    if sym.type not in {'stock', 'etf'} or (bars and bars[0].source == 'akshare' and not history_storage_enabled()):
-        return
-    from sqlalchemy import func, select
-    from app.models.kline import KLINE_MODELS
-
-    model = KLINE_MODELS[period]
-    first, last = db.execute(select(func.min(model.ts), func.max(model.ts)).where(
-        model.symbol_id == sym.id, model.source == (bars[0].source if bars else "stockdb")
-    )).one()
-    def boundary(ts):
-        stamp = market_cache.as_utc(ts)
-        if period == '1w':
-            return (stamp - timedelta(days=stamp.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-        if period == '1mon':
-            return stamp.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        return stamp
-    # A qfq refresh must replace the whole stored range in one transaction.
-    # A stale local source must never rebase the prefix while leaving a newer tail.
-    if first is not None and (not bars or
-            min(boundary(bar.ts) for bar in bars) > boundary(first) or
-            max(boundary(bar.ts) for bar in bars) < boundary(last)):
-        logger.warning("qfq coverage_rejected symbol=%s period=%s stored=%s..%s",
-                       sym.code, period, first, last)
-        raise RuntimeError(
-            f"{sym.name} 的 {period} 数据未覆盖库中已有历史，已阻止覆盖以保护前复权基准；"
-            "请先运行数据更新.exe 更新 Free-StockDB 后重试"
-        )
-
-
 def prepare_history_window(db, sym, period, start, end, *, initial=False):
     """Prepare a worker window atomically, refreshing the complete stored qfq range."""
     from sqlalchemy import func, select, text
     from app.models.kline import KLINE_MODELS
-    from app.services import market_policy, source_history
+    from app.services import local_history, source_history
 
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 5000000000 + sym.id})
     if period in {'1m', '5m', '30m', '60m'} and sym.type != 'stock':
         raise ValueError('新增分钟周期仅支持个股')
     model = KLINE_MODELS[period]
-    sources = ['stockdb', 'akshare'] if market_policy.history_storage_enabled() else ['stockdb']
+    if sym.type in {"stock", "etf"}:
+        bars = local_history.read(sym, period, None if initial else start, end)
+        if not bars and not initial:
+            # The requested historical interval may be outside the local coverage.
+            bars = source_history.window(db, sym.id, period, start, end)
+        if not bars:
+            cached = source_history.load(db, sym.id, period)
+            bars = [bar for bar in cached if (initial or start <= bar.ts) and bar.ts <= end]
+        return {"fetched": len(bars), "added": 0, "confirmed_empty": not bars}
+
     first, last = db.execute(select(func.min(model.ts), func.max(model.ts)).where(
-        model.symbol_id == sym.id, model.source.in_(sources))).one()
+        model.symbol_id == sym.id, model.source == "stockdb")).one()
     start = min(start, market_cache.as_utc(first)) if first is not None else start
     end = max(end, market_cache.as_utc(last)) if last is not None else end
     code, asset = _provider_params(sym)
@@ -123,7 +97,6 @@ def prepare_history_window(db, sym, period, start, end, *, initial=False):
         bars, confirmed = provider.fetch_kline_checked(code, period, source_history.FIRST, end, asset)
     if not bars and not confirmed:
         raise RuntimeError('历史行情源不可用，请检查本地行情服务')
-    _validate_qfq_coverage(db, period, sym, bars)
     added = _write_bars(db, period, sym.id, bars)
     db.commit()
     if bars:
@@ -136,37 +109,14 @@ def prepare_history_window(db, sym, period, start, end, *, initial=False):
     return {'fetched': len(bars), 'added': added, 'confirmed_empty': confirmed if not bars else False}
 
 
-def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetime,
-                        watched_a_share: bool) -> dict[str, int]:
-    symbol_param, asset_type = _provider_params(sym)
-    fetched = {}
-    local_minutes = ("1m", "5m", "30m", "60m") if sym.type == "stock" else ()
-    for period in ALL_PERIODS + local_minutes:
-        fetch = provider.fetch_kline_all if watched_a_share and period == "1d" else provider.fetch_kline
-        bars = fetch(symbol_param, period, start, end, asset_type)
-        if period == "1d" and not bars:
-            raise RuntimeError(f"{sym.name} 的所有数据源均未返回日 K")
-        if asset_type in {'stock', 'etf', 'sw_index'} and period in {'1w', '1mon'} and not bars:
-            raise RuntimeError(f'{sym.name} 的 {period} 数据获取失败，未完成同步，请检查数据源后重试')
-        if period in local_minutes:
-            # Bulk synchronization must still commit supported AkShare periods
-            # when the local-only minute source is unavailable. Keep existing
-            # minute records untouched; explicit minute backfills still fail.
-            if not bars:
-                logger.warning("local minute sync skipped symbol=%s period=%s: source unavailable or empty",
-                               sym.code, period)
-                continue
-            try:
-                _validate_qfq_coverage(db, period, sym, bars)
-            except RuntimeError:
-                logger.warning("local minute sync skipped symbol=%s period=%s: incomplete qfq coverage",
-                               sym.code, period, exc_info=True)
-                continue
-        else:
-            _validate_qfq_coverage(db, period, sym, bars)
-        fetched[period] = bars
-    # Validate both periods before publishing or writing either of them.
-    return {period: _write_bars(db, period, sym.id, bars) for period, bars in fetched.items()}
+def _sync_symbol_klines(db, provider, sym: Symbol, start: datetime, end: datetime) -> dict[str, int]:
+    code, asset = _provider_params(sym)
+    bars_by_period = {period: provider.fetch_kline(code, period, start, end, asset) for period in ALL_PERIODS}
+    required = ("1d", "1w", "1mon") if asset == "sw_index" else ("1d",)
+    for period in required:
+        if not bars_by_period[period]:
+            raise RuntimeError(f"{sym.name} 的 {period} K 线未返回")
+    return {period: _write_bars(db, period, sym.id, bars) for period, bars in bars_by_period.items()}
 
 
 def _mark_watchlist_synced(db, symbol_id: int, status: str) -> None:
@@ -252,7 +202,7 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
 
 
 # ---- V0.2 3.1 全量标的目录预同步 ----
-def run_catalog_sync(force: bool = False) -> dict:
+def run_catalog_sync(force: bool = False, *, local_only: bool = False) -> dict:
     """Read the trusted local catalog first, falling back to the existing provider chain."""
     db = get_session()
     try:
@@ -264,6 +214,9 @@ def run_catalog_sync(force: bool = False) -> dict:
             return {'status': 'done', 'skipped': 'already synced today'}
         provider = get_provider()
         ops_repo.upsert_sync_status(db, "catalog", "running", 0, 0, "全量目录同步开始", started_at=datetime.now(UTC))
+        if local_only:
+            from app.data_providers.stockdb import StockDBProvider
+            provider = StockDBProvider()
         catalog = provider.fetch_catalog()
         stocks, etfs = catalog.get("stocks") or [], catalog.get("etfs") or []
         added_stocks = symbol_repo.upsert_catalog_symbols(db, [(c, n, "stock", "SZSE" if c.startswith(("0", "3")) else "BSE" if c.startswith(("4", "8", "9")) else "SSE") for c, n in stocks])
@@ -333,7 +286,7 @@ def warmup_fixed_indices_cache() -> dict:
 
 # ---- K线 ----
 def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: datetime | None = None) -> dict:
-    """首次全量历史K线：全标的多周期拉取并幂等入库；行业指数同步回填 code。"""
+    """同步固定指数历史，必要时补齐行业代码。"""
     db = get_session()
     try:
         from app.services import kline_quality_service
@@ -348,7 +301,7 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: d
         watched_ids = set(db.scalars(select(UserWatchlist.symbol_id).distinct()))
         results: dict = {}
         for sym in symbols:
-            if sym is None or not supported_symbol(sym):
+            if sym is None or sym.type in {"stock", "etf"} or not supported_symbol(sym):
                 continue
             ops_repo.upsert_sync_task(db, "kline_init", sym.id, "running", datetime.now(UTC))
             if sym.type == "index" and not sym.code:  # 行业指数 code 回填
@@ -356,7 +309,6 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: d
                 if code:
                     symbol_repo.update_code(db, sym.id, code)
                     logger.info("backfill industry index code: %s -> %s", sym.name, code)
-            watched_a_share = sym.id in watched_ids and kline_quality_service.is_a_share_stock(sym)
             from sqlalchemy import func, text
             from app.models.kline import KLINE_MODELS
 
@@ -365,7 +317,7 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: d
                       for model in KLINE_MODELS.values()]
             stored = [market_cache.as_utc(ts) for ts in oldest if ts is not None]
             symbol_start = min([start, *stored])
-            counts = _sync_symbol_klines(db, provider, sym, symbol_start, end, watched_a_share)
+            counts = _sync_symbol_klines(db, provider, sym, symbol_start, end)
             for period, added in counts.items():
                 logger.info("kline_init %s %s added=%d", sym.name, period, added)
             quality = kline_quality_service.check_and_repair(db, sym, provider)
@@ -391,8 +343,3 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: d
         return results
     finally:
         db.close()
-
-
-def run_kline_incremental(symbol_id: int | None = None, back_days: int = 10) -> dict:
-    """Compatibility entry point for explicitly requested watchlist refreshes."""
-    return run_kline_init(symbol_id=symbol_id)

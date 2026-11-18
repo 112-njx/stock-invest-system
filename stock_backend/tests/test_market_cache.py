@@ -18,7 +18,6 @@ from app.utils.db import get_session
 @pytest.fixture(autouse=True)
 def _cleanup(monkeypatch):
     monkeypatch.setattr("app.services.sync_service.supported_symbol", lambda sym: True)
-    monkeypatch.setattr(market_service, "read_local_daily", lambda *args: [])
     yield
     db = get_session()
     test_ids = db.query(Symbol.id).filter(Symbol.name.like("测试%")).all()
@@ -31,7 +30,7 @@ def _cleanup(monkeypatch):
     db.close()
 
 
-def _make_symbol(type_="stock", code="600519", name="测试缓存标的", is_fixed=False) -> Symbol:
+def _make_symbol(type_="index", code="600519", name="测试缓存标的", is_fixed=False) -> Symbol:
     db = get_session()
     sym = Symbol(code=code, name=name + __import__("uuid").uuid4().hex[:8], type=type_, market="SSE", is_fixed_index=is_fixed, sort_order=1 if is_fixed else None)
     db.add(sym)
@@ -123,8 +122,8 @@ def test_kline_lock_acquire_exclusive():
 def test_indicator_cache_key_default_range_stable():
     t = datetime(2026, 8, 19, tzinfo=UTC)
     k1 = indicator_service._cache_key(1, "1d", ["macd"], None, t, False, t, t, 1000)
-    k2 = indicator_service._cache_key(1, "1d", ["macd"], None, t, False, datetime(2025, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, tzinfo=UTC), 500)
-    assert k1 == k2  # 默认区间：start/end/limit 不影响键
+    k2 = indicator_service._cache_key(1, "1d", ["macd"], None, t, False, datetime(2025, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, tzinfo=UTC), 1000)
+    assert k1 == k2  # 默认区间：隐式 start/end 不影响键；limit 区分不同长度
     assert t.isoformat() in k1  # latest_ts 在键内（新K线自动失效）
 
 

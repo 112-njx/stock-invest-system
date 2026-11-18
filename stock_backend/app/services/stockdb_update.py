@@ -3,9 +3,8 @@ import os
 import time
 from pathlib import Path
 from uuid import uuid4
-from sqlalchemy import select, text
+from sqlalchemy import text
 from fastapi import HTTPException
-from app.models.ops import SyncTask
 from app.utils.db import get_session
 from .stockdb_files import read_json, write_json
 
@@ -25,18 +24,17 @@ def status():
             'data_version': read_json(root / 'version.json', {}).get('version')}
 
 
-def request_update():
-    from .local_market_sync import LOCK_KEY, TASK_TYPE
+def request_update(*, scheduled_day=None):
     root = directory()
     root.mkdir(parents=True, exist_ok=True)
     if not status()['helper_online']:
         raise HTTPException(503, '容器更新控制器未连接，请检查 stockdb-local 容器')
     db = get_session()
     try:
-        db.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': LOCK_KEY})
-        job = db.scalar(select(SyncTask).where(SyncTask.task_type == TASK_TYPE))
-        if job and job.status in {'queued', 'running'}:
-            raise HTTPException(409, '行情同步正在执行，请完成后再更新原始文件')
+        db.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': 6100000001})
+        schedule_file = root / 'scheduled-update.json'
+        if scheduled_day and read_json(schedule_file, {}).get('day') == scheduled_day:
+            raise HTTPException(409, '已提交今日自动更新')
         task_id = str(uuid4())
         previous = status()
         if previous.get('status') in {'queued', 'running'}:
@@ -52,11 +50,15 @@ def request_update():
         try:
             write_json(root / 'status.json', {'task_id': task_id, 'status': 'queued', 'phase': 'queued',
                        'progress': 0, 'message': '等待容器控制器更新原始文件；不会自动导入项目数据库', 'error': None})
+            if scheduled_day:
+                write_json(schedule_file, {'day': scheduled_day, 'task_id': task_id})
             write_json(root / 'request.json', {'task_id': task_id, 'operation': 'update', 'created_at': time.time()})
         except Exception as exc:
             # No queued status may survive without a job for the helper to claim.
             # Remove the job before publishing a retryable terminal state.
             (root / 'request.json').unlink(missing_ok=True)
+            if scheduled_day:
+                schedule_file.unlink(missing_ok=True)
             try:
                 write_json(root / 'status.json', {'task_id': task_id, 'status': 'failed', 'phase': 'failed',
                            'progress': 0, 'message': '更新请求提交失败，尚未执行更新，请重试', 'error': str(exc)})
@@ -70,6 +72,33 @@ def request_update():
         return status()
     finally:
         db.close()
+
+
+def dispatch_version_change():
+    """Publish dependent work once per verified StockDB file version."""
+    root = directory()
+    manifest = read_json(root / 'version.json', {})
+    version = manifest.get('version')
+    if manifest.get('status') != 'ready' or not version or (root / 'maintenance.json').exists():
+        return
+    from app.utils.redis_client import get_redis_client
+    from app.worker.tasks.forecast_tasks import sweep_forecasts
+    from app.worker.tasks.sync_tasks import refresh_stockdb_catalog
+
+    redis = get_redis_client()
+    key = 'stockdb:dispatched-file-version'
+    if redis.get(key) == version:
+        return
+    lock = redis.lock(key + ':lock', timeout=60, blocking_timeout=0)
+    if not lock.acquire():
+        return
+    try:
+        if redis.get(key) != version:
+            refresh_stockdb_catalog.delay()
+            sweep_forecasts.delay()
+            redis.set(key, version)
+    finally:
+        lock.release()
 
 
 def events(task_id, after_seq=0, before_seq=None, limit=200):

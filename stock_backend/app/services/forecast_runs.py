@@ -241,15 +241,16 @@ def sweep():
     snapshots = {}
     for _ in range(SWEEP_LIMIT):
         if monotonic() >= deadline:
-            break
+            return True
         claim = _claim_due_tracking()
         if claim is None:
-            break
+            return len(ids) == SWEEP_LIMIT
         user_id, symbol, previous, lease = claim
         try:
             _track_one(user_id, symbol, previous, lease, now, snapshots)
         except Exception:
             logger.warning("Forecast tracking check failed for %s", symbol, exc_info=True)
+    return True
 
 
 def _advance(run_id, lease, **fields):

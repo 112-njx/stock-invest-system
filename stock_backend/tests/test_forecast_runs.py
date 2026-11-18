@@ -14,7 +14,7 @@ from app.models.forecast import ForecastRun, ForecastTracking
 from app.models.symbol import Symbol
 from app.models.user import User
 from app.services import forecast_analysis as analysis, forecast_runs as runs
-from app.services import local_market_sync, sync_service
+from app.services import sync_service
 from app.services.llm.providers.base import LLMResult
 from app.utils.db import engine
 
@@ -190,47 +190,6 @@ def test_insufficient_data_completes_without_model(db_factory, monkeypatch):
         assert result["status"] == "completed"
         assert result["prediction"]["next_candle"]["direction"] == "undetermined"
         assert result["models"] == {}
-
-
-def test_forecast_only_symbol_is_selected_and_thin_close_is_recorded(db_factory, monkeypatch):
-    factory, user_id = db_factory
-    stamp = datetime(2024, 1, 3, tzinfo=UTC)
-    old_bar = KlineBar(stamp - timedelta(days=1), 10, 12, 9, 11, 100, 1100, close_confirmed=True)
-    provisional = KlineBar(stamp, 11, 12, 10, 12, 100, 1200)
-    bars = [old_bar, provisional]
-    monkeypatch.setattr(sync_service, "get_provider", lambda: SimpleNamespace(
-        fetch_kline_checked=lambda *_: (bars, False),
-    ))
-    monkeypatch.setattr(runs.forecast_snapshot, "_features", lambda rows, *_: (rows, rows[-1]["ts"]))
-    monkeypatch.setattr(runs, "_publish", lambda _: pytest.fail("thin history must not call the model"))
-    with factory() as db:
-        symbol = Symbol(id=1, code="600519", name="Tracked only", type="stock", market="SSE")
-        db.add(symbol)
-        db.add(Symbol(id=2, code="600519", name="Other instrument", type="index", market="SSE"))
-        db.commit()
-        sync_service.prepare_history_window(db, symbol, "1d", old_bar.ts, stamp, initial=True)
-        runs.set_tracking(db, user_id, "600519", True)
-        assert [(sym.name, regular) for sym, regular in local_market_sync._sync_targets(db)] == [
-            ("Tracked only", False),
-        ]
-
-    make_tracking_due(factory)
-    runs.sweep()
-    with factory() as db:
-        assert db.scalar(select(ForecastRun.id)) is None
-        bars[-1] = replace(provisional, close_confirmed=True)
-        symbol = db.get(Symbol, 1)
-        sync_service.prepare_history_window(db, symbol, "1d", old_bar.ts, stamp, initial=True)
-    make_tracking_due(factory)
-    runs.sweep()
-    make_tracking_due(factory)
-    runs.sweep()
-    with factory() as db:
-        result = db.scalars(select(ForecastRun)).one()
-        assert result.trigger == "auto"
-        assert result.status == "completed"
-        assert result.prediction["next_candle"]["direction"] == "undetermined"
-        assert db.get(ForecastTracking, (user_id, "600519")).last_session == stamp.date()
 
 
 def test_retry_targets_owned_failed_snapshot_even_after_new_success(db_factory, monkeypatch):

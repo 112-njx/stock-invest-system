@@ -11,8 +11,7 @@ from sqlalchemy import select
 from app.core.exceptions import ApiError
 from app.data_providers.base import DAILY_SESSION_CLOSE as CLOSE, DAILY_SESSION_TZ as SHANGHAI
 from app.models.symbol import Symbol
-from app.repositories import kline_repo
-from app.services import sdk_indicators
+from app.services import local_history, sdk_indicators
 from app.services.indicator_registry import FORECAST_FEATURES, FORECAST_FEATURE_VERSION, MAX_FORECAST_ROWS
 from app.utils.market_cache import as_utc, kline_bar_to_dict
 from app.utils.redis_client import get_redis_client
@@ -34,19 +33,17 @@ def _cutoff(as_of):
 
 def latest_confirmed_session(db, symbol_id, as_of):
     _, end = _cutoff(as_of)
-    rows = kline_repo.latest_bars(db, "1d", symbol_id, limit=10, end=end, confirmed_only=True)
+    rows = local_history.read(db.get(Symbol, symbol_id), "1d", end - timedelta(days=45), end, confirmed_at=as_of)
     for bar in reversed(rows):
         session = as_utc(bar.ts).astimezone(SHANGHAI).date()
-        if session.weekday() < 5:
+        if bar.close_confirmed and session.weekday() < 5 and (bar.volume or bar.amount):
             return session
     return None
 
 
 def _closed_history(db, symbol_id, as_of):
     last_possible_day, end = _cutoff(as_of)
-    bars = kline_repo.latest_bars(
-        db, "1d", symbol_id, limit=MAX_FORECAST_ROWS + 1, end=end,
-    )
+    bars = local_history.read(db.get(Symbol, symbol_id), "1d", None, end, confirmed_at=as_of)
     if len(bars) > MAX_FORECAST_ROWS:
         raise ApiError(status_code=409, msg="日 K 线历史超过特征预热上限")
     sources = {bar.source for bar in bars}

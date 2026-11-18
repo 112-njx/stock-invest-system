@@ -202,25 +202,6 @@ services:
     restart: unless-stopped
     networks: [backend]
 
-  worker-watchlist:
-    build: { context: .., dockerfile: stock_backend/Dockerfile }
-    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "watchlist", "--pool=prefork", "--concurrency=1", "-n", "watchlist@%h"]
-    environment: *backend_env
-    volumes: ["backenddata:/app/data", "../stock_backend/data/stockdb-control:/stockdb-control"]
-    depends_on:
-      migrate: { condition: service_completed_successfully }
-      db: { condition: service_healthy }
-      stockdb-local: { condition: service_healthy }
-      redis: { condition: service_healthy }
-    healthcheck:
-      test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d watchlist@$$HOSTNAME | grep -q pong"]
-      interval: 30s
-      timeout: 8s
-      start_period: 45s
-      retries: 3
-    restart: unless-stopped
-    networks: [backend]
-
   worker-control:
     build: { context: .., dockerfile: stock_backend/Dockerfile }
     command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "control", "--pool=prefork", "--concurrency=1", "-n", "control@%h"]
