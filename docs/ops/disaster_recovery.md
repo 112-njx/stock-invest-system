@@ -230,18 +230,16 @@ rclone ls oss:stock-invest-backup/pg/full
 
 ---
 
-## 9. 调度与手动触发
+## 9. 手动触发
 
-| 任务 | 调度 | 手动触发 |
-|---|---|---|
-| `backup_daily` | 每日 02:00 | `bash scripts/backup_pg.sh full` |
-| `backup_base_weekly` | 每周日 02:45 | `bash scripts/backup_pg.sh base` |
-| `offsite_sync_daily` | 每日 02:30 | `bash scripts/backup_pg.sh offsite` |
-| `verify_backup_weekly` | 每周日 03:30 | `bash scripts/verify_backup.sh` |
+| 操作 | 命令 |
+|---|---|
+| 全量备份 | `bash scripts/backup_pg.sh full` |
+| 物理基础备份 | `bash scripts/backup_pg.sh base` |
+| 异地备份 | `bash scripts/backup_pg.sh offsite` |
+| 恢复校验 | `bash scripts/verify_backup.sh` |
 
-调度时刻都排在业务空闲窗口：worker 当前为 `--pool=solo --concurrency=1`，
-备份执行期间会独占 worker（`realtime_poll` 在非交易时段本就空转返回，不受影响）。
-后续按队列扩 worker 实例时，备份走独立的 `backup` 队列，可与 sync/ai 隔离。
+备份队列由业务 worker 消费。PostgreSQL 启动时初始化 `/wal-archive` 权限，归档继续落入独立的 `pgwal` 卷。
 
 ---
 

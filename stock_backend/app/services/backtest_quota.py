@@ -107,8 +107,8 @@ def is_queue_busy(queue: str = BACKTEST_QUEUE) -> bool:
 def estimate_wait_minutes(depth: int | None = None) -> int:
     """队列繁忙时的预计等待分钟数（G25 前端提示用）。
 
-    估算口径：worker 当前为 ``--pool=solo --concurrency=1``（一次一个任务），
-    故等待 ≈ 积压数 × 单任务平均耗时（``BACKTEST_QUEUE_WAIT_PER_TASK_SECONDS``，默认 30s
+    业务 worker 的并发槽位由多个队列共享，按回测获得一个槽位估算。
+    等待 ≈ 积压数 × 单任务平均耗时（``BACKTEST_QUEUE_WAIT_PER_TASK_SECONDS``，默认 30s
     = ``BACKTEST_TIME_BUDGET``）。**这是估算而非承诺**，前端文案用「约」表述。
 
     放在后端而非前端计算：项目硬约束「前端不得计算业务指标」，且并发度/预算都是后端配置，

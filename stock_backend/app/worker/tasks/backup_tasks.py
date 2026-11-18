@@ -1,14 +1,10 @@
-"""备份队列任务（G05 · P1-1）：每日全量备份 / 每日异地同步 / 每周恢复演练。
-
-调度时刻（见 app/worker/beat.py）刻意选在业务空闲窗口：02:00 全量、02:30 异地同步、
-周日 03:30 恢复演练 —— worker 当前为 ``--pool=solo --concurrency=1``，备份执行期间会独占
-worker，放凌晨可避免阻塞行情轮询（realtime_poll 在非交易时段本就空转返回）。
+"""业务 worker 消费的备份队列任务：全量备份、异地同步和恢复演练。
 
 实现说明：任务直接调用 ``backup_service``（与 ``scripts/backup_pg.sh`` 同一实现），
 不通过 shell 转发 —— worker 在 Windows 宿主与 Linux 容器均需可跑，依赖 bash 会引入平台差异。
 脚本保留给人工执行 / 系统 cron / 容器内独立调用。
 
-队列：``backup``（独立队列，便于后续按队列扩 worker 实例时与 sync/ai 隔离）。
+队列：``backup``。备份占用一个业务并发槽位。
 """
 
 import logging
