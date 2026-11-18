@@ -156,7 +156,7 @@ def get_kline(
                                          query_end, limit, offset, latest=use_cache)
         else:
             bars = bars[-limit:] if use_cache else bars[offset:offset + limit]
-        return [market_cache.kline_bar_to_dict(bar) for bar in bars]
+        return [{**market_cache.kline_bar_to_dict(bar), "source": bar.source} for bar in bars]
     if period in {'1m', '5m', '30m', '60m'}:
         sym = db.get(Symbol, symbol_id)
         if sym is None or sym.type != 'stock':

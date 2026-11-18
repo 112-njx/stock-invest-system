@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import ApiError
 from app.data_providers.base import KlineBar
 from app.models.forecast import ForecastRun, ForecastTracking
 from app.models.symbol import Symbol
@@ -176,6 +177,12 @@ def test_manual_and_automatic_share_dedup_and_store_result(db_factory, monkeypat
         assert db.get(ForecastTracking, (user_id, "600519")).last_session == latest
         result = runs.history(db, user_id, "600519")["runs"][0]
         assert "rows" not in result["snapshot"]
+        rows = runs.archived_snapshot(db, user_id, saved.id)["rows"]
+        assert rows[0]["ts"] == latest.isoformat()
+        assert set(rows[0]) == {"ts", "open", "high", "low", "close", "volume", "amount"}
+        with pytest.raises(ApiError) as missing:
+            runs.archived_snapshot(db, user_id + 1, saved.id)
+        assert missing.value.status_code == 404
         assert result["regime_horizon"] == analysis.REGIME_HORIZON
         for version, expected in ((3, None), (4, 5), (5, 5)):
             saved.models = {"playbook_version": version}

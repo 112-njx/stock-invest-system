@@ -146,7 +146,7 @@ def get_kline(
         bars = market_service.get_kline(db, symbol, period, start, end, limit=limit, offset=offset)
     except ValueError as exc:
         raise ApiError(status_code=400, msg=str(exc)) from exc
-    data = [KlineBarOut(**b).model_dump(mode="json") for b in bars]
+    data = [KlineBarOut(**b).model_dump(mode="json", exclude_none=True) for b in bars]
     return ok(data=data)
 
 

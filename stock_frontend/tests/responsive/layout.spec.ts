@@ -18,7 +18,7 @@ const routes = {
   '/terms': '.market-grid',
   '/privacy': '.market-grid',
   '/disclaimer': '.market-grid',
-  '/forecast': '.market-grid',
+  '/forecast': '.forecast-page',
 }
 
 const stock = { code: '600519', name: '贵州茅台', market: 'SSE', data_date: 20260105, close: 1500, change_pct: 1.2, industry: '食品饮料' }
@@ -97,6 +97,74 @@ test('account page links focus the inline homepage login form', async ({ page },
     await expect(form).toBeFocused()
     await expect(form.getByLabel('用户名')).toBeInViewport()
   }
+})
+
+test('forecast locates evidence on archived candles and shows replay scores', async ({ page }, info) => {
+  test.skip(!['desktop', 'phone-320', 'phone-landscape'].includes(info.project.name))
+  await stubApi(page, () => true)
+  const session = '2026-01-05'
+  const bar = { ts: session, open: 1490, high: 1510, low: 1480, close: 1500, volume: 100, amount: 150000 }
+  const symbol = { ...stock, id: 101, type: 'stock', ordinal: 1, latest_date: session }
+  const run = {
+    id: 42, status: 'completed', created_at: `${session}T08:00:00Z`, regime_horizon: 5,
+    snapshot: { latest_session: session, bar_count: 40, feature_version: 1, source: 'stockdb' },
+    diagnosis: { regime: 'trend', bias: 'up', summary: '趋势延续', evidence: [{ session, feature: 'close', value: 1500 }] },
+    prediction: {
+      next_candle: { direction: 'up', reason: '延续', evidence: [] },
+      next_regime: { regime: 'trend', reason: '保持趋势', evidence: [] },
+    },
+    models: {},
+  }
+  let analysed = false
+  let tracked = false
+  const json = (data: unknown) => ({ json: { code: 0, data } })
+  await page.route('**/api/v1/stocks/search-directory', route => route.fulfill(json({ version: 'forecast-fixture', source: 'stockdb', items: [symbol] })))
+  await page.route('**/api/v1/symbols/search?*', route => route.fulfill(json([symbol])))
+  await page.route('**/api/v1/kline?*', route => {
+    const latestBar = { ...bar, source: 'stockdb', ts: '2026-01-06T00:00:00Z' }
+    const start = new URL(route.request().url()).searchParams.get('start')
+    return route.fulfill(json(start ? [{ ...bar, source: 'stockdb' }, latestBar] : [latestBar]))
+  })
+  await page.route('**/api/v1/forecast/runs/42/snapshot', route => route.fulfill(json({ rows: [bar] })))
+  await page.route(/\/api\/v1\/forecast\/runs(?:\?|$)/, route => {
+    if (route.request().method() === 'POST') {
+      analysed = true
+      return route.fulfill(json(run))
+    }
+    return route.fulfill(json({ runs: analysed ? [run] : [], tracking: tracked }))
+  })
+  await page.route('**/api/v1/forecast/tracking', route => {
+    tracked = true
+    return route.fulfill(json({ tracking: tracked }))
+  })
+  await page.route(/\/api\/v1\/forecast\/replay(?:\?|$)/, route => route.fulfill(json({
+    id: 1, status: 'completed', options: { samples: 5, mode: 'archived' },
+    report: {
+      total: 1, horizon: 5, rule_version: 1,
+      scores: { direction: { labelled: 1, covered: 1, hits: 1 } },
+      matched_scores: { always_up: { count: 1, ai_hits: 1, baseline_hits: 1 } },
+      cases: [{ session, direction: 'up', actual_direction: 'up', status: 'evaluated' }],
+    },
+  })))
+  await page.goto('/forecast')
+  await page.getByRole('combobox', { name: '搜索股票名称、拼音或代码' }).fill(stock.code)
+  await page.getByRole('option', { name: /600519/ }).click()
+  await expect(page.getByText(/最新行情 · StockDB · 截至 2026-01-06/)).toBeVisible()
+  await page.getByRole('button', { name: '开启自动跟踪' }).click()
+  await expect(page.getByRole('button', { name: '关闭自动跟踪' })).toBeVisible()
+  await page.getByRole('button', { name: '开始分析' }).click()
+  await expect(page.getByRole('heading', { name: '下一阶段走势' })).toBeVisible()
+  await page.getByRole('button', { name: /2026-01-05 · 收盘价/ }).click()
+  await expect(page.getByText(/分析快照 · StockDB · 截至 2026-01-05 · 定位 2026-01-05/)).toBeVisible()
+  await expect(page.locator('.forecast-chart .kline-chart__canvas canvas').first()).toBeVisible()
+  if (info.project.name === 'phone-landscape') await page.getByRole('button', { name: '结果', exact: true }).click()
+  await page.getByRole('button', { name: '历史回放' }).click()
+  await expect(page.getByRole('heading', { name: '同样本基线对照' })).toBeVisible()
+  await page.getByText('逐日结果', { exact: true }).click()
+  await page.getByRole('button', { name: session, exact: true }).click()
+  await expect(page.getByText(/回放日期附近行情 · StockDB · 截至 2026-01-06 · 定位 2026-01-05/)).toBeVisible()
+  await expect(page.locator('.forecast-chart .kline-chart__canvas canvas').first()).toBeVisible()
+  await expectNoPageOverflow(page)
 })
 
 test('inline homepage login returns to the requested route', async ({ page }, info) => {

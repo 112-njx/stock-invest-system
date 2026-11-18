@@ -30,6 +30,7 @@ export function fetchHomeIndices() {
 
 export interface KLineBar {
   ts: string
+  source?: string
   open: number
   high: number
   low: number

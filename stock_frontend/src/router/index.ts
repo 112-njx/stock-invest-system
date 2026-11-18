@@ -38,6 +38,7 @@ const router = createRouter({
       name: 'ai',
       component: () => import('@/views/AIView.vue'),
     },
+    { path: '/forecast', name: 'forecast', component: () => import('@/views/ForecastView.vue') },
     {
       path: '/admin',
       name: 'admin',
@@ -84,7 +85,6 @@ const router = createRouter({
     { path: '/terms', redirect: { name: 'market-home' } },
     { path: '/privacy', redirect: { name: 'market-home' } },
     { path: '/disclaimer', redirect: { name: 'market-home' } },
-    { path: '/forecast', redirect: { name: 'market-home' } },
   ],
 })
 

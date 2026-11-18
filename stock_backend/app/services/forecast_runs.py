@@ -67,6 +67,16 @@ def history(db, user_id, symbol):
     }
 
 
+def archived_snapshot(db, user_id, run_id):
+    snapshot = db.scalar(select(ForecastRun.snapshot).where(
+        ForecastRun.id == run_id, ForecastRun.user_id == user_id,
+    ))
+    if snapshot is None:
+        raise ApiError(status_code=404, msg="预测记录不存在")
+    fields = ("ts", "open", "high", "low", "close", "volume", "amount")
+    return {"rows": [{field: row[field] for field in fields} for row in snapshot["rows"]]}
+
+
 def set_tracking(db, user_id, symbol, enabled):
     _lock_user(db, user_id)
     existing = db.get(ForecastTracking, (user_id, symbol))

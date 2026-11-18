@@ -48,7 +48,7 @@ watch(
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'app-shell--workspace': route.name === 'ai' }">
+  <div class="app-shell" :class="{ 'app-shell--workspace': route.name === 'ai' || route.name === 'forecast' }">
     <AppBar v-if="showAppbar" />
     <!-- G16：系统公告 banner（有活跃公告时展示，可关闭） -->
     <AnnouncementBanner v-if="showAppbar" />

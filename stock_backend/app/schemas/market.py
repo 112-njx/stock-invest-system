@@ -35,6 +35,7 @@ class KlineBarOut(BaseModel):
     close: float
     volume: int
     amount: float
+    source: str | None = None
 
 
 class LatestQuoteOut(BaseModel):
