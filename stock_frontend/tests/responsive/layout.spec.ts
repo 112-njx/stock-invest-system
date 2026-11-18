@@ -269,6 +269,38 @@ test('phone navigation, chart controls and dialog focus', async ({ page }, info)
   await expectNoPageOverflow(page)
 })
 
+test('phone requests AkShare history only after tapping the supplement action', async ({ page }, info) => {
+  test.skip(info.project.name !== 'phone-390')
+  await stubApi(page)
+  let submissions = 0
+  await page.route('**/api/v1/symbols?*', route => route.fulfill({
+    json: { code: 0, data: [{ ...stock, id: 41, type: 'stock' }] },
+  }))
+  await page.route('**/api/v1/kline?*', route => route.fulfill({ json: {
+    code: 0,
+    data: submissions ? [{ ts: '2026-01-05T00:00:00Z', open: 1490, high: 1510, low: 1480, close: 1500, volume: 100, amount: 150000 }] : [],
+  } }))
+  await page.route('**/api/v1/kline/quality?*', route => route.fulfill({
+    json: { code: 0, data: { status: submissions ? 'complete' : 'unknown', can_supplement: true } },
+  }))
+  await page.route('**/api/v1/kline/backfill', route => {
+    submissions++
+    return route.fulfill({ json: { code: 0, data: { task_id: 'supplement' } } })
+  })
+  await page.route('**/api/v1/kline/backfill/supplement', route => route.fulfill({
+    json: { code: 0, data: { status: 'done', fetched: 1 } },
+  }))
+  await page.goto('/market/detail?symbol=600519&asset_type=stock')
+  const supplement = page.getByRole('button', { name: '使用 AkShare 补充历史行情' })
+  await expect(supplement).toBeVisible()
+  expect(submissions).toBe(0)
+  await supplement.tap()
+  await expect(supplement).toHaveCount(0)
+  await expect(page.getByText('本地数据源暂无历史行情')).toHaveCount(0)
+  expect(submissions).toBe(1)
+  await expectNoPageOverflow(page)
+})
+
 test('phone stock table preserves access to all columns and row actions', async ({ page }, info) => {
   test.skip(!info.project.name.startsWith('phone'))
   await stubApi(page)

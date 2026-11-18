@@ -101,35 +101,6 @@ def kline_bar_to_dict(bar) -> dict:
     }
 
 
-# ---- 关注列表缓存 ----
-def watchlist_key(user_id: int) -> str:
-    return f"watchlist:{user_id}:{policy_revision()}"
-
-
-def get_watchlist_cache(user_id: int) -> list | None:
-    try:
-        raw = get_redis_client().get(watchlist_key(user_id))
-        return json.loads(raw) if raw else None
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def set_watchlist_cache(user_id: int, data: list) -> None:
-    try:
-        get_redis_client().set(watchlist_key(user_id), json.dumps(data), ex=settings.WATCHLIST_CACHE_TTL)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-def invalidate_watchlist_cache(user_id: int) -> None:
-    """增删关注后清除 watchlist 缓存。"""
-    try:
-        r = get_redis_client()
-        r.delete(watchlist_key(user_id))
-    except Exception:  # noqa: BLE001
-        pass
-
-
 # ---- 搜索缓存 ----
 def search_key(type_: str | None, keyword: str) -> str:
     return f"search:{type_ or 'all'}:{policy_revision()}:{keyword}"

@@ -59,8 +59,6 @@ class BaseDataProvider(ABC):
     """行情源抽象接口。"""
 
     name: str = "base"
-    probe_symbol = "000001"  # 熔断探测固定标的
-    probe_asset_type = "index"
 
     def __init__(self) -> None:
         settings = get_settings()

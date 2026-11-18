@@ -127,3 +127,17 @@ def test_initial_backfill_is_distinct_and_forwards_mode_to_worker(history, clien
         assert dispatch.call_args.kwargs['kwargs'] == {'initial': True}
     finally:
         get_redis_client().delete(*keys)
+
+
+def test_chart_supplement_is_offered_only_for_supported_periods_when_enabled(history, client, monkeypatch):
+    _, symbol, _, provider, policy = history
+    monkeypatch.setattr("app.services.market_service.local_daily_date", lambda _: None)
+    params = {"symbol": str(symbol.id), "period": "1d"}
+    assert client.get("/api/v1/kline/quality", params=params).json()["data"] == {
+        "status": "unknown", "can_supplement": True,
+    }
+    result = client.get("/api/v1/kline/quality", params={**params, "period": "1m"})
+    assert result.json()["data"]["can_supplement"] is False
+    policy["akshare_enabled"] = False
+    assert client.get("/api/v1/kline/quality", params=params).json()["data"]["can_supplement"] is False
+    provider.fetch_kline_checked.assert_not_called()

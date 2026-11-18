@@ -79,7 +79,7 @@ def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) 
     return changed
 
 
-def source_filter(model, symbol_id, start=None, end=None):
+def source_filter(model):
     return model.source == "stockdb"
 
 
@@ -124,7 +124,7 @@ def get_bars(
     stmt = (
         select(model)
         .where(model.symbol_id == symbol_id,
-               source_filter(model, symbol_id, *(source_window or (start, end))),
+               source_filter(model),
                model.ts >= start, model.ts <= end)
         .order_by(model.ts.desc() if latest else model.ts)
         .limit(limit)
@@ -135,30 +135,24 @@ def get_bars(
 
 
 def latest_bars(db: Session, period: str, symbol_id: int, limit: int = 1000, *,
-                end: datetime | None = None, confirmed_only: bool = False) -> list:
+                end: datetime | None = None) -> list:
     """最近 N 根 K 线（返回按 ts 升序），供"最新N根"缓存与默认查询。"""
     model = _model(period)
-    if confirmed_only and period != "1d":
-        raise ValueError("only daily bars have close confirmation")
     if use_transient_source(db, model, symbol_id):
         from app.services.source_history import cached
         from app.utils.market_cache import as_utc
         rows = cached(symbol_id, period) or []
         if end is not None:
             rows = [bar for bar in rows if as_utc(bar.ts) <= end]
-        if confirmed_only:
-            rows = [bar for bar in rows if bar.close_confirmed and (bar.volume or bar.amount)]
         return rows[-limit:]
     stmt = (
         select(model)
-        .where(model.symbol_id == symbol_id, source_filter(model, symbol_id))
+        .where(model.symbol_id == symbol_id, source_filter(model))
         .order_by(model.ts.desc())
         .limit(limit)
     )
     if end is not None:
         stmt = stmt.where(model.ts <= end)
-    if confirmed_only:
-        stmt = stmt.where(model.close_confirmed, or_(model.volume != 0, model.amount != 0))
     rows = list(db.scalars(stmt))
     rows.reverse()
     return rows
@@ -170,4 +164,4 @@ def latest_ts(db: Session, period: str, symbol_id: int) -> datetime | None:
         from app.services.source_history import cached
         rows = cached(symbol_id, period) or []
         return rows[-1].ts if rows else None
-    return db.scalar(select(model.ts).where(model.symbol_id == symbol_id, source_filter(model, symbol_id)).order_by(model.ts.desc()).limit(1))
+    return db.scalar(select(model.ts).where(model.symbol_id == symbol_id, source_filter(model)).order_by(model.ts.desc()).limit(1))

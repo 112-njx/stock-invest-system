@@ -226,9 +226,8 @@ def _track_one(user_id, symbol, previous, lease, now, snapshots):
             _publish(run.id)
 
 
-def sweep():
+def recover_deliveries():
     now = datetime.now(UTC)
-    deadline = monotonic() + TRACK_START_BUDGET
     with get_session() as db:
         db.execute(update(ForecastRun).where(
             ForecastRun.status.in_(("diagnosing", "predicting")), ForecastRun.updated_at < now - timedelta(minutes=10),
@@ -238,13 +237,20 @@ def sweep():
         db.commit()
     for run_id in ids:
         _publish(run_id)
+    return len(ids) == SWEEP_LIMIT
+
+
+def sweep():
+    now = datetime.now(UTC)
+    deadline = monotonic() + TRACK_START_BUDGET
+    more_deliveries = recover_deliveries()
     snapshots = {}
     for _ in range(SWEEP_LIMIT):
         if monotonic() >= deadline:
             return True
         claim = _claim_due_tracking()
         if claim is None:
-            return len(ids) == SWEEP_LIMIT
+            return more_deliveries
         user_id, symbol, previous, lease = claim
         try:
             _track_one(user_id, symbol, previous, lease, now, snapshots)

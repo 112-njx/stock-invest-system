@@ -269,7 +269,6 @@ def add_watchlist(db: Session, user_id: int, symbol: str) -> dict:
     if sym is not None and sym.type in {"stock", "etf"}:
         db.commit()
         result = _watchlist_rows(db, [entry])[0]
-        market_cache.invalidate_watchlist_cache(user_id)
         return result
     if existing is None:  # 新增记录才触发/标记同步
         if market_service.has_kline(db, symbol_id):
@@ -292,7 +291,6 @@ def add_watchlist(db: Session, user_id: int, symbol: str) -> dict:
     db.commit()
     db.refresh(entry)
     result = _watchlist_rows(db, [entry])[0]
-    market_cache.invalidate_watchlist_cache(user_id)
     return result
 
 
@@ -304,7 +302,6 @@ def delete_watchlist(db: Session, user_id: int, watchlist_id: int) -> None:
     if not user_repo.delete_watchlist(db, user_id, watchlist_id):
         raise ApiError(status_code=404, code=40401, msg="关注记录不存在")
     db.commit()
-    market_cache.invalidate_watchlist_cache(user_id)
 
 
 # ---- 支撑/压力位 ----

@@ -19,8 +19,6 @@ logger = logging.getLogger(__name__)
 
 class StockDBProvider(BaseDataProvider):
     name = "stockdb"
-    probe_symbol = "600519"
-    probe_asset_type = "stock"
 
     def query(self, command: str, table: str, **params):
         self._check_maintenance()

@@ -177,7 +177,7 @@ def test_search_endpoint_returns_sync_flags(client: TestClient):
     assert data and data[0]["is_catalog"] is True and "has_kline" in data[0]
 
 
-# ---- 3.3 关注自动同步 ----
+# ---- 3.3 关注列表 ----
 @pytest.fixture()
 def user_token(client: TestClient) -> str:
     uname = f"{_PREFIX}w{uuid.uuid4().hex[:8]}"
@@ -195,19 +195,18 @@ def user_token(client: TestClient) -> str:
             db.close()
 
 
-def test_watchlist_add_catalog_symbol_triggers_kline_init(client: TestClient, user_token: str):
+def test_watchlist_add_catalog_symbol_does_not_enqueue(client: TestClient, user_token: str):
     sym = _make_catalog_symbol("900601", "测试关注新股")
     headers = {"Authorization": f"Bearer {user_token}"}
     with patch("app.worker.tasks.sync_tasks.kline_init") as mock_task:
-        mock_task.delay.return_value = None
         resp = client.post("/api/v1/watchlist", json={"symbol": sym.code}, headers=headers)
     assert resp.status_code == 200
     row = resp.json()["data"]
-    assert row["sync_status"] == "pending"  # 无K线 → 同步中
-    mock_task.delay.assert_called_once_with(symbol_id=sym.id)
+    assert row["symbol_id"] == sym.id and row["sync_status"] is None
+    mock_task.delay.assert_not_called()
 
 
-def test_watchlist_add_synced_symbol_marked_done(client: TestClient, user_token: str):
+def test_watchlist_ignores_legacy_equity_sync_status(client: TestClient, user_token: str):
     sym = _make_catalog_symbol("900602", "测试关注已同步")
     db = get_session()
     db.add(Kline1d(symbol_id=sym.id, ts=datetime.now(UTC), open=1, high=2, low=1, close=1.5, volume=1, amount=1.0))
@@ -218,30 +217,8 @@ def test_watchlist_add_synced_symbol_marked_done(client: TestClient, user_token:
         resp = client.post("/api/v1/watchlist", json={"symbol": "900602"}, headers=headers)
     assert resp.status_code == 200
     row = resp.json()["data"]
-    assert row["sync_status"] == "done" and row["last_synced_at"] is not None
+    assert row["sync_status"] is None and row["last_synced_at"] is None
     assert not mock_task.delay.called
-
-
-# ---- 3.4 关注缓存 ----
-def test_watchlist_cache_second_call_hits(client: TestClient, user_token: str):
-    sym = _make_catalog_symbol("900603", "测试缓存股票")
-    headers = {"Authorization": f"Bearer {user_token}"}
-    with patch("app.worker.tasks.sync_tasks.kline_init"):
-        client.post("/api/v1/watchlist", json={"symbol": sym.code}, headers=headers)
-    resp1 = client.get("/api/v1/watchlist", headers=headers)
-    rows1 = resp1.json()["data"]
-    assert rows1
-    # 缓存写入
-    db = get_session()
-    uid = db.query(User).filter(User.username.like(f"{_PREFIX}w%")).order_by(User.id.desc()).first().id
-    db.close()
-    assert market_cache.get_watchlist_cache(uid) is not None
-    resp2 = client.get("/api/v1/watchlist", headers=headers)
-    assert resp1.json() == resp2.json()  # 第二次 Redis 命中
-    # 删除后缓存失效
-    rid = rows1[0]["id"]
-    client.delete(f"/api/v1/watchlist/{rid}", headers=headers)
-    assert market_cache.get_watchlist_cache(uid) is None
 
 
 def test_latest_quote_uses_local_record(client: TestClient, user_token: str):

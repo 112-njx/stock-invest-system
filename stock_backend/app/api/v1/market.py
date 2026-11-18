@@ -162,21 +162,24 @@ def get_kline_quality(
     sym = db.get(Symbol, symbol_id) if symbol_id is not None else None
     if sym is None:
         raise ApiError(status_code=404, msg="标的不存在")
-    if period != "1d" or (sym.type not in {"stock", "etf"} and not kline_quality_service.eligible(sym)):
-        return ok(data={"status": "unsupported", "missing_count": 0, "missing_ranges": [], "checked_at": None})
-    local_date = market_service.local_daily_date(sym)
-    if local_date is not None:
-        return ok(data={"status": "complete", "checked_to": local_date.isoformat(),
-                        "missing_count": 0, "missing_ranges": [], "checked_at": None,
-                        "sync_status": "idle"})
     if sym.type in {"stock", "etf"}:
-        from app.services.source_history import cached
-        bars = cached(sym.id, period) or []
-        return ok(data={"status": "complete" if bars else "unknown", "missing_count": 0,
-                        "missing_ranges": [], "checked_at": None, "sync_status": "idle"})
+        from app.services import market_policy, source_history
+
+        can_supplement = period in {"1d", "1w", "1mon", "15m"} and market_policy.akshare_enabled()
+        local_date = market_service.local_daily_date(sym) if period == "1d" else None
+        data = {"status": "unsupported", "can_supplement": can_supplement}
+        if period == "1d":
+            bars = source_history.cached(sym.id, period) if local_date is None and can_supplement else None
+            latest = local_date or (bars[-1].ts.date() if bars else None)
+            data["status"] = "complete" if latest else "unknown"
+            if latest:
+                data["checked_to"] = latest.isoformat()
+        return ok(data=data)
+    if period != "1d" or not kline_quality_service.eligible(sym):
+        return ok(data={"status": "unsupported"})
     data = kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period))
     latest = kline_repo.latest_ts(db, period, sym.id)
-    data.update(status="complete" if latest else "unchecked", missing_count=0, missing_ranges=[])
+    data["status"] = "complete" if latest else "unchecked"
     if latest:
         data["checked_to"] = latest.date().isoformat()
     task = ops_repo.latest_sync_task(db, "kline_init", sym.id)
@@ -190,10 +193,6 @@ def get_kline_quality(
     batch = ops_repo.get_latest_sync_status(db, "fixed_indices") if sym.is_fixed_index else None
     batch_syncing = batch is not None and batch.status in {"queued", "running"}
     data['sync_status'] = 'syncing' if symbol_syncing or batch_syncing else 'idle'
-    if sym.is_fixed_index:
-        from app.utils.redis_client import get_redis_client
-
-        data['retry_after_seconds'] = max(0, get_redis_client().ttl('provider:fixed-indices-retry'))
     return ok(data=data)
 
 

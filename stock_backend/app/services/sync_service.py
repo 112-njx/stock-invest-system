@@ -320,8 +320,7 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: d
             counts = _sync_symbol_klines(db, provider, sym, symbol_start, end)
             for period, added in counts.items():
                 logger.info("kline_init %s %s added=%d", sym.name, period, added)
-            quality = kline_quality_service.check_and_repair(db, sym, provider)
-            complete = quality["status"] == "complete"
+            complete = kline_quality_service.record_coverage(db, sym.id)
             ops_repo.upsert_sync_task(db, "kline_init", sym.id,
                                       "failed" if sym.id in watched_ids and not complete else "success", datetime.now(UTC))
             if sym.id in watched_ids:
@@ -330,8 +329,6 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: d
             from app.services.indicator_service import invalidate_indicator_cache
             from app.ws.publisher import publish_kline_refresh
 
-            for user_id in db.scalars(select(UserWatchlist.user_id).where(UserWatchlist.symbol_id == sym.id).distinct()):
-                market_cache.invalidate_watchlist_cache(user_id)
             # Readers may have refilled a cache before the import committed.
             for period, changed in counts.items():
                 if changed:

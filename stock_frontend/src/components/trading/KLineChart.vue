@@ -112,23 +112,16 @@ const historyState = ref<'loading' | 'empty' | 'failed' | ''>('')
 const historyWidth = ref(0)
 const quality = ref<KlineQuality | null>(null)
 let qualityTimer: ReturnType<typeof setInterval> | null = null
-let retryTimer: ReturnType<typeof setInterval> | null = null
-const retryRemaining = ref(0)
 const hoveredCandle = ref<{ bar: KLineBar; change: number | null; percent: number | null } | null>(null)
 let loadVersion = 0
 let loadedBars: KLineBar[] = []
 let historyCursor = ''
 let initialViewport = true
 let historyBusy = false
-let retryBackfill = false
 
 const qualityWarning = computed(() => {
-  if (quality.value?.status === 'partial') {
-    const ranges = quality.value.missing_ranges.slice(0, 2).map((r) => r.join('～')).join('、')
-    return `历史数据不完整：缺 ${quality.value.missing_count} 个交易日${ranges ? `（${ranges}）` : ''} · ${retryRemaining.value > 0 ? `${retryRemaining.value} 秒后同步` : quality.value.sync_status === 'syncing' ? '更新中' : '暂未同步'}`
-  }
   if (quality.value?.status === 'unknown') return isEquityChart() ? '本地数据源暂无历史行情' : '暂无可用历史数据'
-  if (quality.value?.status === 'unchecked') return '历史数据尚未初始化'
+  if (quality.value?.status === 'unchecked') return quality.value.sync_status === 'syncing' ? '历史行情同步中' : '历史数据尚未初始化'
   return ''
 })
 const catalog = useIndicatorCatalog(() => !!props.customizeIndicators)
@@ -961,9 +954,7 @@ async function loadOlder() {
       historyState.value = older.length ? '' : 'empty'
       return
     }
-    const retry = retryBackfill
-    retryBackfill = false
-    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry })
+    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString() })
     let confirmedEmpty = false
     for (let attempt = 0; attempt < 45; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
@@ -1002,9 +993,7 @@ async function loadInitialMissing(version: number, symbolId: number, period: Per
   historyWidth.value = container.value?.clientWidth ?? 0
   historyState.value = 'loading'
   try {
-    const retry = retryBackfill
-    retryBackfill = false
-    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), retry, initial: true })
+    const { task_id } = await requestKlineBackfill({ symbol_id: symbolId, period, start: start.toISOString(), end: end.toISOString(), initial: true })
     for (let attempt = 0; attempt < 45; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 2000))
       if (version !== loadVersion) return
@@ -1067,7 +1056,6 @@ async function fillInitialPeriod(version: number, symbolId: number, period: '1w'
 
 function retryHistory() {
   historyState.value = ''
-  retryBackfill = true
   if (!isEquityChart() && props.showIndicators && (market.period === '1w' || market.period === '1mon') && loadedBars.length < initialPeriodCount(market.period) && props.symbol) {
     void fillInitialPeriod(loadVersion, props.symbol.id, market.period)
     return
@@ -1147,7 +1135,6 @@ async function loadKline() {
     const byTime = new Map([...existing, ...loaded].map((bar) => [toUtcSeconds(bar.ts), bar]))
     const bars = [...byTime.values()].sort((a, b) => toUtcSeconds(a.ts) - toUtcSeconds(b.ts))
     quality.value = checked
-    retryRemaining.value = checked?.retry_after_seconds ?? 0
     if (!chart) initChart()
     const previousRange = initialViewport ? null : chart?.timeScale().getVisibleLogicalRange()
     const previousCount = loadedBars.length
@@ -1317,9 +1304,7 @@ onMounted(() => {
     if (!checked || props.symbol?.id !== symbolId || market.period !== period) return
     if (checked.status === 'complete') { void loadKline(); return }
     quality.value = checked
-    retryRemaining.value = checked.retry_after_seconds ?? 0
   }, 10000)
-  retryTimer = setInterval(() => { if (retryRemaining.value > 0) retryRemaining.value-- }, 1000)
   // V0.2：注册 WS kline 更新回调
   ws.setKlineHandler((symbolId, period, bar) => {
     if (props.symbol?.id === symbolId && (market.period === '1w' || market.period === '1mon') && period === '1d') {
@@ -1349,7 +1334,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('mousemove', onIndicatorDrag, true)
   window.removeEventListener('mouseup', scheduleIndicatorTops, true)
   if (qualityTimer) clearInterval(qualityTimer)
-  if (retryTimer) clearInterval(retryTimer)
   container.value?.removeEventListener('dblclick', onDblClick, true)
   chart?.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange)
   window.removeEventListener('wheel', onWheel, true)
@@ -1618,6 +1602,12 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
       <button class="kline-chart__retry" @click="retryLoad">点击重试</button>
     </div>
     <div v-else-if="!symbol" class="kline-chart__state">请选择标的</div>
+    <div
+      v-else-if="!loading && isEquityChart() && !loadedBars.length && quality?.can_supplement && historyState !== 'loading'"
+      class="kline-chart__state"
+    >
+      <button class="kline-chart__retry" @click="retryHistory">使用 AkShare 补充历史行情</button>
+    </div>
 
     <!-- 支撑/压力位弹窗 -->
     <Teleport to="body">
@@ -1882,6 +1872,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 .kline-chart__state {
   position: absolute;
   inset: 0;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1909,7 +1900,9 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 }
 .kline-chart__retry {
   margin-top: 8px;
+  min-height: var(--touch-target, 44px);
   padding: 4px 14px;
+  pointer-events: auto;
   font-size: 12px;
   color: var(--accent);
   border: 1px solid var(--accent);

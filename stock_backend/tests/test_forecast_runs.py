@@ -234,20 +234,20 @@ def test_delivery_retries_failure_but_does_not_duplicate_an_active_message(db_fa
     monkeypatch.setattr(runs.forecast_snapshot, "build_snapshot", lambda *_: snapshot())
     with factory() as db:
         run_id = runs.start_manual(db, user_id, "600519")["id"]
-    runs.sweep()
+    runs.recover_deliveries()
     assert len(attempts) == 1
 
     with factory() as db:
         run = db.get(ForecastRun, run_id)
         run.next_delivery_at = datetime.now(UTC) - timedelta(minutes=1)
         db.commit()
-    runs.sweep()
+    runs.recover_deliveries()
     with factory() as db:
         run = db.get(ForecastRun, run_id)
         assert run.next_delivery_at == attempts[-1]["expires"]
         run.updated_at = datetime.now(UTC) - timedelta(minutes=10)
         db.commit()
-    runs.sweep()
+    runs.recover_deliveries()
     assert len(attempts) == 2
 
 

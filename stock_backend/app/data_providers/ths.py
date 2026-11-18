@@ -24,8 +24,6 @@ logger = logging.getLogger(__name__)
 
 class THSProvider(BaseDataProvider):
     name = "ths"
-    probe_symbol = "半导体"
-    probe_asset_type = "industry_index"
 
     def __init__(self) -> None:
         super().__init__()

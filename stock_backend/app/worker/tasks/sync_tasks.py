@@ -71,6 +71,7 @@ def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: s
     from app.services.sync_service import prepare_history_window
 
     db = get_session()
+    sym = None
     try:
         sym = db.get(Symbol, symbol_id)
         if sym is None:
@@ -81,7 +82,7 @@ def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: s
         return result
     except Exception as exc:
         db.rollback()
-        if self.request.retries < 2:
+        if sym is not None and sym.type == "index" and self.request.retries < 2:
             raise self.retry(exc=exc, countdown=10, max_retries=2)
         from app.utils.redis_client import get_redis_client
 

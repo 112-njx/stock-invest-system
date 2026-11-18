@@ -11,7 +11,7 @@ import threading
 import time
 from importlib import import_module
 from contextlib import nullcontext
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from app.core.config import get_settings
 
@@ -269,34 +269,6 @@ class DataProviderFactory:
                 }
             )
         return out
-
-    def probe(self) -> list[dict]:
-        """探测熔断中的 Provider（取固定标的 1 根日K），成功即恢复。返回本次探测结果。"""
-        now = time.time()
-        results: list[dict] = []
-        for p in self._active_providers():
-            c = self._circuits[p.name]
-            if c.state != "open":
-                continue
-            try:
-                end = datetime.now(UTC)
-                if p.name == "stockdb":
-                    latest = p.latest_day()
-                    if latest is None:
-                        continue
-                    end = datetime.combine(latest, datetime.max.time(), UTC)
-                start = end - timedelta(days=5)
-                with kline_scope(p.probe_symbol, "1d", start, end, p.probe_asset_type):
-                    bars = p.fetch_kline(p.probe_symbol, "1d", start, end, p.probe_asset_type)
-                recovered = bool(bars)
-            except Exception:  # noqa: BLE001
-                recovered = False
-            if recovered:
-                with self._lock:
-                    c.record_success(now)
-            results.append({"name": p.name, "state": c.state if not recovered else "closed", "recovered": recovered})
-        return results
-
 
 _factory: DataProviderFactory | None = None
 
