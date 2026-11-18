@@ -3,8 +3,10 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 import json
 import pytest
-from app.services import indicator_registry as registry, indicator_service as service, indicator_policy, sdk_indicators
+from app.services import indicator_registry as registry, indicator_service as service, sdk_indicators
 from app.core.exceptions import ApiError
+
+DB = SimpleNamespace(get=lambda *_: None)
 
 KEYS=['rsi','wr','cci','atr']
 CUSTOM={'rsi':{'n':7},'wr':{'n':14,'n1':5},'cci':{'n':9},'atr':{'n':6}}
@@ -20,18 +22,14 @@ def bars(monkeypatch):
     return rows
 
 @pytest.mark.parametrize('period',['1d','1w','1mon','15m'])
-@pytest.mark.parametrize('pandas_enabled',[False,True])
-def test_real_sdk_routing_and_paging(monkeypatch,bars,period,pandas_enabled):
-    monkeypatch.setattr(indicator_policy,'read',lambda:{'pandas_enabled':pandas_enabled,'revision':1})
-    monkeypatch.setattr(service,'_bars_to_df',lambda *a:pytest.fail('SDK-only panels must not use pandas'))
-    full=service.compute_indicators(None,'1',period,KEYS,CUSTOM,limit=80)
-    page=service.compute_indicators(None,'1',period,KEYS,CUSTOM,start=bars[40].ts,end=bars[-1].ts)
-    recent=service.compute_indicators(None,'1',period,KEYS,CUSTOM,limit=5)
+def test_real_sdk_routing_and_paging(monkeypatch,bars,period):
+    full=service.compute_indicators(DB,'1',period,KEYS,CUSTOM,limit=80)
+    page=service.compute_indicators(DB,'1',period,KEYS,CUSTOM,start=bars[40].ts,end=bars[-1].ts)
+    recent=service.compute_indicators(DB,'1',period,KEYS,CUSTOM,limit=5)
     assert len(full)==80
     assert page==full[40:]
     assert recent==full[-5:]
     for name in KEYS:
-        assert registry.REGISTRY[name]['engines']==['sdk']
         for field in registry.REGISTRY[name]['native_outputs']:
             assert field in full[0] and full[0][field] is None
             assert full[-1][field] is not None
@@ -43,7 +41,6 @@ def test_api_rejects_invalid_period(client,name,value):
     assert response.status_code==400
 
 def test_new_panel_failure_keeps_other_queries_available(client,monkeypatch,bars):
-    monkeypatch.setattr(indicator_policy,'read',lambda:{'pandas_enabled':True,'revision':1})
     calculate=sdk_indicators.calculate
     def fail_rsi(rows,names,params):
         if names==['rsi']: raise ApiError(503,50331,'RSI unavailable')

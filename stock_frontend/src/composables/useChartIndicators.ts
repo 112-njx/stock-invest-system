@@ -2,7 +2,7 @@ import type { IndicatorValues } from '@/composables/useIndicatorCatalog'
 import { ref } from 'vue'
 import type { fetchIndicators, IndicatorRow } from '@/api/market'
 
-/** Independent results: an unavailable SDK MA must not erase pandas panels. */
+/** Independent results: a failed request affects only its own series. */
 export function useChartIndicators(fetch: typeof fetchIndicators) {
   const priceMaRows = ref<IndicatorRow[]>([])
   const indicatorRows = ref<IndicatorRow[]>([])

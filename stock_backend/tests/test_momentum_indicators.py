@@ -3,7 +3,7 @@ from datetime import UTC,datetime,timedelta
 from types import SimpleNamespace
 import json
 import pytest
-from app.services import indicator_registry as registry,indicator_service as service,indicator_policy,sdk_indicators
+from app.services import indicator_registry as registry,indicator_service as service,sdk_indicators
 from app.core.exceptions import ApiError
 KEYS=['bias','psy','dpo','mtm','roc']
 CUSTOM={'bias':{'l1':3,'l2':9,'l3':18},'psy':{'n':9,'m':3},'dpo':{'m1':12,'m2':6,'m3':3},'mtm':{'n':7,'m':3},'roc':{'n':7,'m':3}}
@@ -17,22 +17,20 @@ def bars(monkeypatch):
     monkeypatch.setattr(service,'_cache_key',lambda *a,**k:'isolated-momentum-panels')
     return values
 @pytest.mark.parametrize('period',['1d','1w','1mon','15m'])
-@pytest.mark.parametrize('pandas_enabled',[False,True])
-def test_native_panels_warmup_paging_and_engine(monkeypatch,bars,period,pandas_enabled):
-    monkeypatch.setattr(indicator_policy,'read',lambda:{'pandas_enabled':pandas_enabled,'revision':1})
-    monkeypatch.setattr(service,'_bars_to_df',lambda *a:pytest.fail('Momentum panels must use SDK'))
-    full=service.compute_indicators(None,'1',period,KEYS,CUSTOM,limit=100)
-    page=service.compute_indicators(None,'1',period,KEYS,CUSTOM,start=bars[60].ts,end=bars[-1].ts)
-    recent=service.compute_indicators(None,'1',period,KEYS,CUSTOM,limit=5)
+def test_native_panels_warmup_paging_and_engine(monkeypatch,bars,period):
+    full=service.compute_indicators(DB,'1',period,KEYS,CUSTOM,limit=100)
+    page=service.compute_indicators(DB,'1',period,KEYS,CUSTOM,start=bars[60].ts,end=bars[-1].ts)
+    recent=service.compute_indicators(DB,'1',period,KEYS,CUSTOM,limit=5)
     assert page==full[60:]
     assert recent==full[-5:]
     assert len(full)==100
     for key in KEYS:
         d=registry.REGISTRY[key]
-        assert d['placement']=='panel' and d['engines']==['sdk']
         for field in d['native_outputs']:
             assert full[0][field] is None
             assert full[-1][field] is not None
+
+DB = SimpleNamespace(get=lambda *_: None)
 
 PARAMETERS=[(key,p['key']) for key in KEYS for p in registry.REGISTRY[key]['parameters']]
 @pytest.mark.parametrize('key,param',PARAMETERS)
@@ -42,7 +40,6 @@ def test_api_rejects_invalid_parameters(client,key,param,invalid):
     assert response.status_code==400
 
 def test_one_failure_does_not_block_other_indicator_requests(client,monkeypatch,bars):
-    monkeypatch.setattr(indicator_policy,'read',lambda:{'pandas_enabled':True,'revision':1})
     original=sdk_indicators.calculate
     def fail_bias(rows,names,params):
         if names==['bias']:raise ApiError(503,50331,'BIAS unavailable')

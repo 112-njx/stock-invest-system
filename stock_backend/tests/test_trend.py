@@ -5,11 +5,9 @@ from threading import Event
 from unittest.mock import Mock
 
 import numpy as np
-import pandas as pd
 import pytest
 from app.services import stockdb_service as rd
 from app.services import trend_service as service
-from app.services.indicators.macd import MACDIndicator
 from app.services.trend_engine import TrendState
 
 
@@ -43,15 +41,14 @@ def test_volume_signal_requires_positive_day_and_full_twenty_session_history():
     assert "V" not in state.advance(20260123, 121, 200, 1)["signals"]
 
 
-def test_macd_matches_existing_indicator_and_adjustment_scale():
+def test_macd_matches_reference_and_adjustment_scale():
     prices = [100 + i * .2 + np.sin(i) for i in range(60)]
     state = TrendState()
     advance(state, prices)
-    expected = MACDIndicator().calculate(pd.DataFrame({"close": np.array(prices) / 2}))
     metrics = state.metrics(2)
-    assert metrics["dif"] == pytest.approx(expected.iloc[-1]["macd_dif"])
-    assert metrics["dea"] == pytest.approx(expected.iloc[-1]["macd_dea"])
-    assert metrics["macd"] == pytest.approx(expected.iloc[-1]["macd_hist"])
+    assert metrics["dif"] == pytest.approx(0.7324661198398275)
+    assert metrics["dea"] == pytest.approx(0.6869872719992042)
+    assert metrics["macd"] == pytest.approx(0.09095769568124656)
 
 
 def test_repeated_or_out_of_order_sessions_are_rejected():

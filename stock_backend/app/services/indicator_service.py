@@ -7,17 +7,13 @@ import hashlib
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
-
-import numpy as np
-import pandas as pd
 
 from app.core.config import get_settings
 from app.models.kline import KLINE_MODELS
 from app.models.symbol import Symbol
 from app.repositories import kline_repo
-from app.services import market_service
-from app.services.indicators import get_indicator
+from app.services import market_service, sdk_indicators
+from app.services.indicator_registry import MAX_HISTORY_ROWS, REGISTRY, validate_parameters
 from app.utils import market_cache
 from app.utils.redis_client import get_redis_client
 
@@ -25,8 +21,6 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _DEFAULT_BACK_DAYS = 7300  # 默认回看窗口：约 20 年，等价"按 limit 取最近 N 根"（与 get_kline 默认区间对齐），避免历史指标缺失
-from app.services.indicator_registry import REGISTRY, MAX_HISTORY_ROWS
-INDICATOR_NAMES = set(REGISTRY)
 
 
 def compute_indicators(
@@ -46,10 +40,9 @@ def compute_indicators(
     if not names:
         raise ValueError("names 不能为空")
     for n in names:
-        if n not in INDICATOR_NAMES:
+        if n not in REGISTRY:
             raise ValueError(f"unsupported indicator: {n}")
 
-    from app.services.indicator_registry import REGISTRY, validate_parameters
     if params is not None and (not isinstance(params, dict) or params.keys() - REGISTRY.keys()):
         raise ValueError('无效的指标参数')
     for name in names:
@@ -89,11 +82,8 @@ def compute_indicators(
     if not bars:
         return []
 
-    from app.services import indicator_policy, sdk_indicators
-    policy = indicator_policy.read()
-    latest_ts = bars[-1].ts
-    key = _cache_key(symbol_id, period, names, params, latest_ts, explicit_range, start, end, limit,
-                     source=bars[-1].source, engine=("pandas" if policy["pandas_enabled"] else "sdk") + ":v2:" + str(policy["revision"]))
+    key = _cache_key(symbol_id, period, names, params, bars[-1].ts, explicit_range, start, end, limit,
+                     source=bars[-1].source)
     if "ma" in names:
         # The active candle can change without changing its timestamp.
         closes = [(b.ts.isoformat(), str(b.close)) for b in bars]
@@ -104,24 +94,11 @@ def compute_indicators(
     if cached is not None:
         return cached
 
-    pandas_names = [name for name in names if policy['pandas_enabled'] and 'pandas' in REGISTRY[name]['engines']]
-    sdk_names = [name for name in names if name not in pandas_names]
-    # Field selection and native cross signals require the SDK even when the
-    # legacy pandas switch is enabled.
-    controlled = [name for name in pandas_names if (params or {}).get(name, {}).get('cross') or (params or {}).get(name, {}).get('field', 'close') != 'close']
-    pandas_names = [name for name in pandas_names if name not in controlled]
-    sdk_names += controlled
-    if pandas_names:
-        df = _bars_to_df(bars)
-        for name in pandas_names:
-            df = get_indicator(name, (params or {}).get(name)).calculate(df)
-        rows = _df_to_rows(df)
-    else:
-        rows = [market_cache.kline_bar_to_dict(b) for b in bars]
-    regular_sdk = [name for name in sdk_names if name != 'zhishu']
+    rows = [market_cache.kline_bar_to_dict(bar) for bar in bars]
+    regular_sdk = [name for name in names if name != 'zhishu']
     if regular_sdk:
         rows = sdk_indicators.calculate(rows, regular_sdk, params)
-    if 'zhishu' in sdk_names:
+    if 'zhishu' in names:
         rows = sdk_indicators.calculate(rows, ['zhishu'], params, period=period)
     if explicit_range:
         rows = [row for row in rows if market_cache.as_utc(datetime.fromisoformat(row["ts"])) >= market_cache.as_utc(start)]
@@ -143,7 +120,6 @@ def _cache_key(
     end: datetime,
     limit: int,
     source: str = 'stockdb',
-    engine: str = 'pandas',
 ) -> str:
     """默认区间（未显式指定 start/end）按"最新N根"缓存：键只含 latest_ts，新K线到达自动失效。
 
@@ -152,7 +128,7 @@ def _cache_key(
     params_hash = hashlib.md5(json.dumps(params or {}, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
     names_sorted = ",".join(sorted(names))
     from app.services.market_policy import read
-    key = f"indicator:{symbol_id}:{period}:{engine}:{read()['revision']}:{source}:{names_sorted}:{params_hash}:{latest_ts.isoformat()}"
+    key = f"indicator:{symbol_id}:{period}:sdk-v3:{read()['revision']}:{source}:{names_sorted}:{params_hash}:{latest_ts.isoformat()}"
     key += f":limit={limit}"
     if explicit_range:
         key += f":{start.isoformat()}:{end.isoformat()}:{limit}"
@@ -183,42 +159,3 @@ def invalidate_indicator_cache(symbol_id: int, period: str) -> None:
             redis.delete(key)
     except Exception:  # noqa: BLE001
         logger.warning("indicator cache invalidate failed: %s:%s", symbol_id, period)
-
-
-def _bars_to_df(bars) -> pd.DataFrame:
-    rows = [
-        {
-            "ts": b.ts,
-            "open": float(b.open),
-            "high": float(b.high),
-            "low": float(b.low),
-            "close": float(b.close),
-            "volume": b.volume,
-            "amount": float(b.amount),
-        }
-        for b in bars
-    ]
-    return pd.DataFrame(rows)
-
-
-def _df_to_rows(df: pd.DataFrame) -> list[dict]:
-    """DataFrame → JSON 行：NaN→None、datetime→ISO 字符串、Decimal/NumPy 标量归一。"""
-    out: list[dict] = []
-    for _, row in df.iterrows():
-        item: dict = {}
-        for col in df.columns:
-            v = row[col]
-            if isinstance(v, (pd.Timestamp, datetime)):
-                item[col] = v.isoformat()
-            elif isinstance(v, Decimal):
-                item[col] = float(v)
-            elif isinstance(v, np.integer):
-                item[col] = int(v)
-            elif isinstance(v, (np.floating, float)):
-                item[col] = None if pd.isna(v) else float(v)
-            elif v is None or (isinstance(v, str) and v == ""):
-                item[col] = None
-            else:
-                item[col] = v
-        out.append(item)
-    return out

@@ -3,7 +3,6 @@ import { type AdminConsole, providerNames, stateLabel } from '@/composables/useA
 import AdminNotice from './AdminNotice.vue'
 import AdminErrors from './AdminErrors.vue'
 import AdminUpdateDetails from './AdminUpdateDetails.vue'
-import AdminIndicators from './AdminIndicators.vue'
 const props = defineProps<{ controller: AdminConsole }>()
 const s = props.controller.state
 function policyChanged() {
@@ -190,5 +189,4 @@ function policyChanged() {
       的实时状态。一次调用尝试可能包含多次 HTTP 请求。
     </p>
   </section>
-  <AdminIndicators />
 </template>

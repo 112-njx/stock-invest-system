@@ -900,12 +900,6 @@ function beforePeriod(ts: string, period: Period): Date {
   return new Date(date.getTime() - 1)
 }
 
-function reloadIndicatorEngine() {
-  if (props.symbol) void refreshIndicators(loadVersion, props.symbol.id, market.period)
-}
-onMounted(() => window.addEventListener('indicator-settings-changed', reloadIndicatorEngine))
-onBeforeUnmount(() => window.removeEventListener('indicator-settings-changed', reloadIndicatorEngine))
-
 async function refreshIndicators(version: number, symbolId: number, period: Period) {
   if (!loadedBars.length) return
   if (props.customizeIndicators && !detailSettings.ready.value) return

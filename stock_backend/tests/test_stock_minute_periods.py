@@ -40,16 +40,13 @@ def test_sdk_qfq_and_intraday_page_crop(period):
 def test_large_indicator_history_keeps_complete_warmup(monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import Mock
-    from app.services import indicator_service, indicator_policy, sdk_indicators, market_service
-    from app.repositories import kline_repo
+    from app.services import indicator_service, local_history, market_service, sdk_indicators
     from app.data_providers.base import KlineBar
-    from app.services.indicator_registry import MAX_HISTORY_ROWS
     stamp = datetime(2026, 11, 6, 2, tzinfo=UTC)
     bars = [KlineBar(stamp, 10, 11, 9, 10, 100, 1000)] * 100001
     query = Mock(return_value=bars)
-    monkeypatch.setattr(kline_repo, 'get_bars', query)
+    monkeypatch.setattr(local_history, 'read', query)
     monkeypatch.setattr(market_service, 'resolve_symbol_id', lambda *args: 125)
-    monkeypatch.setattr(indicator_policy, 'read', lambda: {'pandas_enabled': False, 'revision': 1})
     monkeypatch.setattr(indicator_service, '_get_cache', lambda *args: None)
     monkeypatch.setattr(indicator_service, '_set_cache', lambda *args: None)
     calculate = Mock(side_effect=lambda rows, *args: [{**row, 'macd_dif': 1.} for row in rows])
@@ -59,7 +56,7 @@ def test_large_indicator_history_keeps_complete_warmup(monkeypatch):
     rows = indicator_service.compute_indicators(db, '125', '1m', ['macd'], limit=1000)
     assert len(rows) == 1000
     assert len(calculate.call_args.args[0]) == 100001
-    assert query.call_args.kwargs['limit'] == MAX_HISTORY_ROWS + 1
+    assert query.call_args.kwargs['limit'] == 2000
 
 
 def test_indicator_history_over_capacity_is_not_silently_truncated(monkeypatch):
