@@ -74,6 +74,8 @@ def test_invalid_market_caps_are_excluded(cap):
 
 
 def test_stale_readers_return_immediately_and_only_one_refresh_runs(monkeypatch):
+    from app.services import stockdb_update
+
     entered, release = Event(), Event()
     published = {'date': 20261104, 'boards': []}
     calls = Mock()
@@ -83,16 +85,18 @@ def test_stale_readers_return_immediately_and_only_one_refresh_runs(monkeypatch)
         assert release.wait(5)
         return {'date': 20261105, 'boards': []}
     monkeypatch.setattr(hm, '_cached', published)
-    monkeypatch.setattr(hm, '_checked', 0)
+    monkeypatch.setattr(hm, '_checked', hm.time())
+    monkeypatch.setattr(hm, '_checked_version', 'previous')
+    monkeypatch.setattr(stockdb_update, 'ready_version', lambda: 'updated')
     monkeypatch.setattr(hm, '_worker', None)
     monkeypatch.setattr(hm, 'get_redis_client', Mock())
     monkeypatch.setattr(hm, 'load', blocked_load)
     try:
-        assert hm.snapshot() is published
+        assert hm.snapshot() == {**published, 'refreshing': True}
         assert entered.wait(1)
         with ThreadPoolExecutor(4) as pool:
             readers = [pool.submit(hm.snapshot) for _ in range(4)]
-            assert all(reader.result(timeout=.5) is published for reader in readers)
+            assert all(reader.result(timeout=.5) == {**published, 'refreshing': True} for reader in readers)
         assert calls.call_count == 1
     finally:
         release.set()
@@ -106,7 +110,7 @@ def test_persisted_snapshot_is_served_before_source_refresh(monkeypatch):
     redis = Mock()
     redis.get.return_value = json.dumps(published)
     entered, release = Event(), Event()
-    def blocked_refresh():
+    def blocked_refresh(_version):
         entered.set()
         release.wait(5)
     monkeypatch.setattr(hm, '_cached', None)
@@ -115,7 +119,7 @@ def test_persisted_snapshot_is_served_before_source_refresh(monkeypatch):
     monkeypatch.setattr(hm, 'get_redis_client', lambda: redis)
     monkeypatch.setattr(hm, '_refresh', blocked_refresh)
     try:
-        assert hm.snapshot() == published
+        assert hm.snapshot() == {**published, 'refreshing': True}
         assert entered.wait(1)
     finally:
         release.set()

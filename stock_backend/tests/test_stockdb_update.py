@@ -71,6 +71,22 @@ def test_update_routes_require_admin(control):
         app.dependency_overrides.pop(get_current_admin, None)
 
 
+def test_market_version_is_public_only_after_maintenance(control):
+    root, _ = control
+    with TestClient(app) as client:
+        endpoint = '/api/v1/stockdb/market-version'
+        state = root / 'version.json'
+        write_json(state, {'status': 'ready', 'version': 'previous'})
+        assert client.get(endpoint).json() == {'version': 'previous'}
+        write_json(root / 'maintenance.json', {})
+        write_json(state, {'status': 'ready', 'version': 'updated'})
+        assert client.get(endpoint).json() == {'version': None}
+        (root / 'maintenance.json').unlink()
+        reply = client.get(endpoint)
+        assert reply.json() == {'version': 'updated'}
+        assert reply.headers['cache-control'] == 'no-store'
+
+
 @pytest.mark.parametrize('recovery_write_fails', [False, True])
 def test_queue_write_failure_is_retryable_without_orphan_files(control, monkeypatch, recovery_write_fails):
     root, _ = control

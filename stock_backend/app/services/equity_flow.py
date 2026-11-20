@@ -17,6 +17,7 @@ _lock = Lock()
 _state = None
 _running = False
 _checked = 0
+_checked_version = None
 _error = ''
 
 
@@ -120,14 +121,19 @@ def _refresh():
 
 
 def snapshot():
-    global _state,_running
+    from app.services.stockdb_update import ready_version
+
+    global _state, _running, _checked_version
+    version = ready_version()
     with _lock:
         if _state is None:
             try:
                 raw = get_redis_client().get(_KEY)
                 if raw: _state=json.loads(raw)
             except Exception: pass
-        if not _running and (_checked==0 or monotonic()-_checked > (300 if _state else 5)):
+        if not _running and (version != _checked_version or _checked == 0
+                             or monotonic() - _checked > (5 if _error or not _state else 300)):
+            _checked_version = version
             _running=True
             Thread(target=_refresh,name='equity-flow-refresh',daemon=True).start()
         return {**(_state or dict(items=[],industries=[])), 'loading':_state is None,

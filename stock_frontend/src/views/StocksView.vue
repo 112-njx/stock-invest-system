@@ -8,6 +8,7 @@ import { indexStocks, filterStocks, type IndexedStock } from '@/utils/stockSearc
 import { useMarketStore } from '@/stores/market'
 import { useUserStore } from '@/stores/user'
 import { useWsStore } from '@/stores/wsStore'
+import { marketVersion } from '@/composables/useMarketVersion'
 import { useAuthModalStore } from '@/stores/authModal'
 import { toast } from '@/utils/toast'
 type Row={code:string;name:string;market:'SSE'|'SZSE'|'BSE';industry:string;data_date:number;[key:string]:number|string|null}
@@ -75,9 +76,11 @@ function outside(e:PointerEvent){if(!(e.target as HTMLElement).closest('.stock-c
 function escape(e:KeyboardEvent){if(e.key==='Escape')menu.value=undefined}
 function detail(row:Row){menu.value=undefined;void router.push({path:'/market/detail',query:{symbol:row.code,asset_type:'stock'}})}
 async function follow(row:Row){menu.value=undefined;if(!user.token){auth.show();return}if(adding.value)return;if(market.watchlist.some(s=>s.code===row.code&&s.type==='stock')){toast.success('该股票已在关注列表');return}adding.value=true;try{const item=await addWatchlist(`stock:${row.code}`);market.addWatchlistItem(item);ws.syncSubscriptions();toast.success(`已关注 ${row.name}`)}catch{toast.error('加入关注失败，请重试')}finally{adding.value=false}}
-async function load(){if(loading.value)return;loading.value=true;const requestedView=view.value;try{const p=await request<{items:Row[];industries:string[];date?:number;loading:boolean;refreshing?:boolean;error?:string;flow_date?:number;missing?:number}>({url:view.value==='flows'?'/stockdb/equities/flows':'/stockdb/equities',silent:true,timeout:60000});if(!alive||requestedView!==view.value)return;if(!p.loading){rows.value=p.items;industries.value=p.industries;date.value=String(p.date??'');indexed.value=indexStocks(p.items.map((r,i)=>({code:r.code,name:r.name,market:r.market,type:'stock',latest_date:String(r.data_date),ordinal:i})))}refreshing.value=p.loading||!!p.refreshing;error.value=p.error??''}catch(e){if(alive)error.value=e instanceof Error?e.message:'读取失败，请重试'}finally{loading.value=false;if(alive)timer=setTimeout(()=>void load(),requestedView!==view.value?0:refreshing.value?2000:60000)}}
+let refreshPending = false
+async function load(){if(loading.value)return;loading.value=true;const requestedView=view.value;try{const p=await request<{items:Row[];industries:string[];date?:number;loading:boolean;refreshing?:boolean;error?:string;flow_date?:number;missing?:number}>({url:view.value==='flows'?'/stockdb/equities/flows':'/stockdb/equities',silent:true,timeout:60000});if(!alive||requestedView!==view.value)return;if(!p.loading){rows.value=p.items;industries.value=p.industries;date.value=String(p.date??'');indexed.value=indexStocks(p.items.map((r,i)=>({code:r.code,name:r.name,market:r.market,type:'stock',latest_date:String(r.data_date),ordinal:i})))}refreshing.value=p.loading||!!p.refreshing;error.value=p.error??''}catch(e){if(alive)error.value=e instanceof Error?e.message:'读取失败，请重试'}finally{loading.value=false;const delay=refreshPending||requestedView!==view.value?0:refreshing.value?2000:60000;refreshPending=false;if(alive)timer=setTimeout(()=>void load(),delay)}}
 watch(view,()=>{rows.value=[];indexed.value=[];error.value='';date.value='';sortKey.value=view.value==='flows'?'main_net':'code';asc.value=view.value!=='flows';resetScroll();refresh()})
-function refresh(){clearTimeout(timer);void load()}
+function refresh(){clearTimeout(timer);if(loading.value)refreshPending=true;else void load()}
+watch(marketVersion, refresh)
 onMounted(()=>{observer=new ResizeObserver(entries=>{height.value=entries[0]?.contentRect.height??600});if(viewport.value)observer.observe(viewport.value);document.addEventListener('pointerdown',outside);window.addEventListener('keydown',escape);void load()})
 onBeforeUnmount(()=>{alive=false;clearTimeout(timer);observer?.disconnect();document.removeEventListener('pointerdown',outside);window.removeEventListener('keydown',escape)})
 </script>

@@ -9,7 +9,7 @@ export interface HeatBoard {
 export interface Heatmap {
   date: number; previousDate: number; updatedAt: string; version: string
   count: number; total: number; missing: number; duplicates: number; zero: number
-  warning?: string; boards: HeatBoard[]
+  warning?: string; refreshing?: boolean; boards: HeatBoard[]
 }
 export interface Rect { x: number; y: number; w: number; h: number }
 

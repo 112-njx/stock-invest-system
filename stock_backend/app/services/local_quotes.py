@@ -6,6 +6,7 @@ from app.data_providers.stockdb import StockDBProvider
 from app.repositories import kline_repo
 from app.utils.redis_client import get_redis_client
 from app.services.market_policy import akshare_enabled
+from app.services.stockdb_update import ready_version
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +30,13 @@ def stored_quote(db, sym, bars=None):
 
 def quotes(db, symbols):
     result = []
+    version = ready_version()
     for sym in symbols:
         item = dict(symbol_id=sym.id, code=sym.code, name=sym.name, type=sym.type,
                     source='stockdb', extra={})
         try:
             if sym.type in {'stock', 'etf'}:
-                key = f'local-quote:v1:{sym.code}'
+                key = f'local-quote:v2:{version}:{sym.code}'
                 try:
                     raw = get_redis_client().get(key)
                 except Exception:
@@ -44,7 +46,7 @@ def quotes(db, symbols):
                 else:
                     rows = StockDBProvider().query('vals', '日k', k1=f'key:{sym.code}', k2='all:', num=-1)
                     row = rows[-1] if rows else None
-                    if row:
+                    if row and version:
                         try:
                             get_redis_client().set(key, json.dumps(row), ex=30)
                         except Exception:

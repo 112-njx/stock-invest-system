@@ -52,6 +52,7 @@ import { useMarketStore, type Period } from '@/stores/market'
 import { useAuthModalStore } from '@/stores/authModal'
 import { useUserStore } from '@/stores/user'
 import { useWsStore } from '@/stores/wsStore'
+import { marketVersion } from '@/composables/useMarketVersion'
 import { useThemeStore } from '@/stores/theme'
 import { trackTiming } from '@/utils/monitor'
 import { toast } from '@/utils/toast'
@@ -1122,7 +1123,7 @@ function locateSession() {
 
 watch(() => props.focusSession, locateSession)
 
-async function loadKline() {
+async function loadKline(refreshSource = false) {
   if (props.snapshotBars) {
     loadedBars = props.snapshotBars
     candleSeries?.setData(toCandleData(loadedBars))
@@ -1148,12 +1149,14 @@ async function loadKline() {
   const t0 = performance.now()
   try {
     const [loaded, checked] = await Promise.all([
-      fetchKLine({ symbol: symbolId, period, limit: period === '1w' || period === '1mon' ? Math.max(initialPeriodCount(period), loadedBars.length + 1) : props.recentMonths ? 5000 : undefined }),
+      fetchKLine({ symbol: symbolId, period, limit: refreshSource
+        ? Math.min(5000, Math.max(1000, loadedBars.length + 1))
+        : period === '1w' || period === '1mon' ? Math.max(initialPeriodCount(period), loadedBars.length + 1) : props.recentMonths ? 5000 : undefined }),
       fetchKlineQuality(symbolId, period).catch(() => null),
     ])
     if (version !== loadVersion || props.symbol?.id !== symbolId || chartPeriod.value !== period) return
     // 周/月 K 的时间戳是本周期最后一个交易日，周期内更新会改变时间戳。
-    const existing = initialViewport || period === '1w' || period === '1mon' ? [] : loadedBars
+    const existing = refreshSource || initialViewport || period === '1w' || period === '1mon' ? [] : loadedBars
     const byTime = new Map([...existing, ...loaded].map((bar) => [toUtcSeconds(bar.ts), bar]))
     const bars = [...byTime.values()].sort((a, b) => toUtcSeconds(a.ts) - toUtcSeconds(b.ts))
     quality.value = checked
@@ -1197,7 +1200,7 @@ async function loadKline() {
       }
       initialViewport = false
     } else if (previousRange) {
-      const prepended = (period === '1w' || period === '1mon') && previousFirstTs
+      const prepended = (refreshSource || period === '1w' || period === '1mon') && previousFirstTs
         ? bars.filter((bar) => toUtcSeconds(bar.ts) < toUtcSeconds(previousFirstTs)).length
         : Math.max(0, bars.length - previousCount)
       chart?.timeScale().setVisibleLogicalRange({ from: previousRange.from + prepended, to: previousRange.to + prepended })
@@ -1314,6 +1317,9 @@ watch(() => chartPeriod.value, () => {
   loadKline()
 })
 watch(() => theme.mode, () => applyTheme())
+watch(marketVersion, () => {
+  if (!props.snapshotBars && isEquityChart()) void loadKline(true)
+})
 
 onMounted(() => {
   loadVisibility()

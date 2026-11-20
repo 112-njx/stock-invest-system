@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 _error = ''
 _state = None
 _checked = 0
+_checked_version = None
 _lock = Lock()
 _running = False
 _KEY = 'equity-table:v2'
@@ -146,14 +147,19 @@ def _refresh():
 
 
 def snapshot():
-    global _state, _running
+    from app.services.stockdb_update import ready_version
+
+    global _state, _running, _checked_version
+    version = ready_version()
     with _lock:
         if _state is None:
             try:
                 saved = get_redis_client().get(_KEY)
                 if saved: _state = json.loads(saved)
             except Exception: pass
-        if not _running and (_checked == 0 or monotonic()-_checked > (300 if _state else 30)):
+        if not _running and (version != _checked_version or _checked == 0
+                             or monotonic() - _checked > (30 if _error or not _state else 300)):
+            _checked_version = version
             _running = True
             Thread(target=_refresh,name='equity-table-refresh',daemon=True).start()
         if _state is None: return dict(items=[],industries=[],loading=_running,error=_error)

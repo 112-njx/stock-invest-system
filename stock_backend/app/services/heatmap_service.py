@@ -16,6 +16,7 @@ _lock = Lock()
 _schedule_lock = Lock()
 _worker: Thread | None = None
 _cached = None
+_checked_version = None
 _checked = 0.0
 _candidate = ("", 0.0)
 _key = "market-heatmap:v1:" + sha256(rd.get_settings().STOCKDB_URL.encode()).hexdigest()[:12]
@@ -86,10 +87,10 @@ def load(now):
     raise rd.StockDBError('最新收盘数据覆盖不足，等待本地数据同步完成')
 
 
-def _refresh():
-    global _cached, _checked, _candidate
+def _refresh(version=None):
+    global _cached, _checked, _candidate, _checked_version
     with _lock:
-        if _cached and time() - _checked < 60:
+        if _cached and version == _checked_version and time() - _checked < 60:
             return _cached
         redis = get_redis_client()
         try:
@@ -123,12 +124,16 @@ def _refresh():
             return _cached
         finally:
             _checked = time()
+            _checked_version = version
         return _cached
 
 
 def snapshot():
     """Serve published data immediately; serialize only refresh scheduling."""
+    from app.services.stockdb_update import ready_version
+
     global _cached, _worker
+    version = ready_version()
     if _cached is None:
         with _schedule_lock:
             if _cached is None:
@@ -139,12 +144,12 @@ def snapshot():
                 except (RedisError, ValueError):
                     pass
     if _cached is not None:
-        published = _cached
-        if time() - _checked >= 60:
-            with _schedule_lock:
-                if time() - _checked >= 60 and (_worker is None or not _worker.is_alive()):
-                    _worker = Thread(target=_refresh, name='heatmap-refresh', daemon=True)
-                    _worker.start()
-        return published
+        with _schedule_lock:
+            refreshing = _worker is not None and _worker.is_alive()
+            if not refreshing and (version != _checked_version or time() - _checked >= 60):
+                _worker = Thread(target=_refresh, args=(version,), name='heatmap-refresh', daemon=True)
+                _worker.start()
+                refreshing = True
+            return {**_cached, 'refreshing': refreshing}
     # With no usable memory or persisted snapshot, only the initial request waits.
-    return _refresh()
+    return _refresh(version)

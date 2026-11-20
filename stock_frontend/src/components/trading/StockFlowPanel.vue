@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { request } from '@/api/http'
+import { marketVersion } from '@/composables/useMarketVersion'
 const props=defineProps<{code:string;name:string}>()
 type FlowRow={date:number;main_net:number|null;jumbo_net:number|null;big_net:number|null;mid_net:number|null;small_net:number|null}
 type Payload={coverage:{start:string;end:string}|null;latest:FlowRow|null;totals:Record<string,number|null>;rows:FlowRow[];start:string|null;end:string|null}
 const data=ref<Payload>(),start=ref(''),end=ref(''),busy=ref(false),error=ref(''),page=ref(1)
 let controller:AbortController|undefined,sequence=0
+let followsLatest = true
 const fields=[['main_net','主力净流入'],['jumbo_net','超大单净流入'],['big_net','大单净流入'],['mid_net','中单净流入'],['small_net','小单净流入']] as const
 const formatDate=(v:string|number)=>String(v).replace(/(\d{4})(\d{2})(\d{2})/,'$1-$2-$3')
 function money(v:number|null|undefined){if(v==null)return '暂无数据';return (v>0?'+':'')+(Math.abs(v)>=1e8?(v/1e8).toFixed(2)+'亿':Math.abs(v)>=1e4?(v/1e4).toFixed(2)+'万':v.toLocaleString('zh-CN',{maximumFractionDigits:2}))}
@@ -17,6 +19,7 @@ const scale=computed(()=>Math.max(1,...bars.value.map(r=>Math.abs(r.main_net??0)
 const step=computed(()=>900/Math.max(1,bars.value.length))
 const fill=(v:number|null)=>v==null?'var(--text-muted)':v>0?'var(--up)':v<0?'var(--down)':'var(--text-secondary)'
 async function load(defaultRange=false){
+ followsLatest = defaultRange
  controller?.abort();const seq=++sequence;controller=new AbortController();busy.value=true;error.value=''
  try{
   if(!defaultRange&&(!start.value||!end.value||start.value>end.value))throw new Error('请选择有效的起止日期')
@@ -27,6 +30,7 @@ async function load(defaultRange=false){
  finally{if(seq===sequence)busy.value=false}
 }
 watch(()=>props.code,()=>{data.value=undefined;start.value='';end.value='';page.value=1;void load(true)},{immediate:true})
+watch(marketVersion, () => void load(followsLatest))
 onBeforeUnmount(()=>{sequence++;controller?.abort()})
 </script>
 <template>

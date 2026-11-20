@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, watch } from 'vue'
 import { fetchLatestQuotes } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
+import { marketVersion } from '@/composables/useMarketVersion'
 
 /** Source latest records: refresh on selection, page visibility and K-line events. */
 export function useLatestQuotes() {
@@ -11,12 +12,18 @@ export function useLatestQuotes() {
     ...market.fixedIndices.map(item => item.id),
   ])])
   let active = false
+  let sequence = 0
   async function refresh() {
     if (!active || !ids.value.length) return
-    try { market.mergeQuotes(await fetchLatestQuotes(ids.value, true)) } catch { /* Retry on next user action. */ }
+    const request = ++sequence
+    try {
+      const rows = await fetchLatestQuotes(ids.value, true)
+      if (active && request === sequence) market.mergeQuotes(rows)
+    } catch { /* Retry on next user action. */ }
   }
   function visible() { if (document.visibilityState === 'visible') void refresh() }
   watch(ids, () => void refresh())
+  watch(marketVersion, () => void refresh())
   function start() {
     if (active) return
     active = true

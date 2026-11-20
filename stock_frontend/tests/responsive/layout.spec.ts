@@ -241,6 +241,23 @@ test('phone requests AkShare history only after tapping the supplement action', 
   await expectNoPageOverflow(page)
 })
 
+test('a published data version refreshes the guest stock table', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop')
+  await stubApi(page)
+  let version = 'before'
+  await page.route('**/api/v1/stockdb/market-version', route => route.fulfill({ json: { version } }))
+  await page.route('**/api/v1/stockdb/equities', route => route.fulfill({
+    json: { code: 0, data: {
+      items: [stock], industries: [stock.industry], loading: false,
+      date: version === 'before' ? 20260105 : 20260106,
+    } },
+  }))
+  await page.goto('/stocks')
+  await expect(page.getByText(/A股 · 20260105/)).toBeVisible()
+  version = 'after'
+  await expect(page.getByText(/A股 · 20260106/)).toBeVisible({ timeout: 12000 })
+})
+
 test('phone stock table preserves access to all columns and row actions', async ({ page }, info) => {
   test.skip(!info.project.name.startsWith('phone'))
   await stubApi(page)

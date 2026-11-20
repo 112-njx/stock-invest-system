@@ -14,6 +14,7 @@ import { useAuthModalStore } from '@/stores/authModal'
 import { useMarketStore } from '@/stores/market'
 import { useWsStore } from '@/stores/wsStore'
 import { useLatestQuotes } from '@/composables/useLatestQuotes'
+import { marketVersion } from '@/composables/useMarketVersion'
 import { readHomeIndexCache, quoteTime, writeHomeIndexCache } from '@/utils/homeIndexCache'
 import { trackTiming } from '@/utils/monitor'
 import KLineChart from '@/components/trading/KLineChart.vue'
@@ -126,6 +127,7 @@ onMounted(() => {
 
 // V0.2：标的/关注列表/固定指数变化时同步 WS 订阅
 watch(() => market.current?.id, () => ws.syncSubscriptions())
+watch(marketVersion, () => void loadHomeIndices())
 watch(() => market.watchlist.length, () => ws.syncSubscriptions())
 watch(() => market.fixedIndices.length, () => ws.syncSubscriptions())
 watch(() => market.quotes, () => {

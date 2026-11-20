@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useThemeStore } from '@/stores/theme'
+import { marketVersion } from '@/composables/useMarketVersion'
 import { heatColor, tiles, type Heatmap, type HeatStock, type HeatBoard, type Rect } from '@/api/heatmap'
 
 const data = ref<Heatmap>(), error = ref(''), loading = ref(false), selected = ref('')
@@ -10,15 +11,22 @@ const host = ref<HTMLElement>(), canvas = ref<HTMLCanvasElement>()
 const picked = ref<{ stock: HeatStock; board: HeatBoard }>()
 const hover = ref<{ stock: HeatStock; board: HeatBoard; x: number; y: number }>()
 let hits: { stock: HeatStock; board: HeatBoard; box: Rect }[] = []
-let observer: ResizeObserver | undefined, timer: ReturnType<typeof setInterval> | undefined
+let observer: ResizeObserver | undefined, timer: ReturnType<typeof setTimeout> | undefined
 let controller: AbortController | undefined
+let mounted = false
+let refreshPending = false
 const pct = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}%`
 const money = (n: number) => `${(n / 1e8).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 亿`
 const date = computed(() => String(data.value?.date ?? '').replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'))
 
 async function refresh() {
-  if (loading.value) return
+  clearTimeout(timer)
+  if (loading.value) {
+    refreshPending = true
+    return
+  }
   loading.value = true
+  let nextRefreshDelay = 60000
   controller = new AbortController()
   const timeout = setTimeout(() => controller?.abort(), 45000)
   try {
@@ -27,11 +35,23 @@ async function refresh() {
       const body = await response.json().catch(() => ({}))
       throw new Error(body.detail || '云图数据读取失败')
     }
-    data.value = await response.json()
+    const next: Heatmap = await response.json()
+    if (next.refreshing) nextRefreshDelay = 2000
+    if (!data.value || next.version !== data.value.version || next.warning !== data.value.warning) {
+      data.value = next
+      draw()
+    }
     error.value = ''
-    draw()
   } catch (e) { error.value = e instanceof Error ? e.message : '云图数据读取失败' }
-  finally { clearTimeout(timeout); loading.value = false }
+  finally {
+    clearTimeout(timeout)
+    loading.value = false
+    if (mounted) {
+      const delay = refreshPending ? 0 : nextRefreshDelay
+      refreshPending = false
+      timer = setTimeout(refresh, delay)
+    }
+  }
 }
 function draw() {
   const el = canvas.value, container = host.value
@@ -88,12 +108,14 @@ function escapeIndustry(event: KeyboardEvent) {
 }
 watch([selected, data], () => { picked.value = undefined })
 watch([selected, () => theme.mode], draw, { flush: 'post' })
+watch(marketVersion, () => { if (mounted) void refresh() })
 onMounted(() => {
+  mounted = true
   window.addEventListener('keydown', escapeIndustry)
   observer = new ResizeObserver(draw); if (host.value) observer.observe(host.value)
-  void refresh(); timer = setInterval(() => void refresh(), 60000)
+  void refresh()
 })
-onBeforeUnmount(() => { window.removeEventListener('keydown', escapeIndustry); observer?.disconnect(); clearInterval(timer); controller?.abort() })
+onBeforeUnmount(() => { mounted = false; window.removeEventListener('keydown', escapeIndustry); observer?.disconnect(); clearTimeout(timer); controller?.abort() })
 </script>
 
 <template>

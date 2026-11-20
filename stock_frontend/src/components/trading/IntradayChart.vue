@@ -4,6 +4,7 @@ import { createChart, LineSeries, HistogramSeries, ColorType, LineStyle, type IC
 import { useThemeStore } from '@/stores/theme'
 import { averageSegments } from '@/utils/intradaySegments'
 import { fetchStockDb } from '@/api/stockdbCache'
+import { marketVersion } from '@/composables/useMarketVersion'
 const props=defineProps<{code:string}>()
 interface Row {date:number;price:number;volume:number|null;average:number|null}
 interface History {rows:Row[];latest:number|null;start:string|null;end:string|null;previous:number|null;baseline_date:number|null}
@@ -127,6 +128,7 @@ async function load(){
   finally{if(id===sequence)busy.value=false}
 }
 watch(()=>props.code,load,{immediate:true})
+watch(marketVersion, () => void load())
 watch(()=>theme.mode,render)
 onBeforeUnmount(()=>{sequence++;dispose()})
 </script>

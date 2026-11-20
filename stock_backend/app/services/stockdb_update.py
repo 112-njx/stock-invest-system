@@ -13,6 +13,14 @@ def directory():
     return Path(os.environ.get('STOCKDB_CONTROL_DIR', '/app/data/stockdb-control'))
 
 
+def ready_version() -> str | None:
+    root = directory()
+    if (root / 'maintenance.json').exists():
+        return None
+    manifest = read_json(root / 'version.json', {})
+    return manifest.get('version') if manifest.get('status') == 'ready' else None
+
+
 def status():
     root = directory()
     helper = read_json(root / 'heartbeat.json', {})
@@ -76,10 +84,8 @@ def request_update(*, scheduled_day=None):
 
 def dispatch_version_change():
     """Publish dependent work once per verified StockDB file version."""
-    root = directory()
-    manifest = read_json(root / 'version.json', {})
-    version = manifest.get('version')
-    if manifest.get('status') != 'ready' or not version or (root / 'maintenance.json').exists():
+    version = ready_version()
+    if not version:
         return
     from app.utils.redis_client import get_redis_client
     from app.worker.tasks.forecast_tasks import sweep_forecasts

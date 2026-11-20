@@ -20,6 +20,14 @@ Weight = Literal["equal", "float_mv", "amount", "volume", "total_mv"]
 Code = Annotated[str, StringConstraints(pattern=r"^[0-9]{6}$")]
 
 
+@router.get("/market-version")
+def market_version(response: Response) -> dict:
+    from app.services.stockdb_update import ready_version
+
+    response.headers["Cache-Control"] = "no-store"
+    return {"version": ready_version()}
+
+
 @router.get("/heatmap")
 def heatmap() -> dict:
     from app.services.heatmap_service import snapshot

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { fetchStockDb } from '@/api/stockdbCache'
+import { marketVersion } from '@/composables/useMarketVersion'
 import type { Bar } from '@/api/stockdb'
 import StockDbChart from '@/components/stockdb/StockDbChart.vue'
 const props = defineProps<{code: string}>()
@@ -17,6 +18,7 @@ async function load(){
   finally {if(id===sequence) busy.value=false}
 }
 watch(()=>props.code,load,{immediate:true})
+watch(marketVersion, () => void load())
 onBeforeUnmount(()=>sequence++)
 </script>
 <template>

@@ -15,6 +15,7 @@ from app.repositories import kline_repo
 from app.services import market_service, sdk_indicators
 from app.services.indicator_registry import MAX_HISTORY_ROWS, REGISTRY, validate_parameters
 from app.utils import market_cache
+from app.services.stockdb_update import ready_version
 from app.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -63,10 +64,12 @@ def compute_indicators(
 
     # Keep the bounded warmup window anchored to the newest bar for latest-N queries.
     sym = db.get(Symbol, symbol_id)
+    source_version = None
     if sym is not None and sym.type in {"stock", "etf"}:
         from app.data_providers.base import ProviderError
         from app.services import local_history, source_history
 
+        source_version = ready_version()
         warmup_start = start - timedelta(days=90) if explicit_range and period in local_history.MINUTE_BARS else None
         try:
             bars = local_history.read(sym, period, warmup_start, end, limit=limit + 1000)
@@ -84,6 +87,8 @@ def compute_indicators(
 
     key = _cache_key(symbol_id, period, names, params, bars[-1].ts, explicit_range, start, end, limit,
                      source=bars[-1].source)
+    if sym is not None and sym.type in {"stock", "etf"} and bars[-1].source == "stockdb":
+        key += f":stockdb:{source_version}"
     if "ma" in names:
         # The active candle can change without changing its timestamp.
         closes = [(b.ts.isoformat(), str(b.close)) for b in bars]
