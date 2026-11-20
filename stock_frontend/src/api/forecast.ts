@@ -1,4 +1,5 @@
 import { request } from './http'
+import type { KLineBar } from './market'
 
 export interface ForecastEvidence {
   session: string
@@ -12,6 +13,7 @@ export interface ForecastRun {
   trigger: 'manual' | 'auto'
   status: 'queued' | 'diagnosing' | 'predicting' | 'completed' | 'failed'
   created_at: string
+  regime_horizon: number | null
   snapshot: {
     latest_session: string | null
     as_of: string
@@ -34,6 +36,9 @@ export interface ForecastRun {
 
 export const getForecastHistory = (symbol: string) =>
   request<{ runs: ForecastRun[]; tracking: boolean }>({ url: '/forecast/runs', params: { symbol }, silent: true })
+
+export const getForecastRunSnapshot = (id: number) =>
+  request<{ rows: KLineBar[] }>({ url: `/forecast/runs/${id}/snapshot`, silent: true })
 
 export const startForecast = (symbol: string) =>
   request<ForecastRun>({ url: '/forecast/runs', method: 'post', data: { symbol }, timeout: 60000, silent: true })
@@ -66,6 +71,7 @@ export interface ForecastReplay {
     horizon: number
     rule_version: number
     scores: Record<string, ReplayScore>
+    matched_scores?: Record<string, { count: number; ai_hits: number; baseline_hits: number }>
     cases: {
       session: string
       next_session: string | null

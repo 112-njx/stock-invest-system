@@ -22,6 +22,8 @@ def _key(symbol_id, period, revision=None):
 
 
 def cached(symbol_id, period):
+    if not market_policy.akshare_enabled():
+        return None
     try:
         raw = get_redis_client().get(_key(symbol_id, period))
         if raw is not None:

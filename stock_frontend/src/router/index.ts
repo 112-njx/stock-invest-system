@@ -38,11 +38,7 @@ const router = createRouter({
       name: 'ai',
       component: () => import('@/views/AIView.vue'),
     },
-    {
-      path: '/forecast',
-      name: 'forecast',
-      component: () => import('@/views/ForecastView.vue'),
-    },
+    { path: '/forecast', name: 'forecast', component: () => import('@/views/ForecastView.vue') },
     {
       path: '/admin',
       name: 'admin',

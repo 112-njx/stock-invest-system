@@ -64,6 +64,13 @@ def _startup_tasks() -> None:
         logger.info("startup cache warmup: %s", result)
     except Exception:  # noqa: BLE001
         logger.warning("startup cache warmup failed (skip)", exc_info=True)
+    try:
+        from app.worker.tasks.forecast_tasks import replay_forecasts, sweep_forecasts
+
+        replay_forecasts.delay()
+        sweep_forecasts.delay()
+    except Exception:
+        logger.warning("Forecast jobs could not be recovered at startup", exc_info=True)
     try:  # 阶段二 2.2：启动市场监听线程（Redis pub/sub → WS 推送）
         import asyncio
         import threading

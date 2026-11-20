@@ -34,7 +34,6 @@ def to_sina_index(code: str) -> str | None:
 
 class SinaProvider(BaseDataProvider):
     name = "sina"
-    probe_asset_type = "index"
 
     def __init__(self) -> None:
         super().__init__()

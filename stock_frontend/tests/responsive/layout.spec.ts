@@ -11,7 +11,6 @@ const routes = {
   '/stockdb': '.blueprint',
   '/stockdb/trends': '.blueprint--trends',
   '/ai': '.ai-shell',
-  '/forecast': '.forecast-page',
   '/admin': '.admin-console',
   '/forgot-password': '.auth-card',
   '/reset-password': '.auth-card',
@@ -19,6 +18,7 @@ const routes = {
   '/terms': '.market-grid',
   '/privacy': '.market-grid',
   '/disclaimer': '.market-grid',
+  '/forecast': '.forecast-page',
 }
 
 const stock = { code: '600519', name: '贵州茅台', market: 'SSE', data_date: 20260105, close: 1500, change_pct: 1.2, industry: '食品饮料' }
@@ -99,115 +99,71 @@ test('account page links focus the inline homepage login form', async ({ page },
   }
 })
 
-test('forecast navigation opens a stock history preview', async ({ page }, info) => {
-  if (!['desktop', 'phone-320', 'phone-landscape'].includes(info.project.name)) test.skip()
-  await stubApi(page)
-  await page.route('**/api/v1/stocks/search-directory', route => route.fulfill({ json: {
-    code: 0, data: { version: 'forecast-fixture', source: 'stockdb', items: [
-      { code: stock.code, name: stock.name, type: 'stock', market: stock.market, ordinal: 1, latest_date: '2026-01-05' },
-    ] },
-  } }))
-  await page.route('**/api/v1/kline?*', route => {
-    const params = new URL(route.request().url()).searchParams
-    expect(params.get('symbol')).toBe(stock.code)
-    expect(params.get('period')).toBe('1d')
-    return route.fulfill({ json: { code: 0, data: [
-      { ts: '2026-01-05T07:00:00Z', open: 1490, high: 1510, low: 1480, close: 1500, volume: 100, amount: 150000 },
-    ] } })
-  })
-  await page.goto('/ai')
-  if (info.project.name !== 'desktop') await page.getByRole('button', { name: '菜单', exact: true }).click()
-  await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '预测走势' }).click()
-  await expect(page).toHaveURL(/\/forecast$/)
-  await page.getByRole('combobox', { name: '搜索股票名称、拼音或代码' }).fill(stock.code)
-  await page.getByRole('option', { name: /600519/ }).click()
-  await expect(page.getByRole('cell', { name: '1,500.00' })).toBeVisible()
-  await expectNoPageOverflow(page)
-})
-
-test('forecast shows both stages and can enable tracking', async ({ page }, info) => {
+test('forecast locates evidence on archived candles and shows replay scores', async ({ page }, info) => {
   test.skip(!['desktop', 'phone-320', 'phone-landscape'].includes(info.project.name))
   await stubApi(page, () => true)
   const session = '2026-01-05'
-  const evidence = [{ session, feature: 'ema20', value: 1500, reason: '旧记录的未核验说明' }]
+  const bar = { ts: session, open: 1490, high: 1510, low: 1480, close: 1500, volume: 100, amount: 150000 }
+  const symbol = { ...stock, id: 101, type: 'stock', ordinal: 1, latest_date: session }
   const run = {
-    id: 42, symbol: stock.code, trigger: 'manual', status: 'predicting', created_at: `${session}T08:00:00Z`,
-    snapshot: { latest_session: session, as_of: `${session}T16:00:00+08:00`, bar_count: 40,
-      data_version: 'a'.repeat(64), feature_version: 1, source: 'stockdb' },
-    diagnosis: { regime: 'tight_channel', bias: 'up', summary: '窄通道延续', evidence },
-    models: { diagnosis: { name: 'test-model', revision: null } }, error: null,
+    id: 42, status: 'completed', created_at: `${session}T08:00:00Z`, regime_horizon: 5,
+    snapshot: { latest_session: session, bar_count: 40, feature_version: 1, source: 'stockdb' },
+    diagnosis: { regime: 'trend', bias: 'up', summary: '趋势延续', evidence: [{ session, feature: 'close', value: 1500 }] },
+    prediction: {
+      next_candle: { direction: 'up', reason: '延续', evidence: [] },
+      next_regime: { regime: 'trend', reason: '保持趋势', evidence: [] },
+    },
+    models: {},
   }
-  let started = false
-  let complete = false
-  let tracking = false
-  let retried = false
-  const prior = {
-    ...run, id: 41, status: 'failed', diagnosis: null, error: '旧记录中断',
-    snapshot: { ...run.snapshot, latest_session: '2025-12-31' },
-  }
-  await page.route('**/api/v1/stocks/search-directory', route => route.fulfill({ json: {
-    code: 0, data: { version: 'forecast-analysis-fixture', source: 'stockdb', items: [
-      { code: stock.code, name: stock.name, type: 'stock', market: stock.market, ordinal: 1, latest_date: session },
-    ] },
-  } }))
-  await page.route('**/api/v1/forecast/runs/41/retry', route => {
-    expect(route.request().method()).toBe('POST')
-    retried = true
-    return route.fulfill({ json: { code: 0, data: { ...prior, status: 'queued', error: null } } })
+  let analysed = false
+  let tracked = false
+  const json = (data: unknown) => ({ json: { code: 0, data } })
+  await page.route('**/api/v1/stocks/search-directory', route => route.fulfill(json({ version: 'forecast-fixture', source: 'stockdb', items: [symbol] })))
+  await page.route('**/api/v1/symbols/search?*', route => route.fulfill(json([symbol])))
+  await page.route('**/api/v1/kline?*', route => {
+    const latestBar = { ...bar, source: 'stockdb', ts: '2026-01-06T00:00:00Z' }
+    const start = new URL(route.request().url()).searchParams.get('start')
+    return route.fulfill(json(start ? [{ ...bar, source: 'stockdb' }, latestBar] : [latestBar]))
   })
+  await page.route('**/api/v1/forecast/runs/42/snapshot', route => route.fulfill(json({ rows: [bar] })))
   await page.route(/\/api\/v1\/forecast\/runs(?:\?|$)/, route => {
     if (route.request().method() === 'POST') {
-      started = true
-      return route.fulfill({ json: { code: 0, data: run } })
+      analysed = true
+      return route.fulfill(json(run))
     }
-    const result = complete ? {
-      ...run, status: 'completed', prediction: {
-        next_candle: { direction: 'up', reason: '收盘延续', evidence },
-        next_regime: { regime: 'undetermined', reason: '后续信号冲突', evidence: [] },
-      },
-    } : run
-    const history = complete ? [result, retried ? { ...prior, status: 'queued', error: null } : prior] : [result]
-    return route.fulfill({ json: { code: 0, data: { runs: started ? history : [], tracking } } })
+    return route.fulfill(json({ runs: analysed ? [run] : [], tracking: tracked }))
   })
   await page.route('**/api/v1/forecast/tracking', route => {
-    tracking = route.request().postDataJSON().enabled
-    return route.fulfill({ json: { code: 0, data: { tracking } } })
+    tracked = true
+    return route.fulfill(json({ tracking: tracked }))
   })
-  let replayStarted = false
-  await page.route(/\/api\/v1\/forecast\/replay(?:\?|$)/, route => {
-    if (route.request().method() === 'POST') {
-      expect(route.request().postDataJSON()).toEqual({ symbol: stock.code, end: null, samples: 5, mode: 'archived' })
-      replayStarted = true
-    }
-    const data = replayStarted ? {
-      id: 1, status: 'completed', error: null, options: { samples: 5, mode: 'archived' },
-      report: { total: 1, horizon: 5, rule_version: 1, scores: { direction: { labelled: 1, covered: 0, hits: 0 } },
-        cases: [{ session, actual_direction: 'up', actual_regime: 'range', status: 'missing_archive' }] },
-    } : null
-    return route.fulfill({ json: { code: 0, data } })
-  })
+  await page.route(/\/api\/v1\/forecast\/replay(?:\?|$)/, route => route.fulfill(json({
+    id: 1, status: 'completed', options: { samples: 5, mode: 'archived' },
+    report: {
+      total: 1, horizon: 5, rule_version: 1,
+      scores: { direction: { labelled: 1, covered: 1, hits: 1 } },
+      matched_scores: { always_up: { count: 1, ai_hits: 1, baseline_hits: 1 } },
+      cases: [{ session, direction: 'up', actual_direction: 'up', status: 'evaluated' }],
+    },
+  })))
   await page.goto('/forecast')
   await page.getByRole('combobox', { name: '搜索股票名称、拼音或代码' }).fill(stock.code)
   await page.getByRole('option', { name: /600519/ }).click()
-  await expect(page.getByRole('button', { name: '开启自动跟踪' })).toBeVisible()
-  await page.getByRole('button', { name: '分析走势' }).click()
-  await expect(page.getByText('第二阶段 · 正在推演走势')).toBeVisible()
-  await expect(page.getByText('2026-01-05 · EMA20 1,500')).toBeVisible()
-  await expect(page.getByText('旧记录的未核验说明')).toHaveCount(0)
-  complete = true
-  await expect(page.getByRole('heading', { name: '下一根日 K 线 · 涨' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '下一阶段走势 · 无法判断' })).toBeVisible()
+  await expect(page.getByText(/最新行情 · StockDB · 截至 2026-01-06/)).toBeVisible()
   await page.getByRole('button', { name: '开启自动跟踪' }).click()
-  await expect(page.getByRole('button', { name: '关闭自动跟踪' })).toHaveAttribute('aria-pressed', 'true')
-  await page.getByLabel('分析记录').selectOption('41')
-  await page.getByRole('button', { name: '重试此记录' }).click()
-  await expect(page.getByText('行情截至 2025-12-31', { exact: false })).toBeVisible()
-  await expect(page.getByRole('status').filter({ hasText: '等待分析' })).toBeVisible()
-  await page.getByLabel('数据口径').selectOption('archived')
-  await page.getByRole('button', { name: '开始历史回放' }).click()
-  await expect(page.getByRole('cell', { name: '0%（0/1）' })).toBeVisible()
-  await page.getByText('逐日结果').click()
-  await expect(page.getByRole('cell', { name: '缺少当日快照' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '关闭自动跟踪' })).toBeVisible()
+  await page.getByRole('button', { name: '开始分析' }).click()
+  await expect(page.getByRole('heading', { name: '下一阶段走势' })).toBeVisible()
+  await page.getByRole('button', { name: /2026-01-05 · 收盘价/ }).click()
+  await expect(page.getByText(/分析快照 · StockDB · 截至 2026-01-05 · 定位 2026-01-05/)).toBeVisible()
+  await expect(page.locator('.forecast-chart .kline-chart__canvas canvas').first()).toBeVisible()
+  if (info.project.name === 'phone-landscape') await page.getByRole('button', { name: '结果', exact: true }).click()
+  await page.getByRole('button', { name: '历史回放' }).click()
+  await expect(page.getByRole('heading', { name: '同样本基线对照' })).toBeVisible()
+  await page.getByText('逐日结果', { exact: true }).click()
+  await page.getByRole('button', { name: session, exact: true }).click()
+  await expect(page.getByText(/回放日期附近行情 · StockDB · 截至 2026-01-06 · 定位 2026-01-05/)).toBeVisible()
+  await expect(page.locator('.forecast-chart .kline-chart__canvas canvas').first()).toBeVisible()
   await expectNoPageOverflow(page)
 })
 
@@ -250,6 +206,38 @@ test('phone navigation, chart controls and dialog focus', async ({ page }, info)
   await page.getByRole('link', { name: '查看行情详情' }).tap()
   await page.getByTitle('选择技术指标').tap()
   await expect(page.locator('.modal--indicator-detail')).toBeVisible()
+  await expectNoPageOverflow(page)
+})
+
+test('phone requests AkShare history only after tapping the supplement action', async ({ page }, info) => {
+  test.skip(info.project.name !== 'phone-390')
+  await stubApi(page)
+  let submissions = 0
+  await page.route('**/api/v1/symbols?*', route => route.fulfill({
+    json: { code: 0, data: [{ ...stock, id: 41, type: 'stock' }] },
+  }))
+  await page.route('**/api/v1/kline?*', route => route.fulfill({ json: {
+    code: 0,
+    data: submissions ? [{ ts: '2026-01-05T00:00:00Z', open: 1490, high: 1510, low: 1480, close: 1500, volume: 100, amount: 150000 }] : [],
+  } }))
+  await page.route('**/api/v1/kline/quality?*', route => route.fulfill({
+    json: { code: 0, data: { status: submissions ? 'complete' : 'unknown', can_supplement: true } },
+  }))
+  await page.route('**/api/v1/kline/backfill', route => {
+    submissions++
+    return route.fulfill({ json: { code: 0, data: { task_id: 'supplement' } } })
+  })
+  await page.route('**/api/v1/kline/backfill/supplement', route => route.fulfill({
+    json: { code: 0, data: { status: 'done', fetched: 1 } },
+  }))
+  await page.goto('/market/detail?symbol=600519&asset_type=stock')
+  const supplement = page.getByRole('button', { name: '使用 AkShare 补充历史行情' })
+  await expect(supplement).toBeVisible()
+  expect(submissions).toBe(0)
+  await supplement.tap()
+  await expect(supplement).toHaveCount(0)
+  await expect(page.getByText('本地数据源暂无历史行情')).toHaveCount(0)
+  expect(submissions).toBe(1)
   await expectNoPageOverflow(page)
 })
 

@@ -10,7 +10,7 @@ from urllib.request import urlopen
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'stock_backend'))
 from app.repositories import kline_repo
-from app.services import market_service, indicator_policy, market_policy
+from app.services import market_service, market_policy
 from app.services.indicator_registry import MAX_HISTORY_ROWS
 from app.utils.db import get_session
 from app.utils.market_cache import as_utc, kline_bar_to_dict
@@ -78,7 +78,7 @@ def main():
                 cases.append(dict(period=period,phase=phase,params=params,rows=rows))
                 print(period,phase,f'{len(definitions)} entries, {args.bars} bars, paging and repeat OK',flush=True)
     output=dict(symbol=args.symbol,definitions=definitions,datasets=datasets,cases=cases,
-                policy=dict(indicators=indicator_policy.read(),market=market_policy.read()),timings=timings)
+                policy=market_policy.read(),timings=timings)
     (args.out/'api-matrix.json').write_text(json.dumps(output,ensure_ascii=False,allow_nan=False),encoding='utf-8')
     print(f'API matrix written; {len(cases)} cases × {len(definitions)} entries × {args.bars} bars')
 

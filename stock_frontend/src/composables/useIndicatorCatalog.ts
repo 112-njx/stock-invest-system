@@ -4,7 +4,7 @@ export interface IndicatorParameter { key: string; label: string; type: 'integer
 export interface IndicatorSeries { field: string; label: string; color: string; kind: 'line' | 'histogram'; direction: 'sign' | 'candle' }
 export interface IndexMember { code: string; weight: number }
 export type IndicatorValues = Record<string, number | number[] | string | boolean | IndexMember[]>
-export interface IndicatorDefinition { key: string; label: string; placement: 'main' | 'panel'; parameters: IndicatorParameter[]; series: IndicatorSeries[]; reference_lines: number[]; format?: 'volume'; precision?: number; engines: string[]; input_fields?: string[]; cross?: boolean; constraints?: {left:string;op:'le';right:string}[] }
+export interface IndicatorDefinition { key: string; label: string; placement: 'main' | 'panel'; parameters: IndicatorParameter[]; series: IndicatorSeries[]; reference_lines: number[]; format?: 'volume'; precision?: number; input_fields?: string[]; cross?: boolean; constraints?: {left:string;op:'le';right:string}[] }
 export function useIndicatorCatalog(enabled: () => boolean) {
   const definitions = ref<IndicatorDefinition[]>([])
   const error = ref('')

@@ -2,53 +2,18 @@
 
 ---
 
-## 1. 多队列多实例
+## 1. Worker 部署
 
-### 1.1 为什么按队列拆分 worker
+开发和生产 Compose 使用两组消费者。
 
-拆之前是**一个** worker 消费全部 4 个队列且 `--pool=solo --concurrency=1`：
-任何长任务（回测最长 45s、导出打包、备份）都会把 15s 的 `realtime_poll` **堵在队列里**，
-实时行情延迟直接变成分钟级。
-
-现在（`deploy/docker-compose.yml`）：
-
-| 服务 | 队列 | 说明 |
+| 服务 | 队列 | 职责 |
 |---|---|---|
-| `worker-sync` | `sync,backup` | 日常行情及备份任务 |
-| `worker-watchlist` | `watchlist` | 重点关注股票日 K，独立消费 |
-| `worker-control` | `control` | 关注股持久投递协调器，避免被 K 线下载堵住 |
-| `worker-fixed` | `fixed_indices` | 固定指数同步，仅重试质量未完成标的 |
-| `worker-backfill` | `backfill` | 用户历史窗口补拉 |
-| `worker-backtest` | `backtest` | 回测（长任务，子进程隔离） |
-| `worker-ai` | `ai` | AI 对话/记忆/导出（长任务 + 外部 LLM 依赖） |
+| `worker-control` | `control` | 提交 StockDB 原始数据更新和推进预测跟踪 |
+| `worker` | `backtest,sync,ai,backup,forecast_replay,fixed_indices,backfill` | 执行回测、目录刷新、AI 与导出、备份、预测回放、固定指数和历史补拉 |
 
-### 1.2 扩容
+两个 worker 均使用 prefork。业务默认两个并发槽位，可用 `BUSINESS_WORKER_CONCURRENCY` 调整。控制 worker 独占一个槽位，业务任务占满并发时仍能接收更新指令。Beat 独立运行，只投递 16:30 StockDB 更新任务。
 
-```bash
-docker compose --env-file .env.docker -f deploy/docker-compose.yml up -d \
-  --scale worker-sync=2 --scale worker-backtest=2 --scale worker-ai=2
-```
-
-三个服务都不映射宿主端口、无 `container_name`，可安全多实例。任务分发靠 Celery 从 Redis
-队列竞争消费，**无需额外配置**（不是轮询指派，是抢占式，天然均衡）。
-
-开发栈也启用上述四个独立 worker；原 `worker` 仍负责其余队列。
-
-### 1.3 消费恢复与 Broker 边界
-
-关注股、固定指数、历史补拉任务启用完成后 ACK 和 worker 子进程丢失重投；三个 worker
-使用 prefork，任务软/硬时限分别为 60/65、100/105、15/20 分钟。Redis 可见性超时为
-120 分钟，大于最长任务时限。强杀整个 worker 容器后，未确认消息可能等到可见性超时
-才重新投递；关注股数据库协调器在 worker 恢复且确认任务已不在执行列表约 2 分钟后
-重新投递，固定指数和历史补拉仍依赖 Broker 重投。
-K 线写入使用 upsert；关注股通过任务 ID 和 PostgreSQL 标的锁避免并发重复执行，固定
-指数逐标的质量检查，补拉复用区间去重键。
-
-当前 Redis 是单实例，AOF/RDB 不能消除主机或磁盘故障造成的 Broker 单点风险。本次不
-迁移 Broker 数据。切换到高可用 Redis 或其他 Broker 时，应先部署新 Broker 和监控，
-暂停 Beat 与 API 新投递，等待旧队列及 unacked 消息清空，核对数据库待投递记录，
-再切换所有 API/worker/Beat 连接并恢复投递；历史补拉等没有数据库投递记录的任务需
-单独核对或重新提交。完成切换和故障演练后才能宣称 Broker 单点已消除。
+发布拓扑变更时，先停止旧消费者的任务投递并等待正在执行的任务结束，再停止旧容器并启动新消费者。队列继续使用同一 Redis Broker，待执行消息由新的业务 worker 接手。Redis 可见性超时为 120 分钟，故障重投时间取决于任务 ACK 配置和 Broker 状态。
 
 ---
 

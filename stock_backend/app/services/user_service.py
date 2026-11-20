@@ -11,7 +11,7 @@ from app.models.symbol import Symbol
 from app.models.user import User, UserWatchlist
 from app.repositories import symbol_repo, user_repo
 from app.schemas.user import WatchlistOut
-from app.services import kline_quality_service, market_service
+from app.services import market_service
 from app.utils import market_cache
 
 logger = logging.getLogger(__name__)
@@ -252,8 +252,8 @@ def _watchlist_rows(db: Session, entries: list[UserWatchlist]) -> list[dict]:
                 change=snap.get("change"),
                 change_pct=snap.get("change_pct"),
                 updated_at=snap.get("updated_at"),
-                sync_status=e.sync_status,
-                last_synced_at=e.last_synced_at,
+                sync_status=e.sync_status if snap.get("type") not in {"stock", "etf"} else None,
+                last_synced_at=e.last_synced_at if snap.get("type") not in {"stock", "etf"} else None,
                 created_at=e.created_at,
             ).model_dump(mode="json")
         )
@@ -261,24 +261,14 @@ def _watchlist_rows(db: Session, entries: list[UserWatchlist]) -> list[dict]:
 
 
 def add_watchlist(db: Session, user_id: int, symbol: str) -> dict:
-    """添加关注：沪深北 A 股按需安排日 K 检查；其他标的沿用首次初始化。"""
+    """Persist a watchlist entry independently of market history."""
     symbol_id = _resolve_symbol_id(db, symbol)
     existing = user_repo.get_watchlist_entry(db, user_id, symbol_id)
     entry = user_repo.add_watchlist(db, user_id, symbol_id)
     sym = db.get(Symbol, symbol_id)
-    if sym and kline_quality_service.is_a_share_stock(sym):
+    if sym is not None and sym.type in {"stock", "etf"}:
         db.commit()
-        try:
-            _queue_watchlist_stock(db, entry, sym, requested=True,
-                                   force=existing is not None and existing.sync_status == "failed")
-        except Exception:
-            db.rollback()
-            entry.sync_status = "failed"
-            db.commit()
-            logger.warning("watchlist K-line enqueue failed: symbol_id=%s", sym.id, exc_info=True)
-        db.refresh(entry)
         result = _watchlist_rows(db, [entry])[0]
-        market_cache.invalidate_watchlist_cache(user_id)
         return result
     if existing is None:  # 新增记录才触发/标记同步
         if market_service.has_kline(db, symbol_id):
@@ -301,75 +291,17 @@ def add_watchlist(db: Session, user_id: int, symbol: str) -> dict:
     db.commit()
     db.refresh(entry)
     result = _watchlist_rows(db, [entry])[0]
-    market_cache.invalidate_watchlist_cache(user_id)
     return result
 
 
 def list_watchlist(db: Session, user_id: int) -> list[dict]:
-    """读取关注列表，并按需为沪深 A 股安排日 K 检查。"""
-    entries = user_repo.list_watchlist(db, user_id)
-    has_a_share = False
-    for entry in entries:
-        sym = db.get(Symbol, entry.symbol_id)
-        if sym and kline_quality_service.is_a_share_stock(sym):
-            has_a_share = True
-            try:
-                _queue_watchlist_stock(db, entry, sym)
-            except Exception:
-                logger.warning("watchlist K-line check enqueue failed: symbol_id=%s", sym.id, exc_info=True)
-    if not has_a_share:
-        cached = market_cache.get_watchlist_cache(user_id)
-        if cached is not None:
-            return cached
-    rows = _watchlist_rows(db, entries)
-    if not has_a_share:
-        market_cache.set_watchlist_cache(user_id, rows)
-    return rows
-
-
-def _queue_watchlist_stock(db: Session, entry: UserWatchlist, sym: Symbol, *, force: bool = False,
-                          requested: bool = False) -> None:
-    """按数据质量建立持久待发布任务；调度器负责实际投递。"""
-    from app.services.watchlist_delivery import queue_watchlist_sync
-    from app.models.ops import SyncTask
-    from app.repositories import kline_repo
-    now = datetime.now(UTC)
-    quality = kline_quality_service.get_quality(db, sym.id, '1d')
-    latest = quality.checked_to if quality else None
-    tasks = list(db.scalars(select(SyncTask).where(
-        SyncTask.symbol_id == sym.id,
-        SyncTask.task_type.in_(('kline_init', 'kline_incremental')))))
-    if any(task.status in {'queued', 'running'} for task in tasks):
-        entry.sync_status = 'pending'
-        db.commit()
-        return
-    terminal = max(tasks, key=lambda task: market_cache.as_utc(task.last_run_at) or datetime.min.replace(tzinfo=UTC), default=None)
-    failed = terminal is not None and terminal.status == 'failed'
-    if failed and not (requested or force):
-        entry.sync_status = 'failed'
-        db.commit()
-        return
-    ready = quality is not None and quality.status == 'complete' and all(
-        kline_repo.latest_ts(db, period, sym.id) is not None for period in ('1d', '1w', '1mon'))
-    if ready and not (force or failed):
-        entry.sync_status = 'done'
-        entry.last_synced_at = quality.checked_at
-        db.commit()
-        return
-    # Reading a list never restarts completed work because a cache expired.
-    # An explicit add/re-add can retry a failed or no-longer-available history.
-    if terminal is not None and not (requested or force):
-        return
-    queue_watchlist_sync(db, sym.id, initialize=latest is None,
-                         force=force or terminal is not None, now=now)
-    db.refresh(entry)
+    return _watchlist_rows(db, user_repo.list_watchlist(db, user_id))
 
 
 def delete_watchlist(db: Session, user_id: int, watchlist_id: int) -> None:
     if not user_repo.delete_watchlist(db, user_id, watchlist_id):
         raise ApiError(status_code=404, code=40401, msg="关注记录不存在")
     db.commit()
-    market_cache.invalidate_watchlist_cache(user_id)
 
 
 # ---- 支撑/压力位 ----

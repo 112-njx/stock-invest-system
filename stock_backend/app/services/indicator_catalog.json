@@ -24,10 +24,7 @@
       }
     ],
     "series": [],
-    "reference_lines": [],
-    "engines": [
-      "sdk"
-    ]
+    "reference_lines": []
   },
   {
     "key": "volume",
@@ -62,11 +59,7 @@
       }
     ],
     "reference_lines": [],
-    "format": "volume",
-    "engines": [
-      "sdk",
-      "pandas"
-    ]
+    "format": "volume"
   },
   {
     "key": "amount",
@@ -87,11 +80,7 @@
       }
     ],
     "reference_lines": [],
-    "format": "volume",
-    "engines": [
-      "sdk",
-      "pandas"
-    ]
+    "format": "volume"
   },
   {
     "key": "macd",
@@ -156,10 +145,6 @@
       "macd_hist"
     ],
     "reference_lines": [],
-    "engines": [
-      "sdk",
-      "pandas"
-    ],
     "precision": 3,
     "cross": true
   },
@@ -231,10 +216,6 @@
       20,
       80
     ],
-    "engines": [
-      "sdk",
-      "pandas"
-    ],
     "cross": true
   },
   {
@@ -270,9 +251,6 @@
     "reference_lines": [
       30,
       70
-    ],
-    "engines": [
-      "sdk"
     ],
     "precision": 3
   },
@@ -328,9 +306,6 @@
       20,
       80
     ],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3
   },
   {
@@ -370,9 +345,6 @@
       0,
       100
     ],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3
   },
   {
@@ -408,9 +380,6 @@
       "atr"
     ],
     "reference_lines": [],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3
   },
   {
@@ -469,9 +438,6 @@
       "boll_lower"
     ],
     "reference_lines": [],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3
   },
   {
@@ -505,9 +471,6 @@
       "ema"
     ],
     "reference_lines": [],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3,
     "input_fields": [
       "close",
@@ -563,9 +526,6 @@
       "expma2"
     ],
     "reference_lines": [],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3
   },
   {
@@ -623,9 +583,6 @@
       "bbi"
     ],
     "reference_lines": [],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3
   },
   {
@@ -659,9 +616,6 @@
       "wma"
     ],
     "reference_lines": [],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3,
     "input_fields": [
       "close",
@@ -709,9 +663,6 @@
       "sma"
     ],
     "reference_lines": [],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3,
     "constraints": [
       {
@@ -759,9 +710,6 @@
       "dma"
     ],
     "reference_lines": [],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3,
     "input_fields": [
       "close",
@@ -835,9 +783,6 @@
     "reference_lines": [
       0
     ],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3
   },
   {
@@ -889,9 +834,6 @@
     "reference_lines": [
       25,
       75
-    ],
-    "engines": [
-      "sdk"
     ],
     "precision": 3
   },
@@ -952,9 +894,6 @@
     "reference_lines": [
       0
     ],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3,
     "cross": true
   },
@@ -1007,9 +946,6 @@
     "reference_lines": [
       0
     ],
-    "engines": [
-      "sdk"
-    ],
     "precision": 3,
     "cross": true
   },
@@ -1061,9 +997,6 @@
     ],
     "reference_lines": [
       0
-    ],
-    "engines": [
-      "sdk"
     ],
     "precision": 3,
     "cross": true
@@ -1137,9 +1070,6 @@
       40
     ],
     "precision": 3,
-    "engines": [
-      "sdk"
-    ],
     "cross": true
   },
   {
@@ -1192,9 +1122,6 @@
       0
     ],
     "precision": 3,
-    "engines": [
-      "sdk"
-    ],
     "cross": true
   },
   {
@@ -1255,9 +1182,6 @@
       0
     ],
     "precision": 3,
-    "engines": [
-      "sdk"
-    ],
     "cross": true
   },
   {
@@ -1320,9 +1244,6 @@
       27
     ],
     "precision": 3,
-    "engines": [
-      "sdk"
-    ],
     "cross": true
   },
   {
@@ -1360,10 +1281,7 @@
       70,
       150
     ],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "cr",
@@ -1400,10 +1318,7 @@
     "reference_lines": [
       100
     ],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "emv",
@@ -1457,9 +1372,6 @@
       0
     ],
     "precision": 3,
-    "engines": [
-      "sdk"
-    ],
     "cross": true
   },
   {
@@ -1506,10 +1418,7 @@
     "reference_lines": [
       100
     ],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "obv",
@@ -1534,10 +1443,7 @@
       }
     ],
     "reference_lines": [],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "mfi",
@@ -1576,10 +1482,7 @@
       20,
       80
     ],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "asi",
@@ -1632,9 +1535,6 @@
     ],
     "reference_lines": [],
     "precision": 3,
-    "engines": [
-      "sdk"
-    ],
     "cross": true
   },
   {
@@ -1685,10 +1585,7 @@
       }
     ],
     "reference_lines": [],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "ktn",
@@ -1747,10 +1644,7 @@
       }
     ],
     "reference_lines": [],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "xsii",
@@ -1817,10 +1711,7 @@
       }
     ],
     "reference_lines": [],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "std",
@@ -1861,10 +1752,7 @@
       }
     ],
     "reference_lines": [],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "sum",
@@ -1905,10 +1793,7 @@
       }
     ],
     "reference_lines": [],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "hhv",
@@ -1949,10 +1834,7 @@
       }
     ],
     "reference_lines": [],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "llv",
@@ -1993,10 +1875,7 @@
       }
     ],
     "reference_lines": [],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "ref",
@@ -2037,10 +1916,7 @@
       }
     ],
     "reference_lines": [],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   },
   {
     "key": "zhishu",
@@ -2062,9 +1938,6 @@
       }
     ],
     "reference_lines": [],
-    "precision": 3,
-    "engines": [
-      "sdk"
-    ]
+    "precision": 3
   }
 ]

@@ -62,12 +62,14 @@ def quotes(db, symbols):
                                                             'total_mv','float_mv','pe_ttm','pb')}
                     item['extra'].update(market_cap=row.get('total_mv'), pe=row.get('pe_ttm'))
             else:
-                item.update(stored_quote(db, sym))
+                from app.services.source_history import cached
+                item.update(stored_quote(db, sym, (cached(sym.id, '1d') or [])[-2:]))
         except Exception as exc:
             logger.warning('local daily quote unavailable code=%s: %s', sym.code, exc)
             item['extra']['data_status'] = 'local_unavailable'
         if item.get('price') is None and sym.type in {'stock', 'etf'}:
             if akshare_enabled():
-                item.update(stored_quote(db, sym))
+                from app.services.source_history import cached
+                item.update(stored_quote(db, sym, (cached(sym.id, '1d') or [])[-2:]))
         result.append(item)
     return result

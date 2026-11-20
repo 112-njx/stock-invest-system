@@ -45,7 +45,6 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
     KLINE_CACHE_TTL: int = 300  # K线缓存秒数
     SEARCH_CACHE_TTL: int = 3600  # 搜索联想缓存秒数（catalog_sync 完成后批量删除）
-    WATCHLIST_CACHE_TTL: int = 300  # 关注列表缓存秒数
 
     CELERY_BROKER_URL: str = "redis://127.0.0.1:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://127.0.0.1:6379/2"
@@ -56,7 +55,6 @@ class Settings(BaseSettings):
     DATA_PROVIDER_PRIORITY: str = "stockdb,eastmoney,sina,ths"  # Provider 优先级链（逗号分隔，可调整顺序/禁用）
     PROVIDER_CIRCUIT_FAILURE_THRESHOLD: int = 3  # Provider 连续失败 N 次熔断
     PROVIDER_CIRCUIT_COOLDOWN: int = 600  # Provider 熔断冷却（秒），冷却后半开探测
-    PROVIDER_PROBE_INTERVAL: int = 600  # 熔断中 Provider 后台探测间隔（秒）
     KLINE_INIT_DAYS: int = 730  # 首次全量拉取天数（约2年）
     PROVIDER_MIN_INTERVAL_SECONDS: int = 2  # 单数据源跨进程请求间隔
     PROVIDER_DAILY_BUDGET: int = 2000  # 单数据源每日请求预算

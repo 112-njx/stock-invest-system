@@ -200,7 +200,7 @@ class Controller:
             self.start()
             self.probe()
             (self.root/'maintenance.json').unlink(missing_ok=True)
-            self.report('done', 100, '原始数据更新及服务验证完成；请单独同步本地行情', 'success')
+            self.report('done', 100, '原始数据更新及服务验证完成', 'success')
         except Exception as exc:
             self.details['failed_phase'] = read_json(self.root/'status.json', {}).get('phase', 'unknown')
             self.stop()

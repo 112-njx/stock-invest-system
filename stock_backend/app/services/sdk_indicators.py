@@ -30,4 +30,4 @@ def calculate(rows, names, params, *, period=None, return_checkpoint=False, chec
     except Exception as exc:
         if FORECAST_FEATURES in names:
             raise ApiError(status_code=503, code=50331, msg='走势特征计算暂不可用，请稍后重试') from exc
-        raise ApiError(status_code=503, code=50331, msg='SDK 指标计算失败，请检查本地 7900 服务或在后台切换 pandas') from exc
+        raise ApiError(status_code=503, code=50331, msg='SDK 指标计算失败，请检查本地 7900 服务') from exc

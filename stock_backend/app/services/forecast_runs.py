@@ -33,6 +33,9 @@ def _lock_user(db, user_id):
 
 
 def as_response(run):
+    horizon = run.models.get("regime_horizon")
+    if horizon is None and run.models.get("playbook_version") in (4, 5):
+        horizon = 5
     return {
         "id": run.id,
         "symbol": run.symbol,
@@ -43,6 +46,7 @@ def as_response(run):
         "snapshot": {key: value for key, value in run.snapshot.items() if key != "rows"},
         "diagnosis": run.diagnosis,
         "prediction": run.prediction,
+        "regime_horizon": horizon,
         "models": run.models,
         "error": run.error,
     }
@@ -61,6 +65,16 @@ def history(db, user_id, symbol):
         "runs": [as_response(run) for run in runs],
         "tracking": db.get(ForecastTracking, (user_id, symbol)) is not None,
     }
+
+
+def archived_snapshot(db, user_id, run_id):
+    snapshot = db.scalar(select(ForecastRun.snapshot).where(
+        ForecastRun.id == run_id, ForecastRun.user_id == user_id,
+    ))
+    if snapshot is None:
+        raise ApiError(status_code=404, msg="预测记录不存在")
+    fields = ("ts", "open", "high", "low", "close", "volume", "amount")
+    return {"rows": [{field: row[field] for field in fields} for row in snapshot["rows"]]}
 
 
 def set_tracking(db, user_id, symbol, enabled):
@@ -222,9 +236,8 @@ def _track_one(user_id, symbol, previous, lease, now, snapshots):
             _publish(run.id)
 
 
-def sweep():
+def recover_deliveries():
     now = datetime.now(UTC)
-    deadline = monotonic() + TRACK_START_BUDGET
     with get_session() as db:
         db.execute(update(ForecastRun).where(
             ForecastRun.status.in_(("diagnosing", "predicting")), ForecastRun.updated_at < now - timedelta(minutes=10),
@@ -234,18 +247,26 @@ def sweep():
         db.commit()
     for run_id in ids:
         _publish(run_id)
+    return len(ids) == SWEEP_LIMIT
+
+
+def sweep():
+    now = datetime.now(UTC)
+    deadline = monotonic() + TRACK_START_BUDGET
+    more_deliveries = recover_deliveries()
     snapshots = {}
     for _ in range(SWEEP_LIMIT):
         if monotonic() >= deadline:
-            break
+            return True
         claim = _claim_due_tracking()
         if claim is None:
-            break
+            return more_deliveries
         user_id, symbol, previous, lease = claim
         try:
             _track_one(user_id, symbol, previous, lease, now, snapshots)
         except Exception:
             logger.warning("Forecast tracking check failed for %s", symbol, exc_info=True)
+    return True
 
 
 def _advance(run_id, lease, **fields):
@@ -283,7 +304,10 @@ def execute(run_id):
             _advance(run_id, lease, status="failed", error="AI 服务尚未配置，请在账号设置填写模型 API Key。")
             return
         diagnosis, model = await forecast_analysis.diagnose(llm, run.snapshot)
-        models = {"diagnosis": model, "playbook_version": forecast_analysis.PLAYBOOK_VERSION}
+        models = {
+            "diagnosis": model, "playbook_version": forecast_analysis.PLAYBOOK_VERSION,
+            "regime_horizon": forecast_analysis.REGIME_HORIZON,
+        }
         next_lease = _advance(run_id, lease, status="predicting", diagnosis=diagnosis, models=models)
         if next_lease is None:
             return

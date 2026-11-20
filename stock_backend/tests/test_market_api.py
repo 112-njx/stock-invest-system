@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 def _kline_test_data():
     """写入测试标的 + 日K，测后清理。"""
     db = get_session()
-    sym = Symbol(code="666666", name="测试行情标的", type="stock", market="SSE")
+    sym = Symbol(code="666666", name="测试行情标的", type="index", market="SSE")
     db.add(sym)
     db.commit()
     db.refresh(sym)

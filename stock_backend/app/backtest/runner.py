@@ -355,7 +355,14 @@ def run_isolated(
     失败语义：策略自身异常 → ``BacktestError``；超时/资源超限 → ``StrategyResourceError``。
     两者都不可重试。
     """
-    ctx = multiprocessing.get_context(start_method())
+    if multiprocessing.current_process().daemon:
+        # Celery's prefork pool uses billiard. Its process context supports
+        # starting an isolated strategy process from a pool child.
+        import billiard
+
+        ctx = billiard.get_context(start_method())
+    else:
+        ctx = multiprocessing.get_context(start_method())
     recv_conn, send_conn = ctx.Pipe(duplex=False)
     payload = {
         "code": code,

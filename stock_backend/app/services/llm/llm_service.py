@@ -173,12 +173,14 @@ class LLMService:
         self.usage_sink = usage_sink
 
     def with_api_key(
-        self, api_key: str | None, usage_sink: Callable[[int, int, bool], None] | None = None
+        self, api_key: str | None, usage_sink: Callable[[int, int, bool], None] | None = None,
+        *, share_breaker: bool = True,
     ) -> LLMService:
-        """派生一个绑定用户 key 的实例，**共享**熔断器与限流桶（保护仍是进程级）。"""
+        """派生绑定用户 key 的实例，共享限流桶，默认共享熔断器。"""
         if not api_key:
             return self
-        return LLMService(api_key=api_key, breaker=self.breaker, bucket=self.bucket, usage_sink=usage_sink)
+        return LLMService(api_key=api_key, breaker=self.breaker if share_breaker else None,
+                          bucket=self.bucket, usage_sink=usage_sink)
 
     @property
     def available(self) -> bool:

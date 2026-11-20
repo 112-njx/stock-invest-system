@@ -2,6 +2,7 @@
 import type { ForecastEvidence } from '@/api/forecast'
 
 defineProps<{ items: ForecastEvidence[] }>()
+defineEmits<{ locate: [session: string] }>()
 
 const labels: Record<string, string> = {
   open: '开盘价', high: '最高价', low: '最低价', close: '收盘价', volume: '成交量', amount: '成交额',
@@ -35,12 +36,14 @@ function format(item: ForecastEvidence): string {
 <template>
   <ul v-if="items.length" class="forecast-evidence">
     <li v-for="item in items" :key="`${item.session}:${item.feature}`">
-      <strong>{{ item.session }} · {{ labels[item.feature] ?? item.feature }} {{ format(item) }}</strong>
+      <button type="button" @click="$emit('locate', item.session)">
+        {{ item.session }} · {{ labels[item.feature] ?? item.feature }} {{ format(item) }}
+      </button>
     </li>
   </ul>
 </template>
 
 <style scoped>
-.forecast-evidence { padding-inline-start: 18px; overflow-wrap: anywhere; }
-.forecast-evidence li + li { margin-block-start: 8px; }
+.forecast-evidence { padding: 0; list-style: none; overflow-wrap: anywhere; }
+.forecast-evidence button { min-height: var(--touch-target); color: var(--accent); text-align: start; }
 </style>

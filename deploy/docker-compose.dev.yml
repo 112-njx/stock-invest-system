@@ -85,19 +85,17 @@ services:
     restart: unless-stopped
     networks: [backend]
 
-  wal-init:
-    # G05：WAL 归档卷由 Docker 以 root 创建，postgres(uid 999) 写不进去 → archive_command 会持续失败。
-    # 用一次性 sidecar 先把目录属主改成 postgres，db 再启动。
-    image: busybox:1.36
-    command: ["sh", "-c", "mkdir -p /wal-archive && chown -R 999:999 /wal-archive"]
-    volumes:
-      - pgwal:/wal-archive
-    restart: "no"
-    networks: [backend]
-
   db:
     # G04（P1-12a）：使用内置 pgvector 扩展的镜像（替代 postgres:16-alpine）
     image: pgvector/pgvector:pg16
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        chown postgres:postgres /wal-archive
+        chmod u+rwx /wal-archive
+        exec /usr/local/bin/docker-entrypoint.sh "$$@"
+      - postgres-entrypoint
     # G05（P1-1）：开启 WAL 归档以支持 PITR。archive_timeout=300 保证低写入库也有稳定的
     # 恢复点粒度（否则要等 WAL 段写满 16MB 才切换，PITR 可回溯窗口可能长达数小时）。
     command:
@@ -122,9 +120,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    depends_on:
-      wal-init:
-        condition: service_completed_successfully
     # G04：默认映射到宿主 5433，供本地 pytest / DBeaver 直连（本机原生 5432 无 pgvector 扩展）。
     # 若本机 5433 被占用，用 DEV_DB_PORT 覆盖，如 DEV_DB_PORT=127.0.0.1:5434。
     ports:
@@ -187,8 +182,7 @@ services:
     build:
       context: ..
       dockerfile: stock_backend/Dockerfile
-    # G05：新增 backup 队列（备份任务独立队列；--pool=solo 下仍串行，扩实例时可按队列隔离）
-    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest,sync,ai,backup", "--pool=solo", "--concurrency=1", "-n", "worker@%h"]
+    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backtest,sync,ai,backup,forecast_replay,fixed_indices,backfill", "--pool=prefork", "--concurrency=${BUSINESS_WORKER_CONCURRENCY:-2}", "-n", "business@%h"]
     environment: *backend_env
     volumes:
       - ../stock_backend/data/stockdb-control:/stockdb-control
@@ -198,37 +192,12 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       stockdb-local: { condition: service_healthy }
-    healthcheck: { disable: true }
-    restart: unless-stopped
-    networks: [backend]
-
-  worker-watchlist:
-    build: { context: .., dockerfile: stock_backend/Dockerfile }
-    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "watchlist", "--pool=prefork", "--concurrency=1", "-n", "watchlist@%h"]
-    environment: *backend_env
-    volumes: ["../stock_backend:/app", "../stock_backend/data/stockdb-control:/stockdb-control"]
-    depends_on:
-      db: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      stockdb-local: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d watchlist@$$HOSTNAME | grep -q pong"]
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d business@$$HOSTNAME | grep -q pong"]
       interval: 30s
       timeout: 8s
       start_period: 45s
       retries: 3
-    restart: unless-stopped
-    networks: [backend]
-
-  worker-forecast-replay:
-    build: { context: .., dockerfile: stock_backend/Dockerfile }
-    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "forecast_replay", "--pool=prefork", "--concurrency=1", "-n", "forecast-replay@%h"]
-    environment: *backend_env
-    volumes: ["../stock_backend:/app", "../stock_backend/data/stockdb-control:/stockdb-control"]
-    depends_on:
-      api: { condition: service_healthy }
-      redis: { condition: service_healthy }
-    healthcheck: { disable: true }
     restart: unless-stopped
     networks: [backend]
 
@@ -243,42 +212,6 @@ services:
       stockdb-local: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d control@$$HOSTNAME | grep -q pong"]
-      interval: 30s
-      timeout: 8s
-      start_period: 45s
-      retries: 3
-    restart: unless-stopped
-    networks: [backend]
-
-  worker-fixed:
-    build: { context: .., dockerfile: stock_backend/Dockerfile }
-    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "fixed_indices", "--pool=prefork", "--concurrency=1", "-n", "fixed@%h"]
-    environment: *backend_env
-    volumes: ["../stock_backend:/app", "../stock_backend/data/stockdb-control:/stockdb-control"]
-    depends_on:
-      db: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      stockdb-local: { condition: service_healthy }
-    healthcheck:
-      test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d fixed@$$HOSTNAME | grep -q pong"]
-      interval: 30s
-      timeout: 8s
-      start_period: 45s
-      retries: 3
-    restart: unless-stopped
-    networks: [backend]
-
-  worker-backfill:
-    build: { context: .., dockerfile: stock_backend/Dockerfile }
-    command: ["celery", "-A", "app.worker.celery_app:celery_app", "worker", "-Q", "backfill", "--pool=prefork", "--concurrency=1", "-n", "backfill@%h"]
-    environment: *backend_env
-    volumes: ["../stock_backend:/app", "../stock_backend/data/stockdb-control:/stockdb-control"]
-    depends_on:
-      db: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      stockdb-local: { condition: service_healthy }
-    healthcheck:
-      test: ["CMD-SHELL", "celery -A app.worker.celery_app:celery_app inspect ping --timeout=3 -d backfill@$$HOSTNAME | grep -q pong"]
       interval: 30s
       timeout: 8s
       start_period: 45s

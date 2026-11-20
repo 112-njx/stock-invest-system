@@ -288,6 +288,9 @@ user_memory/
 memory_files/
 *.memory.json
 
+# WorkBuddy 本地项目数据（含项目记忆/截图，不提交）
+.workbuddy/
+
 # 回测结果缓存
 backtest_cache/
 *.backtest.pkl

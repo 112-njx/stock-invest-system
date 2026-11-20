@@ -19,8 +19,6 @@ logger = logging.getLogger(__name__)
 
 class StockDBProvider(BaseDataProvider):
     name = "stockdb"
-    probe_symbol = "600519"
-    probe_asset_type = "stock"
 
     def query(self, command: str, table: str, **params):
         self._check_maintenance()
@@ -94,7 +92,8 @@ class StockDBProvider(BaseDataProvider):
         cursor = start
         while cursor <= end:
             last = min(cursor + timedelta(days=365), end)
-            yield from self.query("vals", "日k", k1=f"key:{symbol}", k2=f"fwd:{cursor:%Y%m%d},{last:%Y%m%d}")
+            rows = self.query("vals", "日k", k1=f"key:{symbol}", k2=f"fwd:{cursor:%Y%m%d},{last:%Y%m%d}")
+            yield from sorted(rows, key=lambda row: row["date"])
             cursor = last + timedelta(days=1)
 
     def refresh_sdk(self):
@@ -121,7 +120,7 @@ class StockDBProvider(BaseDataProvider):
         output = []
         cursor = first_day
         while cursor <= last_day:
-            last = min(cursor + timedelta(days=365), last_day)
+            last = last_day if period == "1d" else min(cursor + timedelta(days=365), last_day)
             first_key, last_key = cursor.strftime("%Y%m%d"), last.strftime("%Y%m%d")
             table = "日k" if period == "1d" else "分钟k"
             if period == "15m":

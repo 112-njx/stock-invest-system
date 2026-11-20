@@ -136,6 +136,27 @@ async def test_llm_service_circuit_opens_after_consecutive_failures(monkeypatch)
         await svc.ainvoke([{"role": "user", "content": "hi"}])  # 熔断快速失败
 
 
+async def test_replay_personal_key_failure_does_not_open_shared_circuit(monkeypatch):
+    _fast_retry(monkeypatch)
+    base = LLMService(FakeProvider())
+    monkeypatch.setattr("app.services.llm.user_key.get_user_api_key", lambda *_: "personal-key")
+    from app.services.llm.user_key import build_llm_service_for_user
+
+    personal = build_llm_service_for_user(None, 1, base, isolate_user_breaker=True)
+
+    class InvalidKey(FakeProvider):
+        async def ainvoke(self, *_args, **_kwargs):
+            raise LLMAuthError("invalid key")
+
+    personal.provider = InvalidKey()
+    for _ in range(personal.breaker.failure_threshold):
+        with pytest.raises(LLMAuthError):
+            await personal.ainvoke([])
+    assert personal.breaker.state == BreakerState.OPEN
+    assert personal.bucket is base.bucket
+    assert (await base.ainvoke([])).model == "fake"
+
+
 async def test_llm_service_rate_limit_blocks():
     svc = LLMService(FakeProvider())
     svc.bucket = TokenBucket(rate_per_minute=1)

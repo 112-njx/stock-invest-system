@@ -4,6 +4,7 @@ import { isAxiosError } from 'axios'
 import { getForecastReplay, startForecastReplay, type ForecastReplay, type ReplayOptions } from '@/api/forecast'
 
 const props = defineProps<{ symbol: string }>()
+defineEmits<{ locate: [session: string] }>()
 const mode = ref<ReplayOptions['mode']>('reconstructed')
 const end = ref('')
 const samples = ref(5)
@@ -12,7 +13,9 @@ const submitting = ref(false)
 const error = ref('')
 let timer: ReturnType<typeof setTimeout> | undefined
 let generation = 0
-const busy = computed(() => submitting.value || result.value?.status === 'queued' || result.value?.status === 'running')
+const active = computed(() => result.value?.status === 'queued' || result.value?.status === 'running')
+const busy = computed(() => submitting.value || active.value)
+type UncertainSubmission = { priorId: number | null; message: string; retryUntil: number }
 const names: Record<string, string> = {
   direction: 'AI · 下一根方向', last_candle: '方向基线 · 沿用上一根', always_up: '方向基线 · 一律预测涨',
   regime: 'AI · 走势类型', previous_regime: '走势基线 · 沿用前五根类型',
@@ -36,28 +39,32 @@ function label(value?: string | null) {
   return value ? labels[value] ?? '—' : '—'
 }
 
-function poll() {
+function poll(submission?: UncertainSubmission) {
   clearTimeout(timer)
-  timer = setTimeout(() => void refresh(), 5000)
+  timer = setTimeout(() => void refresh(submission), 5000)
 }
 
-async function refresh() {
+async function refresh(submission?: UncertainSubmission) {
   const request = generation
   try {
     const data = await getForecastReplay(props.symbol)
     if (request !== generation) return
     result.value = data
-    error.value = ''
+    error.value = submission && !active.value && (!data || data.id === submission.priorId) ? submission.message : ''
   } catch {
     if (request !== generation) return
-    error.value = '无法读取回放结果'
+    error.value = submission?.message || '无法读取回放结果'
+    poll(submission)
+    return
   }
-  if (busy.value || error.value) poll()
+  if (active.value) poll()
+  else if (submission && error.value && Date.now() < submission.retryUntil) poll(submission)
 }
 
 async function start() {
   if (busy.value) return
   const request = ++generation
+  const priorId = result.value?.id ?? null
   clearTimeout(timer)
   submitting.value = true
   error.value = ''
@@ -68,7 +75,10 @@ async function start() {
     poll()
   } catch (cause) {
     if (request !== generation) return
-    error.value = isAxiosError<{ msg?: string }>(cause) ? cause.response?.data?.msg || '提交回放失败' : '提交回放失败'
+    const response = isAxiosError<{ msg?: string }>(cause) ? cause.response : undefined
+    const message = response?.data?.msg || '提交回放失败'
+    const retryUntil = !response || response.status >= 500 ? Date.now() + 15000 : 0
+    await refresh({ priorId, message, retryUntil })
   } finally {
     if (request === generation) submitting.value = false
   }
@@ -87,7 +97,10 @@ onUnmounted(() => { generation++; clearTimeout(timer) })
 
 <template>
   <section class="forecast-replay" aria-labelledby="forecast-replay-title">
-    <h2 id="forecast-replay-title">历史回放</h2>
+    <header class="replay-head">
+      <h3 id="forecast-replay-title">历史回放</h3>
+      <span>{{ symbol }} · 日线</span>
+    </header>
     <form @submit.prevent="start">
       <label>数据口径
         <select v-model="mode">
@@ -110,7 +123,7 @@ onUnmounted(() => { generation++; clearTimeout(timer) })
     <p v-else>当日存档只取本账号在该日收盘后保存的快照。缺少存档的日期计入覆盖率分母。</p>
     <p v-if="error || result?.error" role="alert">{{ error || result?.error }}</p>
     <template v-if="result">
-      <p role="status">{{ statusText[result.status] }}
+      <p class="replay-status" role="status">{{ statusText[result.status] }}
         <template v-if="result.report"> · 已处理 {{ result.report.cases.length }}/{{ result.report.total }}</template>
       </p>
       <p>本报告使用{{ result.options.mode === 'archived' ? '当日存档' : '重建历史' }}，申请 {{ result.options.samples }} 个样本。</p>
@@ -127,6 +140,22 @@ onUnmounted(() => { generation++; clearTimeout(timer) })
             </tbody>
           </table>
         </div>
+        <template v-if="result.report.matched_scores">
+          <h3>同样本基线对照</h3>
+          <p>每行只比较 AI 和该基线都给出明确预测、且已有实际结果的样本。</p>
+          <div class="scroll-x" tabindex="0" aria-label="同样本基线对照">
+            <table>
+              <thead><tr><th>基线</th><th>共同样本</th><th>AI 命中率</th><th>基线命中率</th></tr></thead>
+              <tbody>
+                <tr v-for="(score, key) in result.report.matched_scores" :key="key">
+                  <th scope="row">{{ names[key] }}</th><td>{{ score.count }}</td>
+                  <td>{{ ratio(score.ai_hits, score.count) }}</td>
+                  <td>{{ ratio(score.baseline_hits, score.count) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
         <details>
           <summary>逐日结果</summary>
           <div class="scroll-x" tabindex="0" aria-label="逐日预测与实际结果">
@@ -134,7 +163,7 @@ onUnmounted(() => { generation++; clearTimeout(timer) })
               <thead><tr><th>行情截止</th><th>下一根预测 / 实际</th><th>走势预测 / 实际</th><th>走势观察截至</th><th>状态</th></tr></thead>
               <tbody>
                 <tr v-for="item in result.report.cases" :key="item.session">
-                  <th scope="row">{{ item.session }}</th>
+                  <th scope="row"><button type="button" class="replay-date" @click="$emit('locate', item.session)">{{ item.session }}</button></th>
                   <td>{{ label(item.direction) }} / {{ label(item.actual_direction) }}</td>
                   <td>{{ label(item.regime) }} / {{ label(item.actual_regime) }}</td>
                   <td>{{ item.regime_through || '—' }}</td><td>{{ caseStatuses[item.status] }}</td>
@@ -151,15 +180,27 @@ onUnmounted(() => { generation++; clearTimeout(timer) })
 </template>
 
 <style scoped>
-.forecast-replay { margin-block-end: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); }
-h2 { font-size: 16px; margin-block-end: 12px; }
-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
-label { display: grid; gap: 4px; min-width: 0; }
-input, select, button { min-height: var(--touch-target); max-width: 100%; border: 1px solid var(--border); border-radius: 4px; padding-inline: 8px; }
-button { background: var(--accent); color: white; }
+.forecast-replay { min-width: 0; padding: 10px; }
+.replay-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-block-end: 8px; }
+.replay-head h3 { font-size: 14px; }
+.replay-head span { color: var(--text-secondary); font-size: 12px; }
+h3:not(#forecast-replay-title) { font-size: 14px; margin-block-start: 12px; }
+form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 8px; border-radius: 4px; background: var(--bg-panel-2); }
+label { display: grid; gap: 4px; min-width: 0; max-width: 100%; color: var(--text-secondary); }
+input, select, button { min-height: var(--touch-target); min-width: 0; max-width: 100%; border: 1px solid var(--border); border-radius: 4px; padding-inline: 8px; }
+input, select { background: var(--bg-panel); color: var(--text); }
+button { background: var(--accent-soft); color: var(--accent); }
+.replay-date { border: 0; background: transparent; }
+button:not(:disabled):hover { filter: brightness(1.08); }
 button:disabled { opacity: .6; }
 p { margin-block: 8px; color: var(--text-secondary); }
-table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+.replay-status { margin-block-start: 12px; color: var(--accent); font-weight: 700; }
+table { width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums; }
 th, td { padding: 8px; text-align: start; border-bottom: 1px solid var(--border); }
+thead { color: var(--text-secondary); }
+tbody tr:hover { background: var(--bg-hover); }
 summary { cursor: pointer; min-height: var(--touch-target); padding-block: 12px; }
+@media (max-width: 480px) {
+  form { display: grid; grid-template-columns: minmax(0, 1fr); }
+}
 </style>

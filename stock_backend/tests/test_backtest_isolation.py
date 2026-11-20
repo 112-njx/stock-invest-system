@@ -213,7 +213,7 @@ def test_sandbox_normal_strategy_still_works():
 # --------------------------------------------------------------------------- #
 # 2. 子进程隔离与资源限制
 # --------------------------------------------------------------------------- #
-def test_run_isolated_returns_result_and_progress():
+def _assert_isolated_result_and_progress():
     """正常策略在子进程跑通，进度经管道回传，且回报运行信息。"""
     progress: list[int] = []
     out = run_isolated(
@@ -228,6 +228,25 @@ def test_run_isolated_returns_result_and_progress():
     assert meta["exitcode"] == 0
     assert meta["elapsed_s"] >= 0
     assert meta["limits"]["enforced"] is limits_effective()
+
+
+def test_run_isolated_returns_result_and_progress():
+    _assert_isolated_result_and_progress()
+
+
+def _check_isolation_in_pool_child():
+    import multiprocessing
+
+    assert multiprocessing.current_process().daemon
+    _assert_isolated_result_and_progress()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Docker Celery uses a Linux prefork pool")
+def test_run_isolated_from_celery_prefork_child():
+    import billiard
+
+    with billiard.get_context("fork").Pool(1) as pool:
+        pool.apply_async(_check_isolation_in_pool_child).get(timeout=50)
 
 
 def test_run_isolated_terminates_infinite_loop_and_survives():

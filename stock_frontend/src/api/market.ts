@@ -30,6 +30,7 @@ export function fetchHomeIndices() {
 
 export interface KLineBar {
   ts: string
+  source?: string
   open: number
   high: number
   low: number
@@ -39,11 +40,9 @@ export interface KLineBar {
 }
 
 export interface KlineQuality {
-  status: 'unchecked' | 'unknown' | 'partial' | 'complete' | 'unsupported'
+  status: 'unchecked' | 'unknown' | 'complete' | 'unsupported'
   sync_status?: 'syncing' | 'idle'
-  retry_after_seconds?: number
-  missing_count: number
-  missing_ranges: string[][]
+  can_supplement?: boolean
   checked_at?: string | null
 }
 
@@ -87,19 +86,12 @@ export interface WatchlistItem {
   updated_at?: string | null
   created_at?: string | null
   /** V0.2：K线同步状态 pending/syncing/done/failed */
-  sync_status?: 'pending' | 'syncing' | 'done' | 'failed'
+  sync_status?: 'pending' | 'syncing' | 'done' | 'failed' | null
   /** V0.2：最近同步完成时间 */
   last_synced_at?: string | null
 }
 
 /** V0.2：固定指数预同步进度 */
-export interface SyncStatus {
-  status: 'pending' | 'running' | 'done' | 'failed' | 'partial' | 'queued'
-  progress: number
-  total: number
-  message?: string | null
-}
-
 /** 技术指标行：K 线基础字段 + 请求的指标列（macd_dif/dea/hist、kdj_k/d/j；成交量成交额为基础字段） */
 export interface IndicatorRow extends KLineBar {
   std?: number | null
@@ -201,10 +193,6 @@ export function searchSymbols(q: string, params?: { type?: SymbolType; limit?: n
 }
 
 /** V0.2：固定指数/目录同步状态查询（行情页加载时轮询进度） */
-export function fetchSyncStatus(scope = 'fixed_indices') {
-  return request<SyncStatus>({ url: '/sync-status', params: { scope }, silent: true })
-}
-
 /** 多周期 K 线（15m/1d/1w/1mon，时间 UTC） */
 export function fetchKLine(params: {
   symbol: string | number
@@ -216,7 +204,7 @@ export function fetchKLine(params: {
   return request<KLineBar[]>({ url: '/kline', params })
 }
 
-export function requestKlineBackfill(params: { symbol_id: number; period: Period; start: string; end: string; retry?: boolean; initial?: boolean }) {
+export function requestKlineBackfill(params: { symbol_id: number; period: Period; start: string; end: string; initial?: boolean }) {
   return request<{ task_id: string }>({ url: '/kline/backfill', method: 'post', data: params, silent: true })
 }
 

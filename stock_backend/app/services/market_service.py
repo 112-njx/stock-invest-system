@@ -2,12 +2,14 @@
 
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.data_providers.base import ProviderError
 from app.data_providers.factory import get_provider
+from app.data_providers.stockdb import StockDBProvider
 from app.models.kline import KLINE_MODELS, Kline1d
 from app.models.symbol import Symbol
 from app.repositories import kline_repo, symbol_repo
@@ -69,7 +71,7 @@ def _query_search_rows(db: Session, q: str, type_: str | None, limit: int) -> li
 
 def _search_row(db: Session, s: Symbol) -> dict:
     """搜索行：Symbol 字段 + is_catalog/has_kline 标注。"""
-    has = s.id in _kline_symbol_ids(db, [s.id])
+    has = bool(local_daily_date(s)) if s.type in {"stock", "etf"} else has_kline(db, s.id)
     return {
         "id": s.id,
         "code": s.code,
@@ -111,6 +113,15 @@ def resolve_symbol_id(db: Session, symbol: str) -> int | None:
     return None
 
 
+def local_daily_date(symbol: Symbol):
+    if symbol.type in {"stock", "etf"}:
+        try:
+            return StockDBProvider().latest_day(symbol.code)
+        except (ProviderError, ValueError, TypeError, KeyError) as exc:
+            logger.warning("Local daily date unavailable for %s: %s", symbol.code, exc)
+    return None
+
+
 def get_kline(
     db: Session,
     symbol: str,
@@ -120,22 +131,36 @@ def get_kline(
     limit: int = 1000,
     offset: int = 0,
 ) -> list[dict]:
-    """K 线查询：默认区间（未显式 start/end）走"最近N根"Redis 缓存，未命中回源 PG 并回写。
-
-    显式指定 start/end/offset 时直查 PG（保证范围正确性，不参与缓存）。
-    返回统一 dict 列表（ts 为 ISO 字符串），供 API/前端渲染。
-    """
+    """Read equity history directly from its source."""
     if period not in (*KLINE_MODELS.keys(), "1w", "1mon"):
         raise ValueError(f"unsupported period: {period}")
     symbol_id = resolve_symbol_id(db, symbol)
     if symbol_id is None:
         return []
+    use_cache = start is None and end is None and offset == 0
+    sym = db.get(Symbol, symbol_id)
+    if sym is not None and sym.type in {"stock", "etf"}:
+        from app.services import local_history, source_history
+
+        if sym.type != "stock" and period in {"1m", "5m", "30m", "60m"}:
+            raise ValueError("New minute periods require a stock")
+        query_end = end or datetime.now(UTC)
+        query_start = start if start is not None or use_cache else query_end - timedelta(days=365)
+        try:
+            bars = local_history.read(sym, period, query_start, query_end, limit=limit)
+        except ProviderError as exc:
+            logger.warning("Local history unavailable for %s: %s", sym.code, exc)
+            bars = []
+        if not bars:
+            bars = source_history.window(db, symbol_id, period, query_start or local_history.FIRST,
+                                         query_end, limit, offset, latest=use_cache)
+        else:
+            bars = bars[-limit:] if use_cache else bars[offset:offset + limit]
+        return [{**market_cache.kline_bar_to_dict(bar), "source": bar.source} for bar in bars]
     if period in {'1m', '5m', '30m', '60m'}:
-        from app.models.symbol import Symbol
         sym = db.get(Symbol, symbol_id)
         if sym is None or sym.type != 'stock':
             raise ValueError('新增分钟周期仅支持个股')
-    use_cache = start is None and end is None and offset == 0
     if use_cache:
         cached = market_cache.get_kline_cache(symbol_id, period, limit)
         if cached is not None:

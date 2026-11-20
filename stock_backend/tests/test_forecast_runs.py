@@ -9,12 +9,13 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import ApiError
 from app.data_providers.base import KlineBar
 from app.models.forecast import ForecastRun, ForecastTracking
 from app.models.symbol import Symbol
 from app.models.user import User
 from app.services import forecast_analysis as analysis, forecast_runs as runs
-from app.services import local_market_sync, sync_service
+from app.services import sync_service
 from app.services.llm.providers.base import LLMResult
 from app.utils.db import engine
 
@@ -171,9 +172,21 @@ def test_manual_and_automatic_share_dedup_and_store_result(db_factory, monkeypat
         assert saved.status == "completed"
         assert saved.snapshot["data_version"] == "b"
         assert saved.models["prediction"]["revision"] == "test-revision"
+        assert saved.models["regime_horizon"] == analysis.REGIME_HORIZON
         assert saved.prediction["next_candle"]["evidence"][0]["value"] == 10.5
         assert db.get(ForecastTracking, (user_id, "600519")).last_session == latest
-        assert "rows" not in runs.history(db, user_id, "600519")["runs"][0]["snapshot"]
+        result = runs.history(db, user_id, "600519")["runs"][0]
+        assert "rows" not in result["snapshot"]
+        rows = runs.archived_snapshot(db, user_id, saved.id)["rows"]
+        assert rows[0]["ts"] == latest.isoformat()
+        assert set(rows[0]) == {"ts", "open", "high", "low", "close", "volume", "amount"}
+        with pytest.raises(ApiError) as missing:
+            runs.archived_snapshot(db, user_id + 1, saved.id)
+        assert missing.value.status_code == 404
+        assert result["regime_horizon"] == analysis.REGIME_HORIZON
+        for version, expected in ((3, None), (4, 5), (5, 5)):
+            saved.models = {"playbook_version": version}
+            assert runs.as_response(saved)["regime_horizon"] == expected
 
 
 def test_insufficient_data_completes_without_model(db_factory, monkeypatch):
@@ -184,47 +197,6 @@ def test_insufficient_data_completes_without_model(db_factory, monkeypatch):
         assert result["status"] == "completed"
         assert result["prediction"]["next_candle"]["direction"] == "undetermined"
         assert result["models"] == {}
-
-
-def test_forecast_only_symbol_is_selected_and_thin_close_is_recorded(db_factory, monkeypatch):
-    factory, user_id = db_factory
-    stamp = datetime(2024, 1, 3, tzinfo=UTC)
-    old_bar = KlineBar(stamp - timedelta(days=1), 10, 12, 9, 11, 100, 1100, close_confirmed=True)
-    provisional = KlineBar(stamp, 11, 12, 10, 12, 100, 1200)
-    bars = [old_bar, provisional]
-    monkeypatch.setattr(sync_service, "get_provider", lambda: SimpleNamespace(
-        fetch_kline_checked=lambda *_: (bars, False),
-    ))
-    monkeypatch.setattr(runs.forecast_snapshot, "_features", lambda rows, *_: (rows, rows[-1]["ts"]))
-    monkeypatch.setattr(runs, "_publish", lambda _: pytest.fail("thin history must not call the model"))
-    with factory() as db:
-        symbol = Symbol(id=1, code="600519", name="Tracked only", type="stock", market="SSE")
-        db.add(symbol)
-        db.add(Symbol(id=2, code="600519", name="Other instrument", type="index", market="SSE"))
-        db.commit()
-        sync_service.prepare_history_window(db, symbol, "1d", old_bar.ts, stamp, initial=True)
-        runs.set_tracking(db, user_id, "600519", True)
-        assert [(sym.name, regular) for sym, regular in local_market_sync._sync_targets(db)] == [
-            ("Tracked only", False),
-        ]
-
-    make_tracking_due(factory)
-    runs.sweep()
-    with factory() as db:
-        assert db.scalar(select(ForecastRun.id)) is None
-        bars[-1] = replace(provisional, close_confirmed=True)
-        symbol = db.get(Symbol, 1)
-        sync_service.prepare_history_window(db, symbol, "1d", old_bar.ts, stamp, initial=True)
-    make_tracking_due(factory)
-    runs.sweep()
-    make_tracking_due(factory)
-    runs.sweep()
-    with factory() as db:
-        result = db.scalars(select(ForecastRun)).one()
-        assert result.trigger == "auto"
-        assert result.status == "completed"
-        assert result.prediction["next_candle"]["direction"] == "undetermined"
-        assert db.get(ForecastTracking, (user_id, "600519")).last_session == stamp.date()
 
 
 def test_retry_targets_owned_failed_snapshot_even_after_new_success(db_factory, monkeypatch):
@@ -269,20 +241,20 @@ def test_delivery_retries_failure_but_does_not_duplicate_an_active_message(db_fa
     monkeypatch.setattr(runs.forecast_snapshot, "build_snapshot", lambda *_: snapshot())
     with factory() as db:
         run_id = runs.start_manual(db, user_id, "600519")["id"]
-    runs.sweep()
+    runs.recover_deliveries()
     assert len(attempts) == 1
 
     with factory() as db:
         run = db.get(ForecastRun, run_id)
         run.next_delivery_at = datetime.now(UTC) - timedelta(minutes=1)
         db.commit()
-    runs.sweep()
+    runs.recover_deliveries()
     with factory() as db:
         run = db.get(ForecastRun, run_id)
         assert run.next_delivery_at == attempts[-1]["expires"]
         run.updated_at = datetime.now(UTC) - timedelta(minutes=10)
         db.commit()
-    runs.sweep()
+    runs.recover_deliveries()
     assert len(attempts) == 2
 
 

@@ -6,7 +6,7 @@
 
 `stock_backend/app/services/indicator_catalog.json` 同时用于后端参数校验、7900 原生调用适配、详情页参数表单和副图渲染。`GET /api/v1/indicators/catalog` 返回目录版本及已开放项目。
 
-每项登记 key、label、placement、inputs、parameters、series、reference_lines、engines。数值参数支持 integer / integer_list / number，分别声明默认值和上下界。input_fields 声明适用输入字段，cross 声明 SDK 是否支持原生交叉信号。曲线声明 field、label、color、kind（line/histogram）；多条 line 可组成通道。柱色支持按当前蜡烛涨跌或指标正负着色。原生适配声明 native 和 native_outputs，MA 动态周期、成交量均量线和合成指数保留专门适配。
+每项登记 key、label、placement、inputs、parameters、series、reference_lines。数值参数支持 integer / integer_list / number，分别声明默认值和上下界。input_fields 声明适用输入字段，cross 声明 SDK 是否支持原生交叉信号。曲线声明 field、label、color、kind（line/histogram）；多条 line 可组成通道。柱色支持按当前蜡烛涨跌或指标正负着色。原生适配声明 native 和 native_outputs，MA 动态周期、成交量均量线和合成指数保留专门适配。
 
 目录文件与无第三方依赖的 `indicator_registry.py` 一同复制进 StockDB 镜像。7899 只读写数据，调用进程内的 zb_core 负责计算，沿用图表选择的本地历史序列。
 
@@ -20,7 +20,7 @@ panels 数组同时表示开启状态和排列顺序，最多三个且不得重�
 
 首页走原有请求与渲染分支。详情页按目录创建副图，每个开启的副图独立请求、发布结果和显示错误；只有失败的副图显示重试入口。MA 独立于副图。请求代次用于屏蔽旧参数、股票、周期、账号或已卸载图表的响应。
 
-引擎选择以目录 engines 为准：全局开启 pandas 时，仅有 pandas 能力的项目走原有类；SDK-only 项目仍走原生引擎，不静默降级。缓存继续隔离计算参数和引擎设置版本。
+全部技术指标通过本地 StockDB SDK 计算。缓存以 SDK 版本命名，并按计算参数隔离。
 
 ## 接入与验证原则
 
@@ -30,7 +30,7 @@ panels 数组同时表示开启状态和排列顺序，最多三个且不得重�
 
 ## 第二批：RSI / WR / CCI / ATR
 
-四项均为 SDK-only，开启全局 pandas 开关也不会改用 pandas 重算；仅在详情页目录中提供，每项占一个副图名额。目录驱动现有参数编辑器、账号设置、图例、曲线与参考线，无需修改首页或增加逐项渲染分支。
+四项仅在详情页目录中提供，每项占一个副图名额。目录驱动现有参数编辑器、账号设置、图例、曲线与参考线，无需修改首页或增加逐项渲染分支。
 
 | 指标 | 原生签名 | 输出字段 | 默认参考线 |
 | --- | --- | --- | --- |
@@ -67,7 +67,7 @@ BOLL 的原生输出顺序是上轨、中轨、下轨，倍数 p 支持小数（
 
 ## 第四批：动量与强弱副图
 
-新增 BIAS、PSY、DPO、MTM、ROC，均为独立副图、SDK-only；无论全局是否开启 pandas，仍用原生引擎计算。BIAS 的三条线或其余每项的两条线均只占一个副图名额，总计仍最多开启三个。默认关闭新项，现有 MA、主图叠加和默认成交量/MACD 选择保持不变。
+新增 BIAS、PSY、DPO、MTM、ROC，均为独立副图。BIAS 的三条线或其余每项的两条线均只占一个副图名额，总计仍最多开启三个。默认关闭新项，现有 MA、主图叠加和默认成交量/MACD 选择保持不变。
 
 | 指标 | SDK 默认参数 | 返回字段 | 展示参考线 |
 | --- | --- | --- | --- |
@@ -128,11 +128,11 @@ SDK 桥从本地7899读取成分股的原生 OHLCV 等数组，调用配套 `zhi
 
 ## 第十批：增强交互
 
-原生 `BATCH_CROSS` 实测支持 MACD、KDJ、DMI、TRIX、EMV、DPO、DFMA、MTM、MASS、ROC、ASI。仅这些项目提供“金叉死叉标记”开关，默认关闭；启用时强制走 SDK，即使全局打开 pandas 也不会用前端或 pandas 重算信号。返回各自的 `<key>_cross`（1金叉、-1死叉、0无信号），图中在原生信号对应 K 线位置绘制红/绿点，图例显示截至十字光标位置的累计数。没有原生交叉配对的项目不提供开关。首页 MACD 保持原有展示。
+原生 `BATCH_CROSS` 实测支持 MACD、KDJ、DMI、TRIX、EMV、DPO、DFMA、MTM、MASS、ROC、ASI。仅这些项目提供“金叉死叉标记”开关，默认关闭；启用后由 SDK 计算信号。返回各自的 `<key>_cross`（1金叉、-1死叉、0无信号），图中在原生信号对应 K 线位置绘制红/绿点，图例显示截至十字光标位置的累计数。没有原生交叉配对的项目不提供开关。首页 MACD 保持原有展示。
 
 副图选择器按实际排列提供上移/下移，边界按钮禁用；顺序写入 panels 并同步账号。独立恢复默认只重置该项的参数、计算字段和交叉开关，保留开关状态、排列以及其他指标。合成指数恢复默认保留股票集合，将其恢复等权、基点1000、起算日期2020-01-01。参数编辑器内的恢复默认先修改草稿，点击保存才生效；外部单项恢复默认直接保存，失败继续显示上次成功配置。
 
-验证：`scripts/tests/test_statistics_composite.py` 使用真实 Windows/Linux 原生模块，对照六种输入字段、短历史/周期边界、全部11种交叉信号，以及四周期等权/3:1固定权重和 UTC 对齐；容器本地行情另对照了贵州茅台、新易盛在四周期的实际指数结果。`stock_backend/tests/test_statistics_composite.py` 覆盖 API 校验、pandas 开关、补页、空数据、成分股变化时缓存隔离和指标字段共存。两个前端 verify 脚本覆盖股票搜索/集合、零权重、参数/开关读回、排序/单项重置、保存回滚、账号切换以及权重/字段/股票/周期变化后的过期响应保护。
+验证：`scripts/tests/test_statistics_composite.py` 使用真实 Windows/Linux 原生模块，对照六种输入字段、短历史/周期边界、全部11种交叉信号，以及四周期等权/3:1固定权重和 UTC 对齐；容器本地行情另对照了贵州茅台、新易盛在四周期的实际指数结果。`stock_backend/tests/test_statistics_composite.py` 覆盖 API 校验、补页、空数据、成分股变化时缓存隔离和指标字段共存。两个前端 verify 脚本覆盖股票搜索/集合、零权重、参数/开关读回、排序/单项重置、保存回滚、账号切换以及权重/字段/股票/周期变化后的过期响应保护。
 
 ## 完整验收与合成指数负载隔离
 

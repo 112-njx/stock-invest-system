@@ -118,6 +118,7 @@ function onKey(event: KeyboardEvent) {
 async function pick(stock: IndexedStock) {
   if (props.browse) {
     emit('select', stock.code)
+    open.value = false
     return
   }
   if (adding.value || watched.value.has(stock.code)) return

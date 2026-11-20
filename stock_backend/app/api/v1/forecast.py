@@ -60,6 +60,11 @@ def retry(run_id: int, current: User = Depends(get_current_user), db: Session = 
     return ok(data=forecast_runs.retry(db, current.id, run_id))
 
 
+@router.get("/runs/{run_id}/snapshot")
+def run_snapshot(run_id: int, current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    return ok(data=forecast_runs.archived_snapshot(db, current.id, run_id))
+
+
 @router.put("/tracking")
 def tracking(payload: TrackForecast, current: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     return ok(data={"tracking": forecast_runs.set_tracking(db, current.id, payload.symbol, payload.enabled)})

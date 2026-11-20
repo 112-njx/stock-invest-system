@@ -117,7 +117,7 @@ class WatchlistOut(BaseModel):
     change: float | None = None
     change_pct: float | None = None
     updated_at: datetime | None = None
-    sync_status: str = "pending"  # pending/syncing/done/failed
+    sync_status: str | None = None  # pending/syncing/done/failed
     last_synced_at: datetime | None = None
     created_at: datetime
 

@@ -11,9 +11,8 @@ const totals = computed(() =>
     (a, q) => ({
       ready: a.ready + q.ready,
       active: a.active + q.active,
-      abnormal: a.abnormal + q.abnormal,
     }),
-    { ready: 0, active: 0, abnormal: 0 }
+    { ready: 0, active: 0 }
   )
 )
 </script>
@@ -34,66 +33,38 @@ const totals = computed(() =>
       <span>执行中任务</span><strong>{{ s.queues.data ? totals.active : '—' }}</strong
       ><small>等待执行 {{ s.queues.data ? totals.ready : '—' }} 项</small>
     </article>
-    <article class="metric">
-      <span>异常记录</span
-      ><strong :class="{ danger: totals.abnormal > 0 }">{{
-        s.queues.data ? totals.abnormal : '—'
-      }}</strong
-      ><small>关注股、同步及近期补拉</small>
-    </article>
   </div>
   <div class="two-column">
     <section class="admin-card">
       <div class="card-title">
         <div>
           <h2>行情数据工作流</h2>
-          <p>从本地数据更新到项目行情入库</p>
+          <p>更新并验证 StockDB 原始行情</p>
         </div>
         <span class="badge">本地优先</span>
       </div>
-      <ol class="workflow">
-        <li>
-          <b>01</b>
-          <div>
-            <h3>更新 stockdb 数据</h3>
-            <p>在数据源页面执行一键更新：暂停服务、下载校验原始文件并恢复服务。</p>
-          </div>
-        </li>
-        <li>
-          <b>02</b>
-          <div>
-            <h3>同步至项目</h3>
-            <p>导入证券目录，并同步受支持的固定指数与关注标的行情。</p>
-          </div>
-        </li>
-        <li>
-          <b>03</b>
-          <div>
-            <h3>检查同步结果</h3>
-            <p>查看处理进度、任务状态及失败原因。</p>
-          </div>
-        </li>
-      </ol>
+      <p>更新原始行情文件后，个股和 ETF 查询会直接读 StockDB 的新版本。</p>
+
       <button class="primary" @click="emit('navigate', 'sources')">管理行情与数据源 →</button>
     </section>
     <section class="admin-card">
       <div class="card-title">
         <div>
-          <h2>最近本地同步</h2>
-          <p>管理员提交的行情导入任务</p>
+          <h2>最近原始数据更新</h2>
+          <p>手动或定时提交的 StockDB 更新</p>
         </div>
-        <span class="badge" :class="{ danger: s.sync.data?.status === 'failed' }">{{
-          s.sync.data ? stateLabel(s.sync.data.status) : '等待读取'
+        <span class="badge" :class="{ danger: s.update.data?.status === 'failed' }">{{
+          s.update.data ? stateLabel(s.update.data.status) : '等待读取'
         }}</span>
       </div>
-      <AdminNotice :resource="s.sync" />
-      <template v-if="s.sync.data"
-        ><p class="sync-message">{{ s.sync.data.message }}</p>
-        <progress :value="Math.max(0, Math.min(100, s.sync.data.progress))" max="100" />
+      <AdminNotice :resource="s.update" />
+      <template v-if="s.update.data"
+        ><p class="sync-message">{{ s.update.data.message }}</p>
+        <progress :value="Math.max(0, Math.min(100, s.update.data.progress))" max="100" />
         <div class="split">
-          <small>处理进度</small><b>{{ s.sync.data.progress }}%</b>
+          <small>处理进度</small><b>{{ s.update.data.progress }}%</b>
         </div>
-        <AdminErrors v-if="s.sync.data.error" :error="s.sync.data.error" /></template
+        <AdminErrors v-if="s.update.data.error" :error="s.update.data.error" /></template
       >
       <div class="divider" />
       <h3>当前数据源策略</h3>
@@ -107,15 +78,8 @@ const totals = computed(() =>
             : '策略尚未读取'
         }}
       </p>
-      <p>
-        {{
-          s.policy.data
-            ? s.policy.data.history_storage_enabled
-              ? 'AkShare 历史 K 线入库已启用'
-              : 'AkShare 历史 K 线不入库'
-            : '—'
-        }}
-      </p>
+      <p v-if="s.policy.data">每日 16:30 自动更新 {{ s.policy.data.auto_update_enabled ? '开启' : '关闭' }}</p>
+
     </section>
   </div>
   <section class="admin-card">
@@ -130,7 +94,7 @@ const totals = computed(() =>
       <button class="quick" @click="emit('navigate', 'sources')">
         <b>数据服务</b><span>数据库与历史计算服务</span><em>查看 →</em></button
       ><button class="quick" @click="emit('navigate', 'tasks')">
-        <b>任务队列</b><span>积压、异常与消费者响应</span><em>查看 →</em></button
+        <b>任务队列</b><span>积压、执行与消费者响应</span><em>查看 →</em></button
       ><button class="quick" @click="emit('navigate', 'requests')">
         <b>请求监控</b><span>当前数据请求及内部重试</span><em>查看 →</em>
       </button>

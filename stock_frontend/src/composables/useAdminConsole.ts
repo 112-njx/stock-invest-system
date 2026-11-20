@@ -3,7 +3,6 @@ import {
   adminApi,
   type DisplaySettings,
   type LocalServices,
-  type LocalSync,
   type LocalUpdate,
   type ProviderRequest,
   type SourcePolicy,
@@ -21,10 +20,10 @@ interface Resource<T> {
 }
 const resource = <T>(): Resource<T> => ({ data: null, loading: false, error: '', updated: '' })
 export const queueNames: Record<string, string> = {
-  watchlist: '关注股票',
-  fixed_indices: '本地行情与固定指数',
+  fixed_indices: '固定指数',
   backfill: '历史补拉',
-  control: '任务协调',
+  control: '预测跟踪',
+  forecast_replay: '预测回放',
   sync: '目录与常规同步',
   backtest: '策略回测',
   ai: 'AI、记忆与导出',
@@ -68,17 +67,16 @@ export function useAdminConsole(section: Ref<AdminSection>) {
     policy: resource<SourcePolicy>(),
     traffic: resource<Traffic>(),
     queues: resource<TaskQueues>(),
-    sync: resource<LocalSync>(),
     update: resource<LocalUpdate>(),
     requests: resource<{ requests: ProviderRequest[] }>(),
     display: resource<DisplaySettings>(),
-    policyForm: { akshare_enabled: false, history_storage_enabled: false, auto_sync_enabled: false },
+    policyForm: { akshare_enabled: false, auto_update_enabled: false },
     limitsForm: { interval_seconds: 2, retry_interval_seconds: 10, daily_budget: 2000 },
     displayForm: { synthetic_wick_factor: 0.5 },
     dirty: { policy: false, limits: false, display: false },
-    saving: { policy: false, limits: false, display: false, sync: false, update: false },
-    feedback: { policy: '', limits: '', display: '', sync: '', update: '' },
-    saveError: { policy: '', limits: '', display: '', sync: '', update: '' },
+    saving: { policy: false, limits: false, display: false, update: false },
+    feedback: { policy: '', limits: '', display: '', update: '' },
+    saveError: { policy: '', limits: '', display: '', update: '' },
   })
   let alive = true
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -113,7 +111,6 @@ export function useAdminConsole(section: Ref<AdminSection>) {
   const loaders = {
     services: () => load(state.services, adminApi.services),
     queues: () => load(state.queues, adminApi.queues),
-    sync: () => load(state.sync, adminApi.sync),
     update: () => load(state.update, adminApi.update),
     requests: () => load(state.requests, adminApi.requests),
     policy: () =>
@@ -135,17 +132,13 @@ export function useAdminConsole(section: Ref<AdminSection>) {
       }),
   }
   const busyUpdate = computed(() => state.saving.update || ['queued', 'running'].includes(state.update.data?.status ?? ''))
-  const sourceBlocked = computed(() => busyUpdate.value || !!state.update.data?.maintenance || (!!state.update.data && !state.update.data.data_version))
-  const busySync = computed(
-    () => state.saving.sync || ['queued', 'running'].includes(state.sync.data?.status ?? '')
-  )
   const refreshing = computed(() =>
     Object.values(state).some((value) => value && 'loading' in value && value.loading)
   )
   async function refresh() {
     const keys = {
-      overview: ['services', 'policy', 'queues', 'sync', 'update'],
-      sources: ['services', 'policy', 'traffic', 'sync', 'update'],
+      overview: ['services', 'policy', 'queues', 'update'],
+      sources: ['services', 'policy', 'traffic', 'update'],
       tasks: ['queues'],
       requests: ['requests'],
       display: ['display'],
@@ -178,11 +171,7 @@ export function useAdminConsole(section: Ref<AdminSection>) {
     invalidate(target)
     try {
       if (kind === 'policy') {
-        const draft = {
-          ...state.policyForm,
-          history_storage_enabled: state.policyForm.history_storage_enabled,
-        }
-        const result = await adminApi.savePolicy(draft)
+        const result = await adminApi.savePolicy({ ...state.policyForm })
         invalidate(target)
         state.policy.data = result
         Object.assign(state.policyForm, result)
@@ -211,33 +200,8 @@ export function useAdminConsole(section: Ref<AdminSection>) {
       state.saving[kind] = false
     }
   }
-  async function startSync() {
-    if (busySync.value || sourceBlocked.value) return
-    state.saving.sync = true
-    state.saveError.sync = ''
-    state.feedback.sync = ''
-    invalidate(state.sync)
-    try {
-      const submitted = await adminApi.startSync()
-      invalidate(state.sync)
-      state.sync.data = {
-        status: submitted.status,
-        task_id: submitted.task_id,
-        progress: 0,
-        error: null,
-        message: '等待本地行情同步',
-      }
-      state.sync.error = ''
-      state.feedback.sync = '同步请求已提交'
-      await loaders.sync()
-    } catch {
-      state.saveError.sync = '提交失败，请重试'
-    } finally {
-      state.saving.sync = false
-    }
-  }
   async function startUpdate() {
-    if (busyUpdate.value || busySync.value || !state.update.data?.helper_online) return
+    if (busyUpdate.value || !state.update.data?.helper_online) return
     state.saving.update = true
     state.saveError.update = ''
     state.feedback.update = ''
@@ -246,10 +210,10 @@ export function useAdminConsole(section: Ref<AdminSection>) {
       state.update.data = await adminApi.startUpdate()
       invalidate(state.update)
       state.update.error = ''
-      state.feedback.update = '已提交原始数据更新；完成后请再同步本地行情'
+      state.feedback.update = '已提交原始数据更新'
     } catch (error: unknown) {
       const e = error as { response?: { data?: { msg?: string } } }
-      state.saveError.update = e.response?.data?.msg || '提交失败，请刷新检查容器更新控制器和同步任务状态'
+      state.saveError.update = e.response?.data?.msg || '提交失败，请刷新检查容器更新控制器状态'
     } finally {
       state.saving.update = false
     }
@@ -259,11 +223,9 @@ export function useAdminConsole(section: Ref<AdminSection>) {
     if (section.value === 'requests') await loaders.requests()
     else if (section.value === 'tasks') await loaders.queues()
     else if (['overview', 'sources'].includes(section.value)) {
-      const wasBusy = busySync.value
       const updateWasBusy = busyUpdate.value
-      await Promise.all([loaders.sync(), loaders.update()])
+      await loaders.update()
       if (updateWasBusy && !busyUpdate.value) await loaders.services()
-      if (wasBusy && !busySync.value) await Promise.all([loaders.services(), loaders.queues()])
     }
   }
   function schedule() {
@@ -277,7 +239,7 @@ export function useAdminConsole(section: Ref<AdminSection>) {
           schedule()
         }
       },
-      busyUpdate.value ? 1000 : section.value === 'requests' || busySync.value ? 3000 : 10000
+      busyUpdate.value ? 1000 : section.value === 'requests' ? 3000 : 10000
     )
   }
   function visibility() {
@@ -302,6 +264,6 @@ export function useAdminConsole(section: Ref<AdminSection>) {
     state.dirty[kind] = true
     state.feedback[kind] = ''
   }
-  return { state, busySync, busyUpdate, sourceBlocked, refreshing, refresh, save, startSync, startUpdate, edit }
+  return { state, busyUpdate, refreshing, refresh, save, startUpdate, edit }
 }
 export type AdminConsole = ReturnType<typeof useAdminConsole>

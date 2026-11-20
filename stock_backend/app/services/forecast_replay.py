@@ -7,6 +7,7 @@ import logging
 import math
 from bisect import bisect_right
 from datetime import UTC, date, datetime, timedelta
+from itertools import islice
 
 from sqlalchemy import select, update
 
@@ -18,6 +19,7 @@ from app.models.user import User
 from app.services import forecast_analysis, forecast_snapshot, sdk_indicators
 from app.services.forecast_runs import _lock_user
 from app.services.indicator_registry import FORECAST_FEATURES, FORECAST_FEATURE_VERSION
+from app.services.llm.llm_service import LLMAuthError, LLMQuotaError, classify_llm_error
 from app.services.llm.user_key import build_llm_service_for_user
 from app.utils.db import get_session
 
@@ -48,21 +50,8 @@ def _adjust(rows, timeline):
     return result
 
 
-def _read_market(symbol, end):
-    provider = StockDBProvider()
-    now = datetime.now(UTC)
-    available = provider.daily_confirmation_cutoff(now)
-    if available is None:
-        raise ValueError("StockDB has no confirmed file version")
-    local = available.astimezone(DAILY_SESSION_TZ)
-    closed = local.date() - timedelta(days=local.time() < DAILY_SESSION_CLOSE)
-    reference = end or closed
-    through = min(closed, reference + timedelta(days=45))
-    timeline = provider.adjustment_timeline(symbol)
-    if any(not math.isfinite(factor) or factor <= 0 for _, factor in timeline):
-        raise ValueError("invalid adjustment factor")
-    raw = {}
-    start = reference - timedelta(days=WARMUP_DAYS)
+def _closed_rows(provider, symbol, start, through):
+    previous = None
     for bar in provider.raw_daily_history(symbol, start, through):
         day = datetime.strptime(str(bar["date"]), "%Y%m%d").date()
         if bar["code"] != symbol or not start <= day <= through:
@@ -72,15 +61,35 @@ def _read_market(symbol, end):
         amount = float(bar.get("amount") or 0)
         if day.weekday() >= 5 or (volume == 0 and amount == 0):
             continue
-        if (day in raw or not all(math.isfinite(v) and v > 0 for v in row.values())
+        if ((previous is not None and day <= previous) or not all(math.isfinite(v) and v > 0 for v in row.values())
                 or not math.isfinite(amount) or min(volume, amount) < 0
                 or not row["low"] <= min(row["open"], row["close"]) <= max(row["open"], row["close"]) <= row["high"]):
             raise ValueError("invalid daily bar")
-        raw[day] = dict(row, ts=day.isoformat(), volume=volume // 100, amount=amount)
+        yield dict(row, ts=day.isoformat(), volume=volume // 100, amount=amount)
+        previous = day
+
+
+def _read_market(symbol, end):
+    provider = StockDBProvider()
+    now = datetime.now(UTC)
+    available = provider.daily_confirmation_cutoff(now)
+    if available is None:
+        raise ValueError("StockDB has no confirmed file version")
+    local = available.astimezone(DAILY_SESSION_TZ)
+    closed = local.date() - timedelta(days=local.time() < DAILY_SESSION_CLOSE)
+    reference = end or closed
+    timeline = provider.adjustment_timeline(symbol)
+    if any(not math.isfinite(factor) or factor <= 0 for _, factor in timeline):
+        raise ValueError("invalid adjustment factor")
+    start = reference - timedelta(days=WARMUP_DAYS)
+    rows = list(_closed_rows(provider, symbol, start, min(closed, reference)))
+    if end and rows and end < closed:
+        through = min(closed, provider.latest_day(symbol) or closed)
+        rows.extend(islice(_closed_rows(provider, symbol, end + timedelta(days=1), through), HORIZON))
     if provider.daily_confirmation_cutoff(now) != available:
         raise ValueError("StockDB changed during replay preparation")
-    rows = [raw[day] for day in sorted(raw)]
-    return rows, timeline, _digest([rows, [(day, f) for day, f in timeline if day <= int(through.strftime("%Y%m%d"))]])
+    last_day = int(rows[-1]["ts"].replace("-", "")) if rows else 0
+    return rows, timeline, _digest([rows, [(day, f) for day, f in timeline if day <= last_day]])
 
 
 def _direction(bar):
@@ -130,17 +139,38 @@ def _case(rows, timeline, index):
     return history, result
 
 
+SCORE_METHODS = (
+    ("actual_direction", "direction", ("last_candle", "always_up")),
+    ("actual_regime", "regime", ("previous_regime",)),
+)
+
+
+def _answered(case, method):
+    return case.get(method) not in (None, "undetermined")
+
+
 def _scores(cases):
     output = {}
-    for label, methods in (
-        ("actual_direction", ("direction", "last_candle", "always_up")),
-        ("actual_regime", ("regime", "previous_regime")),
-    ):
+    for label, ai, baselines in SCORE_METHODS:
         labelled = [case for case in cases if case[label] is not None]
-        for method in methods:
-            covered = [case for case in labelled if case.get(method) not in (None, "undetermined")]
+        for method in (ai, *baselines):
+            covered = [case for case in labelled if _answered(case, method)]
             hits = sum(case[method] == case[label] for case in covered)
             output[method] = {"labelled": len(labelled), "covered": len(covered), "hits": hits}
+    return output
+
+
+def _matched_scores(cases):
+    output = {}
+    for label, ai, baselines in SCORE_METHODS:
+        answered = [case for case in cases if case[label] is not None and _answered(case, ai)]
+        for method in baselines:
+            paired = [case for case in answered if _answered(case, method)]
+            output[method] = {
+                "count": len(paired),
+                "ai_hits": sum(case[ai] == case[label] for case in paired),
+                "baseline_hits": sum(case[method] == case[label] for case in paired),
+            }
     return output
 
 
@@ -171,7 +201,10 @@ def _reconstructed(history):
 
 
 def _response(row):
-    return {key: getattr(row, key) for key in ("id", "status", "options", "report", "error")}
+    response = {key: getattr(row, key) for key in ("id", "status", "options", "report", "error")}
+    if row.report is not None and "matched_scores" not in row.report:
+        response["report"] = {**row.report, "matched_scores": _matched_scores(row.report["cases"])}
+    return response
 
 
 def latest(db, user_id, symbol):
@@ -191,6 +224,12 @@ def start(db, user_id, symbol, options):
     row = ForecastReplay(user_id=user_id, symbol=symbol, options=options, status="queued")
     db.add(row)
     db.commit()
+    from app.worker.tasks.forecast_tasks import replay_forecasts
+
+    try:
+        replay_forecasts.delay()
+    except Exception:
+        logger.exception("Forecast replay %s is queued pending delivery", row.id)
     return _response(row)
 
 
@@ -203,8 +242,16 @@ def _save(job_id, report, status="running", error=None):
     return bool(changed)
 
 
-async def _predict_case(llm, snapshot):
+def _require_active_user(user_id):
+    with get_session() as db:
+        if db.scalar(select(User.id).where(User.id == user_id, User.is_deleted.is_(False))) is None:
+            raise ApiError(status_code=403, msg="账号已不可用，回放已停止")
+
+
+async def _predict_case(llm, snapshot, user_id):
+    _require_active_user(user_id)
     diagnosis, diagnostic_model = await forecast_analysis.diagnose(llm, snapshot)
+    _require_active_user(user_id)
     prediction, predictive_model = await forecast_analysis.predict(llm, snapshot, diagnosis)
     return {
         "direction": prediction["next_candle"]["direction"], "regime": prediction["next_regime"]["regime"],
@@ -220,7 +267,7 @@ def _evaluate(job, report):
     indexes = range(max(0, stop - job.options["samples"]), stop)
     report.update(total=len(indexes), market_version=version)
     with get_session() as db:
-        llm = build_llm_service_for_user(db, job.user_id)
+        llm = build_llm_service_for_user(db, job.user_id, isolate_user_breaker=True)
         archives = _archived_inputs(db, job.user_id, job.symbol, [rows[i]["ts"] for i in indexes]) \
             if job.options["mode"] == "archived" else None
     if not llm.available and (archives if archives is not None else any(
@@ -228,6 +275,7 @@ def _evaluate(job, report):
     )):
         raise ApiError(status_code=409, msg="AI 服务尚未配置，请先设置模型 API Key")
     for index in indexes:
+        fatal_error = None
         history, case = _case(rows, timeline, index)
         if case["actual_direction"] is None:
             case["status"] = "unlabelled"
@@ -243,12 +291,24 @@ def _evaluate(job, report):
                     case["last_candle"] = _direction(known[-1])
                     case["previous_regime"] = _regime(known[:-HORIZON], known[-HORIZON:])
                 case.update(data_version=snapshot["data_version"], feature_version=snapshot["feature_version"])
-                case.update(asyncio.run(_predict_case(llm, snapshot)), status="evaluated")
+                case.update(asyncio.run(_predict_case(llm, snapshot, job.user_id)), status="evaluated")
+            except (LLMAuthError, LLMQuotaError) as exc:
+                case["status"] = "failed"
+                fatal_error = classify_llm_error(exc)["message"]
+            except ApiError as exc:
+                if exc.status_code == 403:
+                    raise
+                logger.warning("Replay %s failed for %s: %s", job.id, case["session"], exc.msg)
+                case["status"] = "failed"
             except Exception:
                 logger.warning("Replay %s failed for %s", job.id, case["session"], exc_info=True)
                 case["status"] = "failed"
         report["cases"].append(case)
         report["scores"] = _scores(report["cases"])
+        report["matched_scores"] = _matched_scores(report["cases"])
+        if fatal_error:
+            _save(job.id, report, "failed", fatal_error)
+            return
         if not _save(job.id, report):
             return
     _save(job.id, report, "completed")
@@ -276,3 +336,4 @@ def work_once():
     except Exception:
         logger.exception("Forecast replay %s failed", job.id)
         _save(job.id, report, "failed", "无法读取或处理回放行情，请检查本地数据源后重试")
+    return True

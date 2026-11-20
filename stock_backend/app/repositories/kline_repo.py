@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import Date, and_, case, delete, exists, func, or_, select
+from sqlalchemy import Date, and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -19,9 +19,7 @@ def _model(period: str):
 
 def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) -> int:
     """幂等写入：按 (symbol_id, ts) 更新变化记录（支持前复权历史刷新）。"""
-    from app.services.market_policy import history_storage_enabled
-    if not history_storage_enabled():
-        bars = [bar for bar in bars if bar.source != 'akshare']
+    bars = [bar for bar in bars if bar.source == 'stockdb']
     if not bars:
         return 0
     model = _model(period)
@@ -81,43 +79,14 @@ def upsert_bars(db: Session, period: str, symbol_id: int, bars: list[KlineBar]) 
     return changed
 
 
-def source_filter(model, symbol_id, start=None, end=None):
-    from app.services.market_policy import akshare_enabled, history_storage_enabled
-    if not akshare_enabled() or not history_storage_enabled():
-        return model.source == "stockdb"
-    local = model.__table__.alias("local_history")
-    if start is not None or end is not None:
-        def bounds(source):
-            conditions = [local.c.symbol_id == symbol_id, local.c.source == source]
-            if start is not None:
-                conditions.append(local.c.ts >= start)
-            if end is not None:
-                conditions.append(local.c.ts <= end)
-            return tuple(select(aggregate(local.c.ts)).where(*conditions).scalar_subquery()
-                         for aggregate in (func.min, func.max))
-
-        local_first, local_last = bounds('stockdb')
-        remote_first, remote_last = bounds('akshare')
-        # Pick one source for the requested window, including indicator warmup.
-        # Never replace individual bars across different qfq bases.
-        remote_covers_more = and_(
-            remote_first <= local_first, remote_last >= local_last,
-            or_(remote_first < local_first, remote_last > local_last),
-        )
-        return model.source == case(
-            (or_(local_first.is_(None), remote_covers_more), 'akshare'), else_='stockdb'
-        )
-    has_local = exists(select(1).select_from(local).where(
-        local.c.symbol_id == symbol_id, local.c.source == "stockdb"
-    ))
-    # Select a whole source for the series; never splice AkShare rows into local history.
-    return model.source == case((has_local, "stockdb"), else_="akshare")
+def source_filter(model):
+    return model.source == "stockdb"
 
 
 def use_transient_source(db, model, symbol_id, start=None, end=None):
     from app.services import market_policy, source_history
     policy = market_policy.read()
-    if not policy['akshare_enabled'] or policy['history_storage_enabled']:
+    if not policy['akshare_enabled']:
         return False
     conditions = [model.symbol_id == symbol_id, model.source == 'stockdb']
     if start is not None:
@@ -155,7 +124,7 @@ def get_bars(
     stmt = (
         select(model)
         .where(model.symbol_id == symbol_id,
-               source_filter(model, symbol_id, *(source_window or (start, end))),
+               source_filter(model),
                model.ts >= start, model.ts <= end)
         .order_by(model.ts.desc() if latest else model.ts)
         .limit(limit)
@@ -166,30 +135,24 @@ def get_bars(
 
 
 def latest_bars(db: Session, period: str, symbol_id: int, limit: int = 1000, *,
-                end: datetime | None = None, confirmed_only: bool = False) -> list:
+                end: datetime | None = None) -> list:
     """最近 N 根 K 线（返回按 ts 升序），供"最新N根"缓存与默认查询。"""
     model = _model(period)
-    if confirmed_only and period != "1d":
-        raise ValueError("only daily bars have close confirmation")
     if use_transient_source(db, model, symbol_id):
         from app.services.source_history import cached
         from app.utils.market_cache import as_utc
         rows = cached(symbol_id, period) or []
         if end is not None:
             rows = [bar for bar in rows if as_utc(bar.ts) <= end]
-        if confirmed_only:
-            rows = [bar for bar in rows if bar.close_confirmed and (bar.volume or bar.amount)]
         return rows[-limit:]
     stmt = (
         select(model)
-        .where(model.symbol_id == symbol_id, source_filter(model, symbol_id))
+        .where(model.symbol_id == symbol_id, source_filter(model))
         .order_by(model.ts.desc())
         .limit(limit)
     )
     if end is not None:
         stmt = stmt.where(model.ts <= end)
-    if confirmed_only:
-        stmt = stmt.where(model.close_confirmed, or_(model.volume != 0, model.amount != 0))
     rows = list(db.scalars(stmt))
     rows.reverse()
     return rows
@@ -201,4 +164,4 @@ def latest_ts(db: Session, period: str, symbol_id: int) -> datetime | None:
         from app.services.source_history import cached
         rows = cached(symbol_id, period) or []
         return rows[-1].ts if rows else None
-    return db.scalar(select(model.ts).where(model.symbol_id == symbol_id, source_filter(model, symbol_id)).order_by(model.ts.desc()).limit(1))
+    return db.scalar(select(model.ts).where(model.symbol_id == symbol_id, source_filter(model)).order_by(model.ts.desc()).limit(1))

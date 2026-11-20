@@ -214,19 +214,6 @@ def test_factory_health_shape():
     assert h[0]["name"] == "p1" and h[0]["state"] == "closed" and "failures" in h[0] and "last_success_at" in h[0]
 
 
-def test_factory_probe_recovers_open_provider():
-    p1, p2 = _FakeProvider("p1", "raise"), _FakeProvider("p2", "ok")
-    f = _factory(p1, p2)
-    start, end = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 8, 20, tzinfo=UTC)
-    for _ in range(3):
-        f.fetch_kline("000001", "1d", start, end, "index")
-    assert f.health()[0]["state"] == "open"
-    p1.behavior = "ok"
-    results = f.probe()
-    assert any(r["name"] == "p1" and r["recovered"] for r in results)
-    assert f.health()[0]["state"] == "closed"
-
-
 def test_factory_resolve_index_code_and_pe_fallthrough():
     p1 = _FakeProvider("p1", "ok")
     f = _factory(p1)

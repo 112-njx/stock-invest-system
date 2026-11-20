@@ -43,93 +43,21 @@ def kline_init(self, symbol_id: int | None = None, days: int | None = None) -> d
         raise
 
 
-@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.watchlist_stock_sync",
-                 acks_late=True, reject_on_worker_lost=True,
-                 soft_time_limit=3600, time_limit=3900)
-def watchlist_stock_sync(self, symbol_id: int, initialize: bool = False) -> dict:
-    """关注 A 股的首次初始化或日 K 增量与缺口修复。"""
-    from app.models.ops import SyncTask
-    from app.repositories import user_repo
-    from app.services import kline_quality_service
-    from app.utils import market_cache
+@celery_app.task(name="app.worker.tasks.sync_tasks.update_stockdb_daily")
+def update_stockdb_daily() -> dict:
+    from datetime import datetime
+    from fastapi import HTTPException
+    from app.core.config import get_settings
+    from app.services import market_policy, stockdb_update
 
-    task_type = "kline_init" if initialize else "kline_incremental"
-    lock_conn = engine.connect()
-    if not lock_conn.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": symbol_id + 3000000000}).scalar():
-        lock_conn.close()
-        raise self.retry(countdown=30, max_retries=None)
-    db = get_session()
+    if not market_policy.read()["auto_update_enabled"]:
+        return {"skipped": "automatic StockDB update disabled"}
     try:
-        row = db.scalar(select(SyncTask).where(SyncTask.task_type == task_type,
-                                             SyncTask.symbol_id == symbol_id).with_for_update())
-        if row is None or row.celery_task_id != self.request.id or row.status not in {"queued", "running"}:
-            return {"skipped": "stale or duplicate delivery"}
-        row.status = "running"
-        row.publish_status = "started"
-        row.last_run_at = datetime.now(UTC)
-        row.next_run_at = None
-        db.commit()
-        _log(task_type, self.request.id, "running", f"watchlist symbol_id={symbol_id}")
-        if initialize:
-            result = sync_service.run_kline_init(symbol_id=symbol_id)
-        else:
-            result = sync_service.run_kline_incremental(symbol_id=symbol_id)
-        quality = kline_quality_service.get_quality(db, symbol_id, "1d")
-        if quality is None or quality.status != "complete":
-            raise RuntimeError(f"关注股票历史日 K 暂不可用：{quality.missing_count if quality else '未核验'}")
-        db.refresh(row)
-        if row.celery_task_id != self.request.id:
-            return {"skipped": "superseded delivery"}
-        user_repo.update_watchlist_sync_status(db, symbol_id, "done")
-        row.status = "success"
-        row.publish_status = "completed"
-        row.retry_count = 0
-        row.next_run_at = None
-        row.last_error = None
-        db.commit()
-        _log(task_type, self.request.id, "success", f"watchlist symbol_id={symbol_id}: {result}")
-        return result
-    except Exception as exc:
-        db.rollback()
-        row = db.scalar(select(SyncTask).where(SyncTask.task_type == task_type,
-                                             SyncTask.symbol_id == symbol_id).with_for_update())
-        if row is not None and row.celery_task_id == self.request.id:
-            row.retry_count += 1
-            row.last_error = str(exc)[:500]
-            row.last_run_at = datetime.now(UTC)
-            row.status = "queued" if row.retry_count <= 3 else "failed"
-            row.publish_status = "pending" if row.status == "queued" else "completed"
-            from app.services.watchlist_delivery import RETRY_SECONDS
-
-            row.next_run_at = datetime.now(UTC) + timedelta(seconds=RETRY_SECONDS if row.status == "queued" else 900)
-            row.celery_task_id = str(uuid4()) if row.status == "queued" else self.request.id
-            user_repo.update_watchlist_sync_status(db, symbol_id, "pending" if row.status == "queued" else "failed")
-        db.commit()
-        _log(task_type, self.request.id, "failed", str(exc))
-        logger.warning("watchlist sync failed: symbol_id=%s retry=%s: %s", symbol_id,
-                       row.retry_count if row else None, exc)
+        return stockdb_update.request_update(scheduled_day=datetime.now(get_settings().tz).date().isoformat())
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            return {"skipped": exc.detail}
         raise
-    finally:
-        for user_id in db.scalars(select(UserWatchlist.user_id).where(UserWatchlist.symbol_id == symbol_id)):
-            market_cache.invalidate_watchlist_cache(user_id)
-        db.close()
-        lock_conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": symbol_id + 3000000000})
-        lock_conn.close()
-
-
-@celery_app.task(name="app.worker.tasks.sync_tasks.watchlist_delivery_reconcile")
-def watchlist_delivery_reconcile() -> dict:
-    from app.services.watchlist_delivery import dispatch_watchlist_sync
-
-    return dispatch_watchlist_sync()
-
-
-@celery_app.task(name='app.worker.tasks.sync_tasks.local_market_after_close')
-def local_market_after_close():
-    from app.services import market_policy, local_market_sync
-    if not market_policy.read()['auto_sync_enabled']:
-        return {'skipped': 'automatic local sync disabled'}
-    return local_market_sync.request_sync()
 
 
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_backfill",
@@ -143,6 +71,7 @@ def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: s
     from app.services.sync_service import prepare_history_window
 
     db = get_session()
+    sym = None
     try:
         sym = db.get(Symbol, symbol_id)
         if sym is None:
@@ -153,7 +82,7 @@ def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: s
         return result
     except Exception as exc:
         db.rollback()
-        if self.request.retries < 2:
+        if sym is not None and sym.type == "index" and self.request.retries < 2:
             raise self.retry(exc=exc, countdown=10, max_retries=2)
         from app.utils.redis_client import get_redis_client
 
@@ -208,20 +137,6 @@ def kline_init_fixed_indices(self) -> dict:
         lock_conn.close()
 
 
-@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_incremental")
-def kline_incremental(self, symbol_id: int | None = None) -> dict:
-    """每日收盘后增量同步。"""
-    _log("kline_incremental", self.request.id, "running", f"start symbol_id={symbol_id}")
-    try:
-        result = sync_service.run_kline_incremental(symbol_id=symbol_id)
-        _log("kline_incremental", self.request.id, "success", f"done: {result}")
-        return result
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("kline_incremental failed")
-        _log("kline_incremental", self.request.id, "failed", str(exc))
-        raise
-
-
 @celery_app.task(
     bind=True,
     name="app.worker.tasks.sync_tasks.catalog_sync",
@@ -252,24 +167,9 @@ def catalog_sync(self) -> dict:
         lock.release()
 
 
-@celery_app.task(name="app.worker.tasks.sync_tasks.provider_probe")
-def provider_probe() -> dict:
-    """探测熔断中的行情 Provider（固定标的 1 根日K），成功即自动恢复。"""
-    from app.data_providers.factory import get_provider
-
-    try:
-        results = get_provider().probe()
-        if results:
-            logger.info("[provider] probe results: %s", results)
-        return {"probed": results}
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("provider_probe failed: %s", exc)
-        return {"probed": [], "error": str(exc)[:120]}
-
-
-@celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.local_market_sync",
-                 acks_late=True, reject_on_worker_lost=True, soft_time_limit=6900, time_limit=7200)
-def local_market_sync(self) -> dict:
-    from app.services import local_market_sync as service
-
-    return service.run(self.request.id)
+@celery_app.task(autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 3})
+def refresh_stockdb_catalog() -> dict:
+    result = sync_service.run_catalog_sync(force=True, local_only=True)
+    if result["status"] != "done":
+        raise RuntimeError("StockDB directory is unavailable")
+    return result

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # G05 · P1-1 备份完整性验证：把最近一次全量备份恢复到一个临时库，校验完整后删除临时库。
 #
-# 由 Celery beat 每周日 03:30 调用（app/worker/tasks/backup_tasks.py），也可人工执行。
+# 用于手动验证最近一次 PostgreSQL 备份。
 # 未通过时退出码 1 —— 说明备份不可用，必须立即排查（磁盘损坏 / dump 被截断 / 恢复报错）。
 #
 # 用法：

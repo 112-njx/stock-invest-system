@@ -10,27 +10,18 @@ from app.services import admin_services
 from fastapi.testclient import TestClient
 
 
-@pytest.mark.parametrize(("task", "queue"), [
-    ({"name": "app.worker.tasks.sync_tasks.local_market_sync"}, "fixed_indices"),
-    ({"name": "app.worker.tasks.sync_tasks.kline_init_fixed_indices"}, "fixed_indices"),
-    ({"name": "other", "delivery_info": {"routing_key": "backfill"}}, "backfill"),
-    ({"name": "app.worker.tasks.sync_tasks.watchlist_stock_sync"}, "watchlist"),
-    ({"name": "app.worker.tasks.sync_tasks.watchlist_delivery_reconcile"}, "control"),
-])
-def test_actual_queue_routing(task, queue):
-    assert admin._queue_name(task) == queue
-
-
-def test_local_sync_failures_are_counted_in_local_queue(monkeypatch):
-    inspector = SimpleNamespace(**{name: lambda: {} for name in ("ping", "active_queues", "active", "scheduled", "reserved")})
-    monkeypatch.setattr(admin.celery_app.control, "inspect", lambda **_: inspector)
-    db, redis = Mock(), Mock()
-    db.scalar.side_effect = [1, 2, 3, 4, 5]
+def test_queue_list_includes_replay_and_excludes_retired_watchlist(monkeypatch):
+    status = {name: lambda: {} for name in ("ping", "active_queues", "scheduled", "reserved")}
+    status["active"] = lambda: {"worker": [
+        {"delivery_info": {"routing_key": "forecast_replay"}},
+        {"delivery_info": {"routing_key": "watchlist"}},
+    ]}
+    monkeypatch.setattr(admin.celery_app.control, "inspect", lambda **_: SimpleNamespace(**status))
+    redis = Mock()
     redis.llen.return_value = 0
-    queues, workers = admin._task_queue_state(db, redis)
-    assert queues["fixed_indices"]["abnormal"] == 3
-    assert queues["watchlist"]["abnormal"] == 3
-    assert queues["watchlist"]["delayed"] == 4
+    queues, workers = admin._task_queue_state(redis)
+    assert queues["forecast_replay"]["active"] == 1
+    assert "watchlist" not in queues
     assert not any(workers.values())
 
 

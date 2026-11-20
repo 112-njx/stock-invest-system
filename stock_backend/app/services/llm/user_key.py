@@ -63,7 +63,9 @@ def record_usage(db: Session, user_id: int, prompt_tokens: int, completion_token
         db.rollback()
 
 
-def build_llm_service_for_user(db: Session, user_id: int, base: LLMService | None = None) -> LLMService:
+def build_llm_service_for_user(
+    db: Session, user_id: int, base: LLMService | None = None, *, isolate_user_breaker: bool = False,
+) -> LLMService:
     """装配该用户的 LLMService：用户 key 优先 + token 用量累加回调。
 
     `base` 为进程级单例（调用方传入以保留测试注入缝隙）；用量回调使用**独立会话**
@@ -90,7 +92,11 @@ def build_llm_service_for_user(db: Session, user_id: int, base: LLMService | Non
     except Exception as e:  # noqa: BLE001 — 解密失败（密钥轮换等）不应中断对话
         logger.warning("load user api key failed user=%s: %s", user_id, e)
         key = None
-    return base.with_api_key(key, usage_sink=_sink) if key else _with_sink(base, _sink)
+    if not key:
+        return _with_sink(base, _sink)
+    if isolate_user_breaker:
+        return base.with_api_key(key, usage_sink=_sink, share_breaker=False)
+    return base.with_api_key(key, usage_sink=_sink)
 
 
 def _with_sink(svc: LLMService, sink) -> LLMService:

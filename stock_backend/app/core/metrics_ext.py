@@ -24,7 +24,8 @@ BACKUP_SIZE = Gauge("backup_last_dump_bytes", "最近一次全量备份文件大
 BACKUP_DISK_FREE = Gauge("backup_disk_free_ratio", "备份目录所在文件系统剩余空间占比（0-1）")
 BACKUP_WAL_FILES = Gauge("backup_wal_archive_files", "WAL 归档目录文件数（-1 表示未配置/不可读）")
 
-_CELERY_QUEUES = ("sync", "backtest", "ai", "backup", "watchlist", "fixed_indices", "backfill", "control")
+_CELERY_QUEUES = ("sync", "backtest", "ai", "backup", "fixed_indices", "backfill", "control", "forecast_replay")
+_CELERY_WORKER_ROLES = ("business", "control")
 
 
 def refresh_platform_metrics() -> None:
@@ -41,12 +42,11 @@ def _refresh_worker_health() -> None:
         from app.worker.celery_app import celery_app
 
         replies = celery_app.control.inspect(timeout=1).ping() or {}
-        for role in ("watchlist", "fixed", "backfill", "control"):
-            WORKER_UP.labels(role).set(int(any(node.startswith(role + "@") for node in replies)))
     except Exception as exc:
         logger.warning("worker health collect failed: %s", exc)
-        for role in ("watchlist", "fixed", "backfill", "control"):
-            WORKER_UP.labels(role).set(0)
+        replies = {}
+    for role in _CELERY_WORKER_ROLES:
+        WORKER_UP.labels(role).set(int(any(node.startswith(role + "@") for node in replies)))
 
 
 def _refresh_queue_depth() -> None:
