@@ -12,7 +12,7 @@ from app.data_providers.factory import get_provider
 from app.data_providers.stockdb import StockDBProvider
 from app.models.kline import KLINE_MODELS, Kline1d
 from app.models.symbol import Symbol
-from app.repositories import kline_repo, symbol_repo
+from app.repositories import kline_repo, market_index_repo, symbol_repo
 from app.utils import market_cache
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ def _query_search_rows(db: Session, q: str, type_: str | None, limit: int) -> li
 
 def _search_row(db: Session, s: Symbol) -> dict:
     """搜索行：Symbol 字段 + is_catalog/has_kline 标注。"""
-    has = bool(local_daily_date(s)) if s.type in {"stock", "etf"} else has_kline(db, s.id)
+    has = bool(local_daily_date(s)) if s.type in {"stock", "etf"} else has_kline(db, s.id, s)
     return {
         "id": s.id,
         "code": s.code,
@@ -98,8 +98,10 @@ def _kline_symbol_ids(db: Session, ids: list[int]) -> set[int]:
     return set(db.scalars(query.distinct()))
 
 
-def has_kline(db: Session, symbol_id: int) -> bool:
+def has_kline(db: Session, symbol_id: int, symbol: Symbol | None = None) -> bool:
     """标的是否已有 K 线（关注添加自动同步判定用）。"""
+    if market_index_repo.handles(symbol or db.get(Symbol, symbol_id)):
+        return bool(market_index_repo.bars(db, symbol_id, "1d", limit=1))
     return symbol_id in _kline_symbol_ids(db, [symbol_id])
 
 
@@ -161,6 +163,14 @@ def get_kline(
         sym = db.get(Symbol, symbol_id)
         if sym is None or sym.type != 'stock':
             raise ValueError('新增分钟周期仅支持个股')
+    if market_index_repo.handles(sym):
+        query_end = market_cache.as_utc(end) if end is not None else None
+        query_start = market_cache.as_utc(start) if start is not None else None
+        if not use_cache:
+            query_end = query_end or datetime.now(UTC)
+            query_start = query_start or query_end - timedelta(days=365)
+        bars = market_index_repo.bars(db, symbol_id, period, query_start, query_end, limit, offset, latest=use_cache)
+        return [{**market_cache.kline_bar_to_dict(bar), "source": bar.source} for bar in bars]
     if use_cache:
         cached = market_cache.get_kline_cache(symbol_id, period, limit)
         if cached is not None:

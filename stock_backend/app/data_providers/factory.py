@@ -175,11 +175,16 @@ class DataProviderFactory:
         )
         return result or []
 
-    def fetch_kline_checked(self, symbol: str, period: str, start, end, asset_type: str = "stock", *, external_only: bool = False) -> tuple[list, bool]:
+    def fetch_kline_checked(self, symbol: str, period: str, start, end, asset_type: str = "stock", *,
+                            external_only: bool = False, public_index: bool = False) -> tuple[list, bool]:
         """历史补拉专用：返回 K 线及空区间是否已由全部可用来源确认。"""
         confirmed = True
         attempted = False
-        for p in self._active_providers():
+        if public_index and asset_type != "index":
+            raise ValueError("专用公开行情仅支持大盘指数")
+        providers = ([p for p in self._providers if p.name in {"eastmoney", "sina"}]
+                     if public_index else self._active_providers())
+        for p in providers:
             if external_only and p.name == 'stockdb':
                 continue
             if not p.can_fetch_kline(asset_type, period):
@@ -195,10 +200,17 @@ class DataProviderFactory:
             try:
                 with kline_scope(symbol, period, start, end, asset_type):
                     requested_at = datetime.now(UTC)
-                    bars = p.fetch_kline(symbol, period, start, end, asset_type)
+                    if public_index and p.name == "eastmoney":
+                        bars = p.fetch_headline_kline(symbol, period, start, end)
+                    else:
+                        bars = p.fetch_kline(symbol, period, start, end, asset_type)
                 if bars:
                     with self._lock:
                         circuit.record_success(now)
+                    if public_index:
+                        for bar in bars:
+                            bar.source = p.name
+                        return bars, True
                     return self._label_bars(bars, p, period, requested_at), True
             except Exception as exc:  # noqa: BLE001
                 confirmed = False

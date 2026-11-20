@@ -13,7 +13,7 @@ INSERT INTO symbols (code, name, type, market, etf_linked, is_fixed_index, sort_
 ('399001', '深证成指',   'index', 'SZSE', '',        TRUE,  5),
 ('000016', '上证50',     'index', 'SSE',  '510050',  TRUE,  6),
 ('000852', '中证1000',   'index', 'CSI',  '512100',  TRUE,  7),
-('932000', '中证2000',   'index', 'CSI',  '563300',  TRUE,  8),
+('000905', '中证500',    'index', 'CSI',  '510500',  TRUE,  8),
 -- ---- 本地申万一级行业（保持原 H 区显示方式）----
 ('801010.SL', '农林牧渔', 'index', 'SW', '', TRUE, 9),
 ('801020.SL', '采掘', 'index', 'SW', '', TRUE, 10),

@@ -52,7 +52,7 @@ export function fetchKlineQuality(symbol: string | number, period: Period) {
 
 export interface LatestQuote {
   symbol_id: number
-  source?: 'stockdb' | 'akshare'
+  source?: 'stockdb' | 'akshare' | 'qmt' | 'eastmoney' | 'sina'
   data_date?: string | null
   policy_revision?: number
   code: string

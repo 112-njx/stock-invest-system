@@ -53,6 +53,7 @@ class KlineBar:
     amount: float
     source: str = "stockdb"
     close_confirmed: bool = False
+    pre_close: float | None = None
 
 
 class BaseDataProvider(ABC):

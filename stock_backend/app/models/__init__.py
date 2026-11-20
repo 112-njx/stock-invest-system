@@ -8,6 +8,7 @@ from .export_task import ExportTask
 from .forecast import ForecastReplay, ForecastRun, ForecastTracking
 from .kline import KLINE_MODELS, Kline1d, Kline1w, Kline1mon, Kline15m
 from .kline_quality import KlineQuality
+from .market_index_bar import MarketIndexBar
 from .notification import AdminAnnouncement, Notification
 from .ops import MarketSourceSettings, SyncTask, TaskLog
 from .session import UserSession
@@ -36,6 +37,7 @@ __all__ = [
     "Kline1w",
     "Kline1mon",
     "KlineQuality",
+    "MarketIndexBar",
     "MemoryChunk",
     "Notification",
     "StrategyTemplate",

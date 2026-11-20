@@ -98,6 +98,13 @@ def kline_backfill(self, symbol_id: int, period: str, start_iso: str, end_iso: s
         db.close()
 
 
+@celery_app.task(name="app.worker.tasks.sync_tasks.refresh_headline_indices", soft_time_limit=900, time_limit=960)
+def refresh_headline_indices() -> dict:
+    from app.services.market_index_sync import refresh_all
+
+    return refresh_all()
+
+
 @celery_app.task(bind=True, name="app.worker.tasks.sync_tasks.kline_init_fixed_indices",
                  acks_late=True, reject_on_worker_lost=True,
                  soft_time_limit=6000, time_limit=6300)

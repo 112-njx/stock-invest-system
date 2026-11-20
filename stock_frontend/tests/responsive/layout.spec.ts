@@ -258,6 +258,39 @@ test('a published data version refreshes the guest stock table', async ({ page }
   await expect(page.getByText(/A股 · 20260106/)).toBeVisible({ timeout: 12000 })
 })
 
+test('a headline index update refreshes market quotes and the guest chart', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop')
+  await stubApi(page)
+  await page.routeWebSocket('**/api/v1/ws/market', socket => socket.close())
+  const symbol = { id: 8, code: '000905', name: '中证500', market: 'CSI', type: 'index', sort_order: 8 }
+  let version = 'before'
+  let observedVersion = ''
+  let chartVersion = ''
+  await page.route('**/api/v1/market/headline-version', route => {
+    observedVersion = version
+    return route.fulfill({ json: { version } })
+  })
+  await page.route('**/api/v1/market/home-indices', route => route.fulfill({
+    json: { code: 0, data: [{ ...symbol, quote: null }] },
+  }))
+  await page.route('**/api/v1/quotes/latest?*', route => route.fulfill({
+    json: { code: 0, data: [{ symbol_id: symbol.id, code: symbol.code, name: symbol.name,
+      type: symbol.type, price: version === 'before' ? 5183 : 5231, change_pct: 1.2, source: 'qmt' }] },
+  }))
+  await page.route('**/api/v1/kline?*', route => {
+    chartVersion = version
+    return route.fulfill({ json: { code: 0, data: [
+      { ts: '2026-01-05T00:00:00Z', open: 5181, high: 5190, low: 5160, close: 5183, volume: 100, amount: 150000 },
+    ] } })
+  })
+  await page.goto('/market')
+  await expect(page.getByText('5183.00', { exact: true })).toBeVisible()
+  await expect.poll(() => [observedVersion, chartVersion]).toEqual(['before', 'before'])
+  version = 'after'
+  await expect(page.getByText('5231.00', { exact: true })).toBeVisible({ timeout: 12000 })
+  await expect.poll(() => chartVersion).toBe('after')
+})
+
 test('phone stock table preserves access to all columns and row actions', async ({ page }, info) => {
   test.skip(!info.project.name.startsWith('phone'))
   await stubApi(page)

@@ -53,7 +53,7 @@ import { useMarketStore, type Period } from '@/stores/market'
 import { useAuthModalStore } from '@/stores/authModal'
 import { useUserStore } from '@/stores/user'
 import { useWsStore } from '@/stores/wsStore'
-import { marketVersion } from '@/composables/useMarketVersion'
+import { headlineIndexVersion, marketVersion } from '@/composables/useMarketVersion'
 import { useThemeStore } from '@/stores/theme'
 import { trackTiming } from '@/utils/monitor'
 import { toast } from '@/utils/toast'
@@ -1310,6 +1310,12 @@ watch([() => props.symbol?.id, chartPeriod], ([symbolId], [previousSymbolId]) =>
 watch(() => theme.mode, () => applyTheme())
 watch(marketVersion, () => {
   if (!props.snapshotBars && isEquityChart()) void loadKline(true)
+})
+watch(headlineIndexVersion, (_next, previous) => {
+  const symbol = props.symbol
+  if (!symbol || symbol.type !== 'index' || props.snapshotBars || ws.connected) return
+  const order = symbol.sort_order ?? market.fixedIndices.find(item => item.id === symbol.id)?.sort_order
+  if (order != null && order >= 1 && order <= 8 && (previous || !loadedBars.length)) void loadKline(true)
 })
 
 onMounted(() => {

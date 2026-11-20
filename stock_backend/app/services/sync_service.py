@@ -7,7 +7,8 @@ from app.core.config import get_settings
 from app.data_providers.factory import get_provider
 from app.models.symbol import Symbol
 from app.models.user import UserWatchlist
-from app.repositories import kline_repo, ops_repo, symbol_repo, user_repo
+from app.repositories import kline_repo, market_index_repo, ops_repo, symbol_repo, user_repo
+from app.services import market_index_sync
 from app.utils import market_cache
 from app.utils.db import get_session
 from app.utils.kline_partition import ensure_current_partitions
@@ -70,6 +71,8 @@ def prepare_history_window(db, sym, period, start, end, *, initial=False):
     from app.models.kline import KLINE_MODELS
     from app.services import local_history, source_history
 
+    if market_index_repo.handles(sym):
+        return market_index_sync.refresh_period(db, sym, period, start, end, initial=initial)
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 5000000000 + sym.id})
     if period in {'1m', '5m', '30m', '60m'} and sym.type != 'stock':
         raise ValueError('新增分钟周期仅支持个股')
@@ -130,12 +133,18 @@ def _mark_watchlist_synced(db, symbol_id: int, status: str) -> None:
 # ---- V0.2 1.1 启动预同步 / 缓存预热 ----
 def supported_symbol(sym):
     from app.services.market_policy import akshare_enabled
-    return sym.type != "index" or sym.market == "SW" or akshare_enabled()
+    return market_index_repo.handles(sym) or sym.type != "index" or sym.market == "SW" or akshare_enabled()
+
+
+def _fixed_daily_exists(db, sym):
+    if market_index_repo.handles(sym):
+        return bool(market_index_repo.coverage(db, sym.id, "1d")[1])
+    return kline_repo.latest_ts(db, "1d", sym.id) is not None
 
 
 def stale_fixed_index_count(db) -> tuple[int, int]:
     symbols = [sym for sym in symbol_repo.list_fixed_indices(db) if supported_symbol(sym)]
-    missing = sum(kline_repo.latest_ts(db, "1d", sym.id) is None for sym in symbols)
+    missing = sum(not _fixed_daily_exists(db, sym) for sym in symbols)
     return missing, len(symbols)
 
 
@@ -182,10 +191,11 @@ def run_fixed_indices_sync(skip_existing: bool = True) -> dict:
         db.commit()
         result = {}
         for number, sym in enumerate(symbols, 1):
-            if skip_existing and kline_repo.latest_ts(db, "1d", sym.id) is not None:
+            if skip_existing and _fixed_daily_exists(db, sym):
                 continue
             try:
-                result[str(sym.id)] = run_kline_init(symbol_id=sym.id)
+                item = run_kline_init(symbol_id=sym.id)
+                result[str(sym.id)] = item.get(sym.code, item) if market_index_repo.handles(sym) else item
             except Exception as exc:
                 result[str(sym.id)] = {"error": str(exc)[:200]}
                 logger.warning('fixed index sync failed code=%s: %s', sym.code, exc, exc_info=True)
@@ -269,7 +279,8 @@ def warmup_fixed_indices_cache() -> dict:
     """固定指数最近500根日K 写 Redis（best-effort，失败不阻断启动）。"""
     db = get_session()
     try:
-        symbols = [sym for sym in symbol_repo.list_fixed_indices(db) if supported_symbol(sym)]
+        symbols = [sym for sym in symbol_repo.list_fixed_indices(db)
+                   if supported_symbol(sym) and not market_index_repo.handles(sym)]
         kline_warmed = 0
         for sym in symbols:
             bars = kline_repo.latest_bars(db, "1d", sym.id, 500)
@@ -304,6 +315,18 @@ def run_kline_init(symbol_id: int | None = None, days: int | None = None, end: d
             if sym is None or sym.type in {"stock", "etf"} or not supported_symbol(sym):
                 continue
             ops_repo.upsert_sync_task(db, "kline_init", sym.id, "running", datetime.now(UTC))
+            if market_index_repo.handles(sym):
+                result = market_index_sync.refresh_symbol(db, sym, end)
+                complete = kline_quality_service.record_coverage(db, sym.id)
+                ops_repo.upsert_sync_task(db, "kline_init", sym.id, "success" if complete else "failed",
+                                          datetime.now(UTC))
+                if sym.id in watched_ids:
+                    _mark_watchlist_synced(db, sym.id, "done" if complete else "failed")
+                db.commit()
+                if not complete:
+                    result["error"] = f"{sym.name} 没有可用的日 K"
+                results[sym.code] = result
+                continue
             if sym.type == "index" and not sym.code:  # 行业指数 code 回填
                 code = provider.resolve_index_code(sym.name)
                 if code:

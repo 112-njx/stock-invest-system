@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -12,7 +12,7 @@ from app.core.exceptions import ApiError
 from app.core.response import ok
 from app.models.symbol import Symbol
 from app.models.user import User
-from app.repositories import kline_repo, ops_repo
+from app.repositories import kline_repo, market_index_repo, ops_repo
 from app.schemas.market import KlineBarOut, LatestQuoteOut, SymbolOut, SymbolSearchOut
 from app.services import market_service, sync_service
 from app.utils import market_cache
@@ -132,6 +132,12 @@ def home_indices(db: Session = Depends(get_read_db)) -> dict:
     ])
 
 
+@router.get("/market/headline-version")
+def headline_version(response: Response, db: Session = Depends(get_read_db)) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return {"version": market_index_repo.version(db)}
+
+
 @router.get("/kline")
 def get_kline(
     symbol: str = Query(..., description="标的代码（或 symbol_id）"),
@@ -175,6 +181,15 @@ def get_kline_quality(
             if latest:
                 data["checked_to"] = latest.isoformat()
         return ok(data=data)
+    if market_index_repo.handles(sym):
+        if period not in market_index_repo.PERIODS:
+            return ok(data={"status": "unsupported"})
+        first, last = market_index_repo.coverage(db, sym.id, period)
+        return ok(data={
+            "status": "complete" if last else "unchecked", "can_supplement": True,
+            "checked_from": first.date().isoformat() if first else None,
+            "checked_to": last.date().isoformat() if last else None,
+        })
     if period != "1d" or not kline_quality_service.eligible(sym):
         return ok(data={"status": "unsupported"})
     data = kline_quality_service.quality_dict(kline_quality_service.get_quality(db, sym.id, period))

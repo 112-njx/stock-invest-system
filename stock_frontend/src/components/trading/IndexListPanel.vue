@@ -42,7 +42,7 @@ function onDblClick(s: SymbolInfo) {
 
 function priceNote(s: SymbolInfo): string {
   const snap = market.quotes[s.id]
-  if (snap?.source === 'stockdb' || snap?.source === 'akshare') {
+  if (snap?.data_date || snap?.source === 'stockdb' || snap?.source === 'akshare') {
     return snap.data_date ? `数据日期 ${snap.data_date}` : '暂无价格数据'
   }
   if (!snap?.updated_at) return '暂无价格数据'

@@ -9,7 +9,7 @@ import LegalModal from '@/components/legal/LegalModal.vue'
 import { useNotificationStore } from '@/stores/notification'
 import { useThemeStore } from '@/stores/theme'
 import { useUserStore } from '@/stores/user'
-import { useMarketVersion } from '@/composables/useMarketVersion'
+import { useHeadlineIndexVersion, useMarketVersion } from '@/composables/useMarketVersion'
 
 // 应用启动时应用持久化主题（默认暗黑）
 const theme = useThemeStore()
@@ -17,6 +17,7 @@ theme.init()
 
 const route = useRoute()
 useMarketVersion(computed(() => ['market-home', 'market-detail', 'stocks', 'heatmap'].includes(String(route.name))))
+useHeadlineIndexVersion(computed(() => ['market-home', 'market-detail'].includes(String(route.name))))
 const user = useUserStore()
 const notification = useNotificationStore()
 // G35：独立页（登录/找回密码/法律页）不显示顶部导航与公告条；其余页面一律显示

@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, watch } from 'vue'
 import { fetchLatestQuotes } from '@/api/market'
 import { useMarketStore } from '@/stores/market'
-import { marketVersion } from '@/composables/useMarketVersion'
+import { headlineIndexVersion, marketVersion } from '@/composables/useMarketVersion'
 
 /** Source latest records: refresh on selection, page visibility and K-line events. */
 export function useLatestQuotes() {
@@ -24,6 +24,7 @@ export function useLatestQuotes() {
   function visible() { if (document.visibilityState === 'visible') void refresh() }
   watch(ids, () => void refresh())
   watch(marketVersion, () => void refresh())
+  watch(headlineIndexVersion, () => void refresh())
   function start() {
     if (active) return
     active = true

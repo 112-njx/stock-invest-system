@@ -6,6 +6,8 @@ from sqlalchemy import func, select
 
 from app.models.kline import Kline1d
 from app.models.kline_quality import KlineQuality
+from app.models.symbol import Symbol
+from app.repositories import market_index_repo
 
 MAINLAND_MARKETS = {"SSE", "SZSE", "CSI"}
 
@@ -32,10 +34,14 @@ def quality_dict(row: KlineQuality | None) -> dict:
 def record_coverage(db, symbol_id: int) -> bool:
     from app.services.source_history import cached
 
-    first, last = db.execute(select(func.min(Kline1d.ts), func.max(Kline1d.ts)).where(
-        Kline1d.symbol_id == symbol_id, Kline1d.source == "stockdb",
-    )).one()
-    if last is None:
+    headline = market_index_repo.handles(db.get(Symbol, symbol_id))
+    if headline:
+        first, last = market_index_repo.coverage(db, symbol_id, "1d")
+    else:
+        first, last = db.execute(select(func.min(Kline1d.ts), func.max(Kline1d.ts)).where(
+            Kline1d.symbol_id == symbol_id, Kline1d.source == "stockdb",
+        )).one()
+    if last is None and not headline:
         bars = cached(symbol_id, "1d")
         if bars:
             first, last = bars[0].ts, bars[-1].ts

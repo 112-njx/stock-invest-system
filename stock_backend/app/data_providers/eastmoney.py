@@ -10,6 +10,7 @@ import time
 from datetime import UTC, datetime
 
 import pandas as pd
+import requests
 
 from app.core.config import get_settings
 
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 _DAILY_PERIOD = {"1d": "daily", "1w": "weekly", "1mon": "monthly"}
 _BOARD_PERIOD = {"1d": "日k", "1w": "周k", "1mon": "月k"}
 _MIN_PERIODS = ("15m",)
+_HEADLINE_SECIDS = {
+    "000001": "1.000001", "000300": "1.000300", "399006": "0.399006", "000688": "1.000688",
+    "399001": "0.399001", "000016": "1.000016", "000852": "1.000852", "000905": "1.000905",
+}
 # 行业板块名匹配：分类后缀（东财三级行业带罗马数字）与最低置信阈值
 _ROMAN_SUFFIX = re.compile(r"[ⅠⅡⅢⅣⅤ]+$")
 _MIN_INDUSTRY_SCORE = 75
@@ -55,6 +60,38 @@ class EastMoneyProvider(BaseDataProvider):
         self._board_map_ttl = 3600  # 秒
 
     # ---- K线 ----
+    def fetch_headline_kline(self, symbol, period, start, end) -> list[KlineBar]:
+        """Read the same EastMoney history endpoint by known exchange-qualified ID."""
+        cycle = {"1d": 101, "1w": 102, "1mon": 103, "15m": 15}[period]
+        timezone = get_settings().tz
+        first_day, last_day = (start, end) if period != "15m" else (
+            start.astimezone(timezone), end.astimezone(timezone),
+        )
+        payload = self._call(self._headline_history, raise_on_giveup=True, params={
+            "secid": _HEADLINE_SECIDS[symbol],
+            "fields1": "f1,f2,f3,f4,f5,f6", "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+            "klt": cycle, "fqt": 0, "beg": first_day.strftime("%Y%m%d"), "end": last_day.strftime("%Y%m%d"),
+        })
+        names = ["日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额", "振幅", "涨跌幅", "涨跌额", "换手率"]
+        convert = _row_to_min_bar if period == "15m" else _row_to_daily_bar
+        bars = []
+        for line in payload.get("klines") or []:
+            row = pd.Series(dict(zip(names, line.split(","))))
+            bar = convert(row)
+            if bar and start <= bar.ts <= end:
+                bar.volume *= 100  # EastMoney index volume is in lots.
+                bars.append(bar)
+        return bars
+
+    def _headline_history(self, params):
+        response = requests.get("https://push2his.eastmoney.com/api/qt/stock/kline/get",
+                                params=params, timeout=self.timeout)
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("rc") != 0 or not isinstance(payload.get("data"), dict):
+            raise ValueError("东方财富未返回指定大盘指数")
+        return payload["data"]
+
     def fetch_kline(
         self,
         symbol: str,
@@ -238,6 +275,7 @@ def _row_to_daily_bar(row: pd.Series) -> KlineBar | None:
             return None
         vol = _to_float(row.get("成交量")) or 0.0
         amount = _to_float(row.get("成交额")) or 0.0
+        change = _to_float(row.get("涨跌额"))
         return KlineBar(
             ts=ts.to_pydatetime().replace(tzinfo=UTC),
             open=o,
@@ -246,6 +284,7 @@ def _row_to_daily_bar(row: pd.Series) -> KlineBar | None:
             close=c,
             volume=int(vol),
             amount=amount,
+            pre_close=round(c - change, 6) if change is not None and c > change else None,
         )
     except Exception:  # noqa: BLE001
         return None

@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from app.core.config import get_settings
 from app.models.kline import KLINE_MODELS
 from app.models.symbol import Symbol
-from app.repositories import kline_repo
+from app.repositories import kline_repo, market_index_repo
 from app.services import market_service, sdk_indicators
 from app.services.indicator_registry import MAX_HISTORY_ROWS, REGISTRY, validate_parameters
 from app.utils import market_cache
@@ -77,6 +77,9 @@ def compute_indicators(
             bars = []
         if not bars:
             bars = source_history.window(db, symbol_id, period, local_history.FIRST, end, MAX_HISTORY_ROWS + 1)
+    elif market_index_repo.handles(sym):
+        bars = market_index_repo.bars(db, symbol_id, period, end=end, limit=MAX_HISTORY_ROWS + 1,
+                                      latest=not explicit_range)
     else:
         bars = kline_repo.get_bars(db, period, symbol_id, datetime.min.replace(tzinfo=UTC), end,
                                   limit=MAX_HISTORY_ROWS + 1, source_window=(start, end), latest=not explicit_range)
@@ -89,6 +92,8 @@ def compute_indicators(
                      source=bars[-1].source)
     if sym is not None and sym.type in {"stock", "etf"} and bars[-1].source == "stockdb":
         key += f":stockdb:{source_version}"
+    if market_index_repo.handles(sym):
+        key += f":index:{max(bar.updated_at for bar in bars).isoformat()}"
     if "ma" in names:
         # The active candle can change without changing its timestamp.
         closes = [(b.ts.isoformat(), str(b.close)) for b in bars]

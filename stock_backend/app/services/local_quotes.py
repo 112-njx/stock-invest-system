@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import UTC, datetime
 from app.data_providers.stockdb import StockDBProvider
-from app.repositories import kline_repo
+from app.repositories import kline_repo, market_index_repo
 from app.utils.redis_client import get_redis_client
 from app.services.market_policy import akshare_enabled
 from app.services.stockdb_update import ready_version
@@ -11,19 +11,20 @@ from app.services.stockdb_update import ready_version
 logger = logging.getLogger(__name__)
 
 
-def stored_quote(db, sym, bars=None):
+def stored_quote(db, sym, bars=None, *, index_history=False):
     if bars is None:
         bars = kline_repo.latest_bars(db, '1d', sym.id, limit=2)
     if not bars:
         return {}
     latest = bars[-1]
     close = float(latest.close)
-    previous = float(bars[-2].close) if len(bars) > 1 else None
+    previous = (float(latest.pre_close) if index_history and latest.pre_close
+                else float(bars[-2].close) if len(bars) > 1 else None)
     return dict(price=close, pre_close=previous, change=close-previous if previous else None,
                 change_pct=(close/previous-1)*100 if previous else None,
                 amplitude=(float(latest.high)-float(latest.low))/previous*100 if previous else None,
                 open=float(latest.open), high=float(latest.high), low=float(latest.low),
-                volume=int(latest.volume)*100, amount=float(latest.amount),
+                volume=int(latest.volume) * (1 if index_history else 100), amount=float(latest.amount),
                 updated_at=latest.ts.isoformat(), data_date=latest.ts.date().isoformat(),
                 source=latest.source)
 
@@ -63,6 +64,9 @@ def quotes(db, symbols):
                     item['extra'] = {k: row.get(k) for k in ('vol_ratio','is_st','total_share','float_share',
                                                             'total_mv','float_mv','pe_ttm','pb')}
                     item['extra'].update(market_cap=row.get('total_mv'), pe=row.get('pe_ttm'))
+            elif market_index_repo.handles(sym):
+                bars = market_index_repo.bars(db, sym.id, "1d", limit=2, latest=True)
+                item.update(stored_quote(db, sym, bars, index_history=True))
             elif sym.type == 'index' and sym.market == 'SW':
                 item.update(stored_quote(db, sym))
             else:
