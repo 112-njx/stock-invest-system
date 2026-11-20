@@ -1315,7 +1315,7 @@ watch(headlineIndexVersion, (_next, previous) => {
   const symbol = props.symbol
   if (!symbol || symbol.type !== 'index' || props.snapshotBars || ws.connected) return
   const order = symbol.sort_order ?? market.fixedIndices.find(item => item.id === symbol.id)?.sort_order
-  if (order != null && order >= 1 && order <= 8 && (previous || !loadedBars.length)) void loadKline(true)
+  if (order != null && order >= 1 && order <= 8 && (previous || !loadedBars.length)) void loadKline()
 })
 
 onMounted(() => {
