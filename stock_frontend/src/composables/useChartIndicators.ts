@@ -5,6 +5,7 @@ import type { fetchIndicators, IndicatorRow } from '@/api/market'
 /** Independent results: a failed request affects only its own series. */
 export function useChartIndicators(fetch: typeof fetchIndicators) {
   const priceMaRows = ref<IndicatorRow[]>([])
+  const priceMaLoading = ref(false)
   const indicatorRows = ref<IndicatorRow[]>([])
   const priceMaError = ref('')
   const indicatorError = ref('')
@@ -18,6 +19,7 @@ export function useChartIndicators(fetch: typeof fetchIndicators) {
     activeRetry = null
     panelRetrying.value = {}
     priceMaRows.value = []
+    priceMaLoading.value = false
     indicatorRows.value = []
     priceMaError.value = indicatorError.value = ''
     panelErrors.value = {}
@@ -33,6 +35,7 @@ export function useChartIndicators(fetch: typeof fetchIndicators) {
     activeRetry = null
     panelRetrying.value = {}
     const current = () => request === generation && isCurrent()
+    priceMaLoading.value = true
     const ma = fetch({ ...params, names: 'ma', ...(options ? { params: JSON.stringify({ ma: { periods: options.periods } }) } : {}) }).then(rows => {
       if (!current()) return
       priceMaRows.value = rows
@@ -41,6 +44,8 @@ export function useChartIndicators(fetch: typeof fetchIndicators) {
       if (!current()) return
       priceMaRows.value = []
       priceMaError.value = '主图价格均线获取失败，请检查 SDK 服务'
+    }).finally(() => {
+      if (current()) priceMaLoading.value = false
     })
     const results: Record<string, IndicatorRow[]> = {}
     if (options) { indicatorRows.value = []; panelErrors.value = {}; indicatorError.value = '' }
@@ -90,5 +95,5 @@ export function useChartIndicators(fetch: typeof fetchIndicators) {
   }
 
   async function retryPanel(key: string) { await activeRetry?.(key) }
-  return { priceMaRows, indicatorRows, priceMaError, indicatorError, panelErrors, panelRetrying, retryPanel, load, reset }
+  return { priceMaRows, priceMaLoading, indicatorRows, priceMaError, indicatorError, panelErrors, panelRetrying, retryPanel, load, reset }
 }

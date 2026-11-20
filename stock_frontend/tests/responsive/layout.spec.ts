@@ -420,3 +420,61 @@ test('desktop retains its columns and mouse shortcuts', async ({ page }, info) =
   await row.locator('.name').dblclick()
   await expect(page).toHaveURL(/\/market\/detail\?symbol=600519/)
 })
+
+
+test('a pending symbol never adopts the previous chart and quality does not block candles', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop')
+  await stubApi(page)
+  const industry = [
+    { id: 31, name: '农林牧渔', code: '801010.SL', price: 1200 },
+    { id: 32, name: '采掘', code: '801020.SL', price: 2345 },
+  ]
+  await page.route('**/api/v1/market/home-indices', route => route.fulfill({
+    json: { code: 0, data: industry.map((row, index) => ({
+      ...row, type: 'index', market: 'SW', sort_order: 9 + index,
+      quote: { symbol_id: row.id, price: row.price, change_pct: 1.2, data_date: '2026-11-05', source: 'stockdb' },
+    })) },
+  }))
+  const candles = Promise.withResolvers<void>()
+  const quality = Promise.withResolvers<void>()
+  await page.route('**/api/v1/kline?*', async route => {
+    const symbol = new URL(route.request().url()).searchParams.get('symbol')
+    if (symbol === '32') await candles.promise
+    const price = symbol === '32' ? 2345 : 1200
+    await route.fulfill({
+      json: { code: 0, data: [4, 5].map(day => ({
+        ts: '2026-11-0' + day + 'T00:00:00Z', open: price, high: price + 4,
+        low: price - 1, close: price + 1, volume: 100, amount: 1000,
+      })) },
+    })
+  })
+  await page.route('**/api/v1/kline/quality?*', async route => {
+    if (new URL(route.request().url()).searchParams.get('symbol') === '32') await quality.promise
+    await route.fulfill({ json: { code: 0, data: { status: 'unsupported' } } })
+  })
+  await page.route('**/api/v1/indicators?*', route => route.fulfill({ json: { code: 0, data: [] } }))
+
+  try {
+    await page.goto('/market')
+    const list = page.locator('.grid-h')
+    const chart = page.locator('.grid-f')
+    await expect(list.getByText('2345.00')).toBeVisible()
+    await expect(list.getByText('ETF', { exact: true })).toHaveCount(0)
+    await expect(list.getByText('机会', { exact: true })).toHaveCount(0)
+
+    await list.getByText('农林牧渔').click()
+    const watermark = chart.locator('.kline-chart__watermark')
+    await expect(watermark).toContainText('农林牧渔')
+    await list.getByText('采掘').click()
+    await expect(chart.getByText('采掘 801020.SL')).toBeVisible()
+    await expect(chart.getByRole('status').filter({ hasText: '正在加载日K' })).toBeVisible()
+    await expect(watermark).toHaveCount(0)
+
+    candles.resolve()
+    await expect(watermark).toContainText('采掘')
+    await expect(chart.getByText('正在加载日K…')).toHaveCount(0)
+  } finally {
+    candles.resolve()
+    quality.resolve()
+  }
+})

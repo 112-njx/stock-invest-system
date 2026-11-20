@@ -9,7 +9,7 @@
  * - 双击 emit，由父级决定是否进入详情页
  */
 import { visibleCandleExtrema } from '@/utils/visibleCandleExtrema'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useChartIndicators } from '@/composables/useChartIndicators'
 import { useDetailChartSettings, type MaLine } from '@/composables/useDetailChartSettings'
 import { useSyntheticWicks } from '@/composables/useSyntheticWicks'
@@ -29,6 +29,7 @@ import {
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type SeriesMarker,
+  TickMarkType,
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
@@ -169,7 +170,7 @@ const priceMas = computed(() => props.customizeIndicators
 const visiblePriceMas = computed(() => priceMas.value.filter(ma => ma.visible))
 const priceMaSeries = new Map<string, ISeriesApi<'Line'>>()
 let srLines: IPriceLine[] = []
-let lastBar: KLineBar | null = null
+const lastBar = shallowRef<KLineBar | null>(null)
 /** G32：买卖点标记插件（v5 独立插件 API） */
 let markersPlugin: ISeriesMarkersPluginApi<Time> | null = null
 /** G32：已加载 K 线的时间范围（UTC 秒），用于裁掉落在区间外的标记 */
@@ -429,9 +430,12 @@ function chartDateParts(time: Time) {
   }
 }
 
-function formatAxisMonth(time: Time): string {
-  const { year, month } = chartDateParts(time)
-  return `${year}-${month}`
+function formatAxisTick(time: Time, type: TickMarkType): string {
+  const { year, month, day, hour, minute } = chartDateParts(time)
+  if (type === TickMarkType.Year) return year
+  if (type === TickMarkType.Month) return `${year}-${month}`
+  if (type === TickMarkType.DayOfMonth) return `${month}-${day}`
+  return `${hour}:${minute}`
 }
 
 function formatCrosshairDate(time: Time): string {
@@ -461,8 +465,8 @@ function initChart() {
     localization: { timeFormatter: formatCrosshairDate },
     timeScale: {
       borderColor: c.grid,
-      tickMarkFormatter: formatAxisMonth,
-      timeVisible: true,
+      tickMarkFormatter: formatAxisTick,
+      timeVisible: chartPeriod.value.endsWith('m'),
       secondsVisible: false,
       rightOffset: 4,
       barSpacing: 8,
@@ -756,7 +760,7 @@ function selectedOverlayRow(key:string) {
   return hoveredIndicatorTime.value == null ? rows[rows.length-1] : rows.find(r=>toUtcSeconds(r.ts)===hoveredIndicatorTime.value)
 }
 const indicators = useChartIndicators(fetchIndicators)
-const { priceMaRows, indicatorError, priceMaError, panelErrors, panelRetrying } = indicators
+const { priceMaRows, priceMaLoading, indicatorError, priceMaError, panelErrors, panelRetrying } = indicators
 const indicatorRows = computed<IndicatorRow[]>(() => props.snapshotBars?.map(bar => ({ ...bar })) ?? indicators.indicatorRows.value)
 function drawPriceMas(rows: IndicatorRow[]) {
   const times = new Set(loadedBars.map(bar => toUtcSeconds(bar.ts)))
@@ -950,6 +954,7 @@ async function loadOlder() {
     const older = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
     if (version !== loadVersion) return
     await merge(older)
+    if (version !== loadVersion) return
     if (isEquityChart() || ((period === '1w' || period === '1mon') && older.length)) {
       historyCursor = older.length ? loadedBars[0].ts : start.toISOString()
       historyState.value = older.length ? '' : 'empty'
@@ -971,6 +976,7 @@ async function loadOlder() {
     const refreshed = await fetchKLine({ symbol: symbolId, period, start: start.toISOString(), end: end.toISOString(), limit: 5000 })
     if (version !== loadVersion) return
     await merge(refreshed)
+    if (version !== loadVersion) return
     historyCursor = (period === '1w' || period === '1mon') && refreshed.length ? loadedBars[0].ts : start.toISOString()
     historyState.value = refreshed.length ? '' : confirmedEmpty ? 'empty' : 'failed'
   } catch {
@@ -1038,13 +1044,12 @@ async function fillInitialPeriod(version: number, symbolId: number, period: '1w'
         loadedBars = bars
         historyCursor = bars[0].ts
         candleSeries?.setData(toCandleData(bars))
-        lastBar = bars[bars.length - 1]
-        barRange = { from: toUtcSeconds(bars[0].ts), to: toUtcSeconds(lastBar.ts) }
+        lastBar.value = bars[bars.length - 1]
+        barRange = { from: toUtcSeconds(bars[0].ts), to: toUtcSeconds(lastBar.value.ts) }
         drawMarkers()
-        await refreshIndicators(version, symbolId, period)
-        if (version !== loadVersion) return
         showInitialPeriodRange(period, bars.length)
         initialViewport = false
+        void refreshIndicators(version, symbolId, period)
       }
       end = new Date(start.getTime() - 1)
     } catch {
@@ -1126,6 +1131,7 @@ watch(() => props.focusSession, locateSession)
 async function loadKline(refreshSource = false) {
   if (props.snapshotBars) {
     loadedBars = props.snapshotBars
+    lastBar.value = loadedBars.at(-1) ?? null
     candleSeries?.setData(toCandleData(loadedBars))
     rebuildIndicatorPanes()
     setIndicatorData()
@@ -1148,18 +1154,18 @@ async function loadKline(refreshSource = false) {
   hoveredCandle.value = null
   const t0 = performance.now()
   try {
-    const [loaded, checked] = await Promise.all([
-      fetchKLine({ symbol: symbolId, period, limit: refreshSource
-        ? Math.min(5000, Math.max(1000, loadedBars.length + 1))
-        : period === '1w' || period === '1mon' ? Math.max(initialPeriodCount(period), loadedBars.length + 1) : props.recentMonths ? 5000 : undefined }),
-      fetchKlineQuality(symbolId, period).catch(() => null),
-    ])
-    if (version !== loadVersion || props.symbol?.id !== symbolId || chartPeriod.value !== period) return
+    const isCurrent = () => version === loadVersion && props.symbol?.id === symbolId && chartPeriod.value === period
+    const qualityRequest = fetchKlineQuality(symbolId, period).then(checked => {
+      if (isCurrent()) quality.value = checked
+    }).catch(() => {})
+    const loaded = await fetchKLine({ symbol: symbolId, period, limit: refreshSource
+      ? Math.min(5000, Math.max(1000, loadedBars.length + 1))
+      : period === '1w' || period === '1mon' ? Math.max(initialPeriodCount(period), loadedBars.length + 1) : props.recentMonths ? 5000 : undefined })
+    if (!isCurrent()) return
     // 周/月 K 的时间戳是本周期最后一个交易日，周期内更新会改变时间戳。
     const existing = refreshSource || initialViewport || period === '1w' || period === '1mon' ? [] : loadedBars
     const byTime = new Map([...existing, ...loaded].map((bar) => [toUtcSeconds(bar.ts), bar]))
     const bars = [...byTime.values()].sort((a, b) => toUtcSeconds(a.ts) - toUtcSeconds(b.ts))
-    quality.value = checked
     if (!chart) initChart()
     const previousRange = initialViewport ? null : chart?.timeScale().getVisibleLogicalRange()
     const previousCount = loadedBars.length
@@ -1167,15 +1173,17 @@ async function loadKline(refreshSource = false) {
     loadedBars = bars
     historyCursor = bars[0]?.ts ?? ''
     candleSeries?.setData(toCandleData(bars))
-    emit('loaded', bars.at(-1) ?? null)
+    lastBar.value = bars.at(-1) ?? null
+    emit('loaded', lastBar.value)
     if (!bars.length) {
+      barRange = null
+      drawMarkers()
       indicators.reset()
-  overlays.reset()
-      if (period === '1w' || period === '1mon') showInitialPeriodRange(period, 1)
-      if (!isEquityChart()) void loadInitialMissing(version, symbolId, period)
+      overlays.reset()
+      await qualityRequest
+      if (isCurrent() && !isEquityChart()) void loadInitialMissing(version, symbolId, period)
       return
     }
-    lastBar = bars.length ? bars[bars.length - 1] : null
     // G32：记录已加载时间范围并重绘买卖点（K 线范围外的时间轴标记无法定位，需裁剪）
     barRange = bars.length
       ? { from: toUtcSeconds(bars[0].ts), to: toUtcSeconds(bars[bars.length - 1].ts) }
@@ -1187,9 +1195,6 @@ async function loadKline(refreshSource = false) {
       rebuildIndicatorPanes()
     }
 
-    // 加载指标数据
-    await refreshIndicators(version, symbolId, period)
-    if (version !== loadVersion || props.symbol?.id !== symbolId || chartPeriod.value !== period) return
     if (initialViewport) {
       if (period === '1w' || period === '1mon') showInitialPeriodRange(period, bars.length)
       else {
@@ -1205,6 +1210,7 @@ async function loadKline(refreshSource = false) {
         : Math.max(0, bars.length - previousCount)
       chart?.timeScale().setVisibleLogicalRange({ from: previousRange.from + prepended, to: previousRange.to + prepended })
     }
+    void refreshIndicators(version, symbolId, period)
     if (!isEquityChart() && (period === '1w' || period === '1mon') && props.showIndicators && bars.length < initialPeriodCount(period)) {
       void fillInitialPeriod(version, symbolId, period)
     }
@@ -1265,56 +1271,41 @@ async function loadSRLines() {
     drawSRLines([])
     return
   }
+  const symbolId = props.symbol.id
   try {
-    const list = await fetchSupportResistance(props.symbol.id)
-    drawSRLines(list)
+    const list = await fetchSupportResistance(symbolId)
+    if (props.symbol?.id === symbolId) drawSRLines(list)
   } catch { /* 静默 */ }
 }
 
 /* ---------- 实时行情 ---------- */
 watch(() => props.markers, () => drawMarkers(), { deep: false })
 
-watch(() => props.symbol, (newSym, oldSym) => {
+watch([() => props.symbol?.id, chartPeriod], ([symbolId], [previousSymbolId]) => {
+  loadVersion++
+  loading.value = false
+  error.value = ''
+  quality.value = null
   hoveredCandle.value = null
   hoveredIndicatorTime.value = null
+  hoverTip.value = null
   initialViewport = true
   historyState.value = ''
+  historyWidth.value = 0
   loadedBars = []
   historyCursor = ''
-  if (!props.symbol) {
-    loadVersion++
-    lastBar = null
-    candleSeries?.setData([])
-    clearSRLines()
-    indicators.reset()
-  overlays.reset()
-    barRange = null
-    markersPlugin?.setMarkers([])
-    hoverTip.value = null
-    if (props.showIndicators) removeAllIndicatorPanes()
-    return
-  }
-  // V0.2：无闪烁——切换标的时保留旧 K 线直到新数据返回，不清空
-  clearSRLines()
-  if (oldSym && newSym && oldSym.id !== newSym.id) {
-    indicators.reset()
-  overlays.reset()
-    if (props.showIndicators) removeAllIndicatorPanes()
-  }
-  loadKline()
-  loadSRLines()
-})
-
-watch(() => chartPeriod.value, () => {
-  hoveredCandle.value = null
-  hoveredIndicatorTime.value = null
+  lastBar.value = null
+  barRange = null
+  markersPlugin?.setMarkers([])
+  candleSeries?.setData([])
   indicators.reset()
   overlays.reset()
-  initialViewport = true
-  historyState.value = ''
-  loadedBars = []
-  historyCursor = ''
-  loadKline()
+  if (props.showIndicators) removeAllIndicatorPanes()
+  chart?.timeScale().applyOptions({ timeVisible: chartPeriod.value.endsWith('m') })
+  if (symbolId !== previousSymbolId) clearSRLines()
+  if (symbolId == null) return
+  void loadKline()
+  if (symbolId !== previousSymbolId && !props.snapshotBars) void loadSRLines()
 })
 watch(() => theme.mode, () => applyTheme())
 watch(marketVersion, () => {
@@ -1333,8 +1324,9 @@ onMounted(() => {
     if (!props.symbol || isEquityChart() || !quality.value || quality.value.status === 'complete' || quality.value.status === 'unsupported') return
     const symbolId = props.symbol.id
     const period = chartPeriod.value
+    const version = loadVersion
     const checked = await fetchKlineQuality(symbolId, period).catch(() => null)
-    if (!checked || props.symbol?.id !== symbolId || chartPeriod.value !== period) return
+    if (!checked || version !== loadVersion || props.symbol?.id !== symbolId || chartPeriod.value !== period) return
     if (checked.status === 'complete') { void loadKline(); return }
     quality.value = checked
   }, 10000)
@@ -1346,12 +1338,12 @@ onMounted(() => {
     }
     if (props.symbol?.id === symbolId && chartPeriod.value === period) {
       if (!bar) { void loadKline(); return }
-      if (lastBar && toUtcSeconds(bar.ts) < toUtcSeconds(lastBar.ts)) return
+      if (lastBar.value && toUtcSeconds(bar.ts) < toUtcSeconds(lastBar.value.ts)) return
       if (loadedBars.length && toUtcSeconds(loadedBars[loadedBars.length - 1].ts) === toUtcSeconds(bar.ts)) {
         loadedBars[loadedBars.length - 1] = bar
       } else loadedBars.push(bar)
       hoveredCandle.value = null
-      lastBar = bar
+      lastBar.value = bar
       candleSeries?.update(toCandleData([bar])[0]!)
       emit('loaded', bar)
       void refreshIndicators(loadVersion, symbolId, period)
@@ -1539,7 +1531,8 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
 
     <div ref="container" class="kline-chart__body">
       <div ref="chartHost" class="kline-chart__canvas" />
-      <div v-if="props.symbol" class="kline-chart__ma-legend">
+      <div v-if="lastBar" class="kline-chart__ma-legend">
+        <span v-if="priceMaLoading" role="status">均线加载中…</span>
         <div v-for="definition in selectedOverlays" :key="definition.key" class="overlay-legend">
           <span>{{ definition.label }}({{ definition.parameters.map(p=>detailSettings.settings.value.overlay_options?.[definition.key]?.params[p.key] ?? p.default).join(',') }}){{ definition.input_fields ? ` · ${fieldLabel(definition.key)}` : '' }}</span>
           <span v-if="overlays.errors.value[definition.key]" role="alert">{{ overlays.errors.value[definition.key] }} <button style="pointer-events:auto" :disabled="overlays.retrying.value[definition.key]" @click="overlays.retry(definition.key)">重试</button></span>
@@ -1601,7 +1594,7 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
           <span>{{ indicatorQuantity(selectedIndicator?.amount) }}</span>
         </template>
       </div>
-      <div v-if="props.symbol" class="kline-chart__watermark" aria-hidden="true">
+      <div v-if="props.symbol && lastBar" class="kline-chart__watermark" aria-hidden="true">
         <span>{{ props.symbol.code || props.symbol.name }} · {{ watermarkPeriod }}</span>
         <span>{{ props.symbol.name }}</span>
       </div>
@@ -1629,21 +1622,19 @@ function closeIndicatorPicker() { indicatorPickerOpen.value = false }
         <div class="mk-tip__row"><span>金额</span><b>{{ hoverTip.trade.amount.toFixed(2) }}</b></div>
         <div class="mk-tip__row"><span>费用</span><b>{{ hoverTip.trade.fee.toFixed(2) }}</b></div>
       </div>
+      <div v-if="error" class="kline-chart__state kline-chart__state--error" role="alert">
+        <span>{{ error }}</span>
+        <button class="kline-chart__retry" @click="retryLoad">点击重试</button>
+      </div>
+      <div v-else-if="!symbol" class="kline-chart__state">请选择标的</div>
+      <div v-else-if="!lastBar && loading" class="kline-chart__state" role="status">正在加载{{ watermarkPeriod }}…</div>
+      <div v-else-if="!lastBar && !historyState && !fixedPeriod && isEquityChart() && quality?.can_supplement" class="kline-chart__state">
+        <button class="kline-chart__retry" @click="retryHistory">使用 AkShare 补充历史行情</button>
+      </div>
+      <div v-else-if="!lastBar && (!historyState || historyState === 'empty')" class="kline-chart__state" role="status">
+        暂无{{ watermarkPeriod }}数据
+      </div>
     </div>
-
-    <div v-if="error" class="kline-chart__state kline-chart__state--error">
-      <span>{{ error }}</span>
-      <button class="kline-chart__retry" @click="retryLoad">点击重试</button>
-    </div>
-    <div v-else-if="!symbol" class="kline-chart__state">请选择标的</div>
-    <div
-      v-else-if="!fixedPeriod && !loading && isEquityChart() && !loadedBars.length && quality?.can_supplement && historyState !== 'loading'"
-      class="kline-chart__state"
-    >
-      <button class="kline-chart__retry" @click="retryHistory">使用 AkShare 补充历史行情</button>
-    </div>
-
-    <div v-else-if="fixedPeriod && !loading && !loadedBars.length" class="kline-chart__state">暂无日 K 线</div>
 
     <!-- 支撑/压力位弹窗 -->
     <Teleport to="body">

@@ -63,6 +63,8 @@ def quotes(db, symbols):
                     item['extra'] = {k: row.get(k) for k in ('vol_ratio','is_st','total_share','float_share',
                                                             'total_mv','float_mv','pe_ttm','pb')}
                     item['extra'].update(market_cap=row.get('total_mv'), pe=row.get('pe_ttm'))
+            elif sym.type == 'index' and sym.market == 'SW':
+                item.update(stored_quote(db, sym))
             else:
                 from app.services.source_history import cached
                 item.update(stored_quote(db, sym, (cached(sym.id, '1d') or [])[-2:]))

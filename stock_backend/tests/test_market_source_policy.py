@@ -50,6 +50,27 @@ def test_stored_industry_quote_restores_amplitude(monkeypatch, previous):
     assert result['amplitude'] == (30 if previous else None)
 
 
+def test_industry_snapshot_reads_the_stored_daily_bars(monkeypatch):
+    from app.repositories import kline_repo
+    from app.services import local_quotes, source_history
+
+    sym = SimpleNamespace(id=12, code='801010.SL', name='农林牧渔', type='index', market='SW', is_fixed_index=True)
+    previous = SimpleNamespace(close=10)
+    latest = SimpleNamespace(ts=datetime(2026, 11, 5, tzinfo=UTC), open=10, close=11,
+                             high=12, low=9, volume=100, amount=1000, source='stockdb')
+    read_bars = Mock(return_value=[previous, latest])
+    monkeypatch.setattr(kline_repo, 'latest_bars', read_bars)
+    monkeypatch.setattr(local_quotes, 'ready_version', lambda: None)
+    monkeypatch.setattr(source_history, 'cached', Mock(side_effect=AssertionError('local bars are available')))
+
+    quote, = local_quotes.quotes(None, [sym])
+
+    read_bars.assert_called_once_with(None, '1d', sym.id, limit=2)
+    assert quote['price'] == 11
+    assert quote['change_pct'] == pytest.approx(10)
+    assert quote['data_date'] == '2026-11-05'
+
+
 def test_official_sdk_frequency_and_qfq_are_not_reaggregated(monkeypatch):
     from app.data_providers.stockdb import StockDBProvider
     client = Mock()

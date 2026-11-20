@@ -177,7 +177,7 @@ onUnmounted(() => {
       </div>
 
       <div class="grid-h">
-        <IndexListPanel title="行业指数" :list="industryIndices" :loading="indicesLoading" :error="indicesError" :cached-ids="cachedIds" @retry="loadHomeIndices" @dblclick="goDetail" />
+        <IndexListPanel title="行业指数" hide-empty-columns :list="industryIndices" :loading="indicesLoading" :error="indicesError" :cached-ids="cachedIds" @retry="loadHomeIndices" @dblclick="goDetail" />
       </div>
 
       <div class="grid-i">

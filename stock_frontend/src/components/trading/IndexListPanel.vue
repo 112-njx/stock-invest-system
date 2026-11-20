@@ -12,7 +12,7 @@ import { useMarketStore } from '@/stores/market'
 import { formatPct, formatPrice, trendClass } from '@/utils/color'
 import { quoteTime } from '@/utils/homeIndexCache'
 
-const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; loading?: boolean; error?: boolean; cachedIds?: Set<number> }>(), {
+const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; loading?: boolean; error?: boolean; cachedIds?: Set<number>; hideEmptyColumns?: boolean }>(), {
   loading: false,
   error: false,
 })
@@ -20,6 +20,12 @@ const props = withDefaults(defineProps<{ title: string; list: SymbolInfo[]; load
 const emit = defineEmits<{ (e: 'dblclick', symbol: SymbolInfo): void; (e: 'retry'): void }>()
 
 const market = useMarketStore()
+
+const showEtf = computed(() => !props.hideEmptyColumns || props.list.some(symbol => symbol.etf_linked))
+const columnClass = computed(() => ({
+  'index-panel--no-opportunity': props.hideEmptyColumns,
+  'index-panel--no-etf': !showEtf.value,
+}))
 
 const currentId = computed(() => market.current?.id ?? null)
 const shanghaiDay = new Intl.DateTimeFormat('sv-SE', {
@@ -49,7 +55,7 @@ function priceNote(s: SymbolInfo): string {
 </script>
 
 <template>
-  <div class="index-panel">
+  <div class="index-panel" :class="columnClass">
     <header class="index-panel__header">
       <span class="index-panel__title">{{ title }}</span>
       <span class="index-panel__count">{{ list.length }}</span>
@@ -60,8 +66,8 @@ function priceNote(s: SymbolInfo): string {
       <span class="col-name">名称</span>
       <span class="col-num">最新价</span>
       <span class="col-num">涨跌幅</span>
-      <span class="col-num">ETF</span>
-      <span class="col-num">机会</span>
+      <span v-if="showEtf" class="col-num">ETF</span>
+      <span v-if="!hideEmptyColumns" class="col-num">机会</span>
     </div>
 
     <div class="index-panel__list">
@@ -89,8 +95,8 @@ function priceNote(s: SymbolInfo): string {
           <span class="col-num" :class="trendClass(market.quotes[s.id]?.change_pct)">
             {{ formatPct(market.quotes[s.id]?.change_pct) }}
           </span>
-          <span class="col-num col-etf">{{ s.etf_linked || '--' }}</span>
-          <span class="col-num col-opp">--</span>
+          <span v-if="showEtf" class="col-num col-etf">{{ s.etf_linked || '--' }}</span>
+          <span v-if="!hideEmptyColumns" class="col-num col-opp">--</span>
           <span class="idx-row__time" :class="{ 'is-stale': props.cachedIds?.has(s.id) }">{{ priceNote(s) }}</span>
         </div>
       </template>
@@ -134,10 +140,12 @@ function priceNote(s: SymbolInfo): string {
 .idx-row {
   display: grid;
   /* 名称自适应，四列数字按内容长度分配固定宽，整体靠右 */
-  grid-template-columns: 1fr 62px 58px 48px 36px;
+  grid-template-columns: var(--index-columns, 1fr 62px 58px 48px 36px);
   column-gap: 6px;
   align-items: center;
 }
+.index-panel--no-opportunity { --index-columns: minmax(0, 1fr) 72px 64px 48px; }
+.index-panel--no-etf { --index-columns: minmax(0, 1fr) 72px 64px; }
 .index-panel__cols {
   flex: none;
   padding: 4px 10px;
